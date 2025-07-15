@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from .config import Config
+from .mvir import MVIR
 
 def back_up_file(path):
     dir_name, base_name = os.path.split(path)
@@ -41,11 +42,14 @@ Output the resulting Rust code in a Markdown code block.
 '''
 
 def do_llm(cfg):
+    mvir = MVIR('crisp-storage', '.')
+
     files = glob.glob(cfg.src_globs, root_dir=cfg.base_dir, recursive=True)
     assert len(files) == 1, 'expected exactly 1 src file, but got %r' % (files,)
     path = os.path.join(cfg.base_dir, files[0])
 
     orig_rust_code = open(path).read()
+    mvir.set_tag('current', mvir.new_node({}, orig_rust_code.encode('utf-8')), 'old')
     prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
 
     print(prompt)
@@ -76,7 +80,11 @@ def do_llm(cfg):
 
     # Success - back up the previous version and overwrite with the new one.
     back_up_file(path)
+    mvir.set_tag('current', mvir.new_node({}, code.encode('utf-8')), 'new')
     open(path, 'w').write(code)
+
+    for x in mvir.tag_reflog('current'):
+        print(x)
 
 def do_test(cfg):
     try:

@@ -1,3 +1,4 @@
+import argparse
 import glob
 import os
 import requests
@@ -8,6 +9,22 @@ import sys
 
 from .config import Config
 from .mvir import MVIR
+
+
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--config', '-c', dest='config_path', default='crisp.toml')
+    ap.add_argument('--mvir-storage-dir')
+
+    sub = ap.add_subparsers(dest='cmd')
+
+    main = sub.add_parser('main')
+
+    reflog = sub.add_parser('reflog')
+    reflog.add_argument('tag', nargs='?', default='current')
+
+    return ap.parse_args()
+
 
 def back_up_file(path):
     dir_name, base_name = os.path.split(path)
@@ -42,7 +59,7 @@ Output the resulting Rust code in a Markdown code block.
 '''
 
 def do_llm(cfg):
-    mvir = MVIR('crisp-storage', '.')
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
 
     files = glob.glob(cfg.src_globs, root_dir=cfg.base_dir, recursive=True)
     assert len(files) == 1, 'expected exactly 1 src file, but got %r' % (files,)
@@ -96,13 +113,30 @@ def do_test(cfg):
             (e.returncode, e.cmd.rstrip()))
         return False
 
-def main():
-    config_path, = sys.argv[1:]
-
-    cfg = Config.from_toml_file(config_path)
+def do_main(args, cfg):
     print(cfg)
     do_llm(cfg)
     do_test(cfg)
+
+def do_reflog(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    for x in mvir.tag_reflog(args.tag):
+        print(x)
+
+def main():
+    args = parse_args()
+
+    cfg_kwargs = {}
+    if args.mvir_storage_dir is not None:
+        cfg_kwargs['mvir_storage_dir'] = os.path.abspath(args.mvir_storage_dir)
+    cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
+
+    if args.cmd == 'main':
+        do_main(args, cfg)
+    elif args.cmd == 'reflog':
+        do_reflog(args, cfg)
+    else:
+        raise ValueError('unknown command %r' % (args.cmd,))
 
 if __name__ == '__main__':
     main()

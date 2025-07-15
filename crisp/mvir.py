@@ -101,9 +101,9 @@ class MVIR:
 
 
 class Node:
-    def __init__(self, mvir, name, path):
+    def __init__(self, mvir, node_id, path):
         self._mvir = mvir
-        self._name = name
+        self._node_id = node_id
         self._path = path
         self._metadata = None
         self._body_offset = None
@@ -190,7 +190,7 @@ class Node:
             self._body = f.read()
 
     def node_id(self):
-        return self._name
+        return self._node_id
 
     def metadata(self):
         if self._metadata is None:

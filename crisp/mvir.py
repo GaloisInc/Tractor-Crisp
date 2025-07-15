@@ -101,11 +101,11 @@ class MVIR:
 
 
 class Node:
-    def __init__(self, mvir, node_id):
+    def __init__(self, mvir, node_id, metadata, body_offset):
         self._mvir = mvir
         self._node_id = node_id
-        self._metadata = None
-        self._body_offset = None
+        self._metadata = metadata
+        self._body_offset = body_offset
         self._body = None
 
     @staticmethod
@@ -134,7 +134,7 @@ class Node:
             return n
 
         path = mvir._node_path(node_id)
-        n = Node(mvir, node_id)
+        n = Node(mvir, node_id, metadata, body_offset)
         populate(n)
         if os.path.exists(path):
             # No need to write if the file already exists.
@@ -167,34 +167,24 @@ class Node:
         if node_id in mvir._nodes:
             return mvir._nodes[node_id]
         else:
-            n = Node(mvir, node_id)
+            path = mvir._node_path(node_id)
+            with open(path, 'rb') as f:
+                metadata = cbor.load(f)
+                body_offset = f.tell()
+            n = Node(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n
             return n
-
-    def _load_metadata(self):
-        path = self._mvir._node_path(self._node_id)
-        with open(path, 'rb') as f:
-            self._load_metadata_from(f)
-
-    def _load_metadata_from(self, f):
-        self._metadata = cbor.load(f)
-        self._body_offset = f.tell()
 
     def _load_body(self):
         path = self._mvir._node_path(self._node_id)
         with open(path, 'rb') as f:
-            if self._body_offset is None:
-                self._load_metadata_from()
-            else:
-                f.seek(self._body_offset)
+            f.seek(self._body_offset)
             self._body = f.read()
 
     def node_id(self):
         return self._node_id
 
     def metadata(self):
-        if self._metadata is None:
-            self._load_metadata()
         return self._metadata
 
     def body(self):

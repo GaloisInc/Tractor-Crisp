@@ -24,6 +24,13 @@ class NodeId:
     def __repr__(self):
         return 'NodeId(%s)' % self
 
+    @staticmethod
+    def from_str(s):
+        if len(s) != 2 * NodeId.LENGTH:
+            raise ValueError('expected exactly %d characters' % (2 * NodeId.LENGTH))
+        raw = bytes(int(s[i:i+2], 16) for i in range(0, len(s), 2))
+        return NodeId(raw)
+
 
 @dataclass(frozen=True)
 class ReflogEntry:

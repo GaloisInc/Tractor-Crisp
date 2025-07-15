@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .mvir import MVIR
+from .mvir import MVIR, NodeId
 
 
 def parse_args():
@@ -22,6 +22,9 @@ def parse_args():
 
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
+
+    show = sub.add_parser('show')
+    show.add_argument('node', nargs='?', default='current')
 
     return ap.parse_args()
 
@@ -123,6 +126,19 @@ def do_reflog(args, cfg):
     for x in mvir.tag_reflog(args.tag):
         print(x)
 
+def do_show(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    print(node_id)
+    n = mvir.node(node_id)
+    from pprint import pprint
+    pprint(n.metadata())
+    print('---')
+    print(n.body().decode('utf-8'))
+
 def main():
     args = parse_args()
 
@@ -135,6 +151,8 @@ def main():
         do_main(args, cfg)
     elif args.cmd == 'reflog':
         do_reflog(args, cfg)
+    elif args.cmd == 'show':
+        do_show(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

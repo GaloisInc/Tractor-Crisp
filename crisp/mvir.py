@@ -101,10 +101,9 @@ class MVIR:
 
 
 class Node:
-    def __init__(self, mvir, node_id, path):
+    def __init__(self, mvir, node_id):
         self._mvir = mvir
         self._node_id = node_id
-        self._path = path
         self._metadata = None
         self._body_offset = None
         self._body = None
@@ -135,7 +134,7 @@ class Node:
             return n
 
         path = mvir._node_path(node_id)
-        n = Node(mvir, node_id, path)
+        n = Node(mvir, node_id)
         populate(n)
         if os.path.exists(path):
             # No need to write if the file already exists.
@@ -168,13 +167,13 @@ class Node:
         if node_id in mvir._nodes:
             return mvir._nodes[node_id]
         else:
-            path = mvir._node_path(node_id)
-            n = Node(mvir, node_id, path)
+            n = Node(mvir, node_id)
             mvir._nodes[node_id] = n
             return n
 
     def _load_metadata(self):
-        with open(self._path, 'rb') as f:
+        path = self._mvir._node_path(self._node_id)
+        with open(path, 'rb') as f:
             self._load_metadata_from(f)
 
     def _load_metadata_from(self, f):
@@ -182,7 +181,8 @@ class Node:
         self._body_offset = f.tell()
 
     def _load_body(self):
-        with open(self._path, 'rb') as f:
+        path = self._mvir._node_path(self._node_id)
+        with open(path, 'rb') as f:
             if self._body_offset is None:
                 self._load_metadata_from()
             else:

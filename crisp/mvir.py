@@ -58,9 +58,6 @@ class MVIR:
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
         return os.path.join(self._path, 'nodes', first, rest)
 
-    def new_node(self, metadata, body=b''):
-        return Node._create(self, metadata, body)
-
     def node(self, node_id):
         return Node._get(self, node_id)
 
@@ -102,11 +99,35 @@ class MVIR:
 
 class Node:
     def __init__(self, mvir, node_id, metadata, body_offset):
+        self.__class__._check_metadata(metadata)
         self._mvir = mvir
         self._node_id = node_id
         self._metadata = metadata
         self._body_offset = body_offset
         self._body = None
+
+    EXPECTED_METADATA_KEYS = {'kind'}
+
+    @classmethod
+    def _check_metadata(cls, metadata):
+        if metadata.keys() == cls.EXPECTED_METADATA_KEYS:
+            return True
+        missing = cls.EXPECTED_METADATA_KEYS - metadata.keys()
+        unexpected = metadata.keys() - cls.EXPECTED_METADATA_KEYS
+        if missing and extra:
+            raise ValueError('missing keys %r and unexpected keys %r for %s' %
+                (missing, unexpected, cls.__name__))
+        elif missing:
+            raise ValueError('missing keys %r for %s' % (missing, cls.__name__))
+        else:
+            assert unexpected
+            raise ValueError('unexpected keys %r for %s' % (unexpected, cls.__name__))
+
+    @classmethod
+    def new(cls, mvir, body=b'', **metadata):
+        assert 'kind' not in metadata
+        metadata['kind'] = cls.KIND
+        return cls._create(mvir, metadata, body)
 
     @staticmethod
     def _create(mvir, metadata, body):
@@ -134,7 +155,8 @@ class Node:
             return n
 
         path = mvir._node_path(node_id)
-        n = Node(mvir, node_id, metadata, body_offset)
+        cls = NODE_KIND_MAP[metadata['kind']]
+        n = cls(mvir, node_id, metadata, body_offset)
         populate(n)
         if os.path.exists(path):
             # No need to write if the file already exists.
@@ -171,7 +193,8 @@ class Node:
             with open(path, 'rb') as f:
                 metadata = cbor.load(f)
                 body_offset = f.tell()
-            n = Node(mvir, node_id, metadata, body_offset)
+            cls = NODE_KIND_MAP[metadata['kind']]
+            n = cls(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n
             return n
 
@@ -191,3 +214,38 @@ class Node:
         if self._body is None:
             self._load_body()
         return self._body
+
+class FileNode(Node):
+    KIND = 'file'
+
+class TreeNode(Node):
+    KIND = 'tree'
+    EXPECTED_METADATA_KEYS = Node.EXPECTED_METADATA_KEYS.union({'files'})
+
+    @classmethod
+    def _check_metadata(cls, metadata):
+        super()._check_metadata(metadata)
+
+        files = metadata['files']
+        if not isinstance(files, dict):
+            raise TypeError('metadata entry `files` must be a dict')
+        for k,v in files.items():
+            if not isinstance(k, str):
+                raise TypeError('`files` keys must be str, but got %r (%r)' % (k, type(k)))
+            if not isinstance(v, NodeId):
+                raise TypeError('`files` values must be NodeId, but got %r (%r)' % (v, type(v)))
+
+    files = property(lambda self: self._metadata['files'])
+
+NODE_CLASSES = [
+    FileNode,
+    TreeNode,
+]
+
+def _build_node_kind_map(classes):
+    m = {}
+    for cls in classes:
+        assert cls.KIND not in m
+        m[cls.KIND] = cls
+    return m
+NODE_KIND_MAP = _build_node_kind_map(NODE_CLASSES)

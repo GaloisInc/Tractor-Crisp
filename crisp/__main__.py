@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .mvir import MVIR, NodeId
+from .mvir import MVIR, NodeId, FileNode
 
 
 def parse_args():
@@ -69,7 +69,7 @@ def do_llm(cfg):
     path = os.path.join(cfg.base_dir, files[0])
 
     orig_rust_code = open(path).read()
-    mvir.set_tag('current', mvir.new_node({}, orig_rust_code.encode('utf-8')), 'old')
+    mvir.set_tag('current', FileNode.new(mvir, orig_rust_code.encode('utf-8')), 'old')
     prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
 
     print(prompt)
@@ -100,7 +100,7 @@ def do_llm(cfg):
 
     # Success - back up the previous version and overwrite with the new one.
     back_up_file(path)
-    mvir.set_tag('current', mvir.new_node({}, code.encode('utf-8')), 'new')
+    mvir.set_tag('current', FileNode.new(mvir, code.encode('utf-8')), 'new')
     open(path, 'w').write(code)
 
     for x in mvir.tag_reflog('current'):

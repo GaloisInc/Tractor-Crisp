@@ -135,6 +135,31 @@ class ReflogEntry:
     to_cbor = _dataclass_to_cbor
     from_cbor = _dataclass_from_cbor
 
+@dataclass(frozen=True)
+class IndexEntry:
+    node_id: NodeId
+    kind: str
+    key: str
+
+    to_cbor = _dataclass_to_cbor
+    from_cbor = _dataclass_from_cbor
+
+
+def _metadata_node_ids(x):
+    if isinstance(x, (NoneType, bool, int, float, str, bytes, datetime)):
+        return
+    elif isinstance(x, NodeId):
+        yield x
+    elif isinstance(x, (list, tuple)):
+        for y in x:
+            yield from _metadata_node_ids(y)
+    elif isinstance(x, dict):
+        for k,v in x.items():
+            yield from _metadata_node_ids(k)
+            yield from _metadata_node_ids(v)
+    else:
+        raise TypeError('unsupported type in metadata: %r' % (type(x),))
+
 
 class MVIR:
     def __init__(self, path, src_dir):
@@ -142,10 +167,52 @@ class MVIR:
         self._src_dir = os.path.realpath(src_dir)
         # Maps `NodeId` to `Node`
         self._nodes = WeakValueDictionary()
+        self._stamp_mtime_cache = {}
 
     def _node_path(self, node_id):
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
         return os.path.join(self._path, 'nodes', first, rest)
+
+    def _nodes_newer_than(self, mtime):
+        '''Yields `NodeId`s for all nodes whose file is newer than `mtime`.  If
+        `mtime` is `None`, yields all `NodeId`s that exist on disk.'''
+        base = os.path.join(self._path, 'nodes')
+        for dir_name in os.listdir(base):
+            if dir_name.startswith('.'):
+                continue
+            dir_path = os.path.join(base, dir_name)
+            if mtime is not None:
+                dir_mtime = os.stat(dir_path).st_mtime_ns
+                if dir_mtime < mtime:
+                    # Adding a new file to a directory updates the directory
+                    # mtime.  Since we don't modify node files after creating
+                    # them, the directory mtime should be close to the mtime of
+                    # the newest file within.  So we exclude old directories on
+                    # the assumption that they contain only old files.
+                    #
+                    # This is not strictly accurate: if writing the file takes
+                    # a long time, then we could have a situation where
+                    # `dir_mtime < mtime < file_mtime`, and the file is wrongly
+                    # excluded from the `_nodes_newer_than(mtime)` output.
+                    # However, in practice, the query `mtime` is always the
+                    # mtime of some stamp file, and we don't update any stamp
+                    # files (or take any other actions) between the time when
+                    # we create the node file and when we finish writing to it.
+                    continue
+
+            for file_name in os.listdir(dir_path):
+                if file_name.startswith('.'):
+                    continue
+                file_path = os.path.join(base, dir_name)
+                if mtime is not None:
+                    file_mtime = os.stat(file_path).st_mtime_ns
+                    if file_mtime < mtime:
+                        continue
+
+                try:
+                    yield NodeId.from_str(dir_name + file_name)
+                except ValueError as e:
+                    print('warning: unknown file %r in nodes directory (%s)' % (file_path, e))
 
     def node(self, node_id):
         return Node._get(self, node_id)
@@ -181,6 +248,71 @@ class MVIR:
                 node_id = NodeId(f.read(NodeId.LENGTH))
                 reflog.append(ReflogEntry(node_id, timestamp, reason))
         return reflog
+
+    def _stamp_path(self, name):
+        return os.path.join(self._path, 'stamps', name)
+
+    def _stamp_mtime(self, name):
+        if name in self._stamp_mtime_cache:
+            return self._stamp_mtime_cache[name]
+
+        path = self._stamp_path(name)
+        if os.path.exists(path):
+            mtime = os.stat(path).st_mtime_ns
+        else:
+            mtime = None
+        self._stamp_mtime_cache[name] = mtime
+        return mtime
+
+    def _touch_stamp(self, name):
+        self._stamp_mtime_cache.pop(name, None)
+        path = self._stamp_path(name)
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            pass
+
+    def _check_index(self):
+        index_mtime = self._stamp_mtime('index')
+        nodes_mtime = self._stamp_mtime('nodes')
+        if index_mtime is None or (nodes_mtime is not None and nodes_mtime > index_mtime):
+            self._update_index(index_mtime)
+
+    def _update_index(self, prev_mtime):
+        for src_id in self._nodes_newer_than(prev_mtime):
+            n = self.node(src_id)
+            for k, v in n.metadata().items():
+                for dest_id in _metadata_node_ids(v):
+                    entry = IndexEntry(src_id, n.kind, k)
+
+                    path = self._index_path(dest_id)
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, 'ab') as f:
+                        cbor.dump(entry.to_cbor(), f)
+
+        self._touch_stamp('index')
+
+    def _index_path(self, node_id):
+        first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
+        return os.path.join(self._path, 'index', first, rest)
+
+    def index(self, node_id):
+        '''Get a list of references to `node_id` from the index.  This will
+        update the index first if needed.'''
+        self._check_index()
+        if isinstance(node_id, Node):
+            node_id = node_id.node_id()
+        path = self._index_path(node_id)
+        try:
+            f = open(path, 'rb')
+        except FileNotFoundError:
+            return ()
+        with f:
+            entries = []
+            size = os.stat(path).st_size
+            while f.tell() < size:
+                entries.append(IndexEntry.from_cbor(cbor.load(f)))
+        return entries
 
 
 class Node:
@@ -259,6 +391,12 @@ class Node:
             # No need to write if the file already exists.
             mvir._nodes[node_id] = n
             return n
+
+        # Bump the `nodes` timestamp file before writing the new node to disk.
+        # If we did it the other way around, we might write the node but then
+        # fail to update the timestamp, in which case the indexing code would
+        # be unable to detect that a new node was created.
+        mvir._touch_stamp('nodes')
 
         dir_path = os.path.dirname(path)
         os.makedirs(dir_path, exist_ok=True)

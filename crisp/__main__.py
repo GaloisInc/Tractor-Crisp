@@ -26,6 +26,9 @@ def parse_args():
     show = sub.add_parser('show')
     show.add_argument('node', nargs='?', default='current')
 
+    index = sub.add_parser('index')
+    index.add_argument('node', nargs='?', default='current')
+
     return ap.parse_args()
 
 
@@ -126,6 +129,15 @@ def do_reflog(args, cfg):
     for x in mvir.tag_reflog(args.tag):
         print(x)
 
+def do_index(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    for x in mvir.index(node_id):
+        print(x)
+
 def do_show(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     try:
@@ -153,6 +165,8 @@ def main():
         do_reflog(args, cfg)
     elif args.cmd == 'show':
         do_show(args, cfg)
+    elif args.cmd == 'index':
+        do_index(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

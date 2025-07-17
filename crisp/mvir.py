@@ -484,9 +484,32 @@ class TreeNode(Node):
 
     files = property(lambda self: self._metadata['files'])
 
+class LlmOpNode(Node):
+    KIND = 'llm_op'
+    old_code: NodeId
+    new_code: NodeId
+    raw_prompt: NodeId
+    request: NodeId
+    response: NodeId
+
+    @classmethod
+    def _check_metadata(cls, metadata):
+        super()._check_metadata(metadata)
+
+        for k in ('old_code', 'new_code', 'raw_prompt', 'request', 'response'):
+            if not isinstance(metadata[k], NodeId):
+                raise TypeError('metadata entry `%s` must be a NodeId' % k)
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
+    request = property(lambda self: self._metadata['request'])
+    response = property(lambda self: self._metadata['response'])
+
 NODE_CLASSES = [
     FileNode,
     TreeNode,
+    LlmOpNode,
 ]
 
 def _build_node_kind_map(classes):

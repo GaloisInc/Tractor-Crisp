@@ -1,5 +1,6 @@
 import argparse
 import glob
+import json
 import os
 import requests
 import shutil
@@ -8,7 +9,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .mvir import MVIR, NodeId, FileNode
+from .mvir import MVIR, NodeId, FileNode, LlmOpNode
 
 
 def parse_args():
@@ -72,17 +73,19 @@ def do_llm(cfg):
     path = os.path.join(cfg.base_dir, files[0])
 
     orig_rust_code = open(path).read()
-    mvir.set_tag('current', FileNode.new(mvir, orig_rust_code.encode('utf-8')), 'old')
+    n_old = FileNode.new(mvir, orig_rust_code.encode('utf-8'))
+    mvir.set_tag('current', n_old, 'old')
     prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
 
     print(prompt)
     print('send request...')
-    resp = requests.post(LLM_ENDPOINT, json={
+    req = {
         'messages': [
             {'role': 'user', 'content': prompt},
             {'role': 'assistant', 'content': '<think>\n</think>\n'},
         ],
-    }).json()
+    }
+    resp = requests.post(LLM_ENDPOINT, json=req).json()
 
     print(resp)
 
@@ -103,8 +106,18 @@ def do_llm(cfg):
 
     # Success - back up the previous version and overwrite with the new one.
     back_up_file(path)
-    mvir.set_tag('current', FileNode.new(mvir, code.encode('utf-8')), 'new')
+    n_new = FileNode.new(mvir, code.encode('utf-8'))
+    mvir.set_tag('current', n_new, 'new')
     open(path, 'w').write(code)
+
+    n_op = LlmOpNode.new(
+            mvir,
+            old_code = n_old.node_id(),
+            new_code = n_new.node_id(),
+            raw_prompt = FileNode.new(mvir, LLM_PROMPT).node_id(),
+            request = FileNode.new(mvir, json.dumps(req)).node_id(),
+            response = FileNode.new(mvir, json.dumps(resp)).node_id(),
+            )
 
     for x in mvir.tag_reflog('current'):
         print(x)

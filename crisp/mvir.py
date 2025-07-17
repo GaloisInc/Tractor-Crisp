@@ -5,7 +5,9 @@ import hashlib
 import os
 import stat
 import tempfile
+import typing
 from typing import Any, ClassVar
+from types import NoneType
 from weakref import WeakValueDictionary
 
 
@@ -31,6 +33,98 @@ class NodeId:
         raw = bytes(int(s[i:i+2], 16) for i in range(0, len(s), 2))
         return NodeId(raw)
 
+    def to_cbor(self):
+        return self.raw
+
+    @classmethod
+    def from_cbor(cls, raw):
+        return cls(raw)
+
+    @classmethod
+    def check_type(cls, x):
+        assert isinstance(x, cls)
+
+
+def to_cbor(x):
+    if isinstance(x, (NoneType, bool, int, float, str, bytes)):
+        return x
+    elif isinstance(x, (list, tuple)):
+        return [to_cbor(y) for y in x]
+    elif isinstance(x, dict):
+        return {to_cbor(k): to_cbor(v) for k,v in x.items()}
+    elif isinstance(x, datetime):
+        return (x.year, x.month, x.day, x.hour, x.minute, x.second, x.microsecond)
+    else:
+        return x.to_cbor()
+
+def from_cbor(ty, x):
+    origin = typing.get_origin(ty) or ty
+    if origin in (NoneType, bool, int, float, str, bytes):
+        assert isinstance(x, ty)
+        return x
+    elif origin is list:
+        assert isinstance(x, (list, tuple))
+        elem_ty, = typing.get_args(ty)
+        return [from_cbor(elem_ty, y) for y in x]
+    elif origin is tuple:
+        assert isinstance(x, (list, tuple))
+        elem_tys = typing.get_args(ty)
+        assert len(elem_tys) == len(x)
+        return tuple(from_cbor(t, y) for t, y in zip(elem_tys, x))
+    elif origin is dict:
+        assert isinstance(x, dict)
+        key_ty, value_ty = typing.get_args(ty)
+        return {from_cbor(key_ty, k): from_cbor(value_ty, v) for k,v in x.items()}
+    elif origin is datetime:
+        assert isinstance(x, (list, tuple))
+        assert len(x) == 7
+        return datetime(*x)
+    else:
+        return ty.from_cbor(x)
+
+def check_type(ty, x):
+    origin = typing.get_origin(ty)
+    if origin in (NoneType, bool, int, float, str, bytes):
+        assert isinstance(x, ty)
+    elif origin is list:
+        assert isinstance(x, list)
+        elem_ty, = typing.get_args(ty)
+        for y in x:
+            check_type(elem_ty, y)
+    elif origin is tuple:
+        assert isinstance(x, (list, tuple))
+        elem_tys = typing.get_args(ty)
+        assert len(elem_tys) == len(x)
+        for t, y in zip(elem_tys, x):
+            check_type(t, y)
+    elif origin is dict:
+        assert isinstance(x, dict)
+        key_ty, value_ty = typing.get_args(ty)
+        for k, v in x.items():
+            check_type(key_ty, k)
+            check_type(value_ty, v)
+    else:
+        return ty.check_type(x)
+
+def _all_field_types(cls):
+    return typing.get_type_hints(cls)
+
+def _dataclass_to_cbor(x):
+    '''Convert `x` to a CBOR-serializable form.  This is a default
+    implementation for use in classes that have `dataclass`-style typed
+    fields.'''
+    cls = x.__class__
+    field_tys = _all_field_types(cls)
+    values = tuple(getattr(x, name) for name in field_tys.keys())
+    return to_cbor(values)
+
+@classmethod
+def _dataclass_from_cbor(cls, raw):
+    field_tys = _all_field_types(cls)
+    expect_ty = tuple[*field_tys.values()]
+    values = from_cbor(expect_ty, raw)
+    return cls(*values)
+
 
 @dataclass(frozen=True)
 class ReflogEntry:
@@ -38,13 +132,8 @@ class ReflogEntry:
     timestamp: datetime
     reason: Any
 
-
-def datetime_to_serializable(dt):
-    return [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond]
-
-def datetime_from_serializable(x):
-    assert len(x) == 7
-    return datetime(*x)
+    to_cbor = _dataclass_to_cbor
+    from_cbor = _dataclass_from_cbor
 
 
 class MVIR:
@@ -72,8 +161,7 @@ class MVIR:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'ab') as f:
             timestamp = datetime.now()
-            raw_timestamp = datetime_to_serializable(timestamp)
-            cbor.dump([raw_timestamp, reason], f)
+            cbor.dump(to_cbor((timestamp, reason)), f)
             f.write(node_id.raw)
 
     def tag(self, name):
@@ -89,15 +177,15 @@ class MVIR:
         size = os.stat(path).st_size
         with open(path, 'rb') as f:
             while f.tell() < size:
-                raw_timestamp, reason = cbor.load(f)
-                timestamp = datetime_from_serializable(raw_timestamp)
-                raw_node_id = f.read(NodeId.LENGTH)
-                node_id = NodeId(raw_node_id)
+                timestamp, reason = from_cbor(tuple[datetime, str], cbor.load(f))
+                node_id = NodeId(f.read(NodeId.LENGTH))
                 reflog.append(ReflogEntry(node_id, timestamp, reason))
         return reflog
 
 
 class Node:
+    kind: str
+
     def __init__(self, mvir, node_id, metadata, body_offset):
         self.__class__._check_metadata(metadata)
         self._mvir = mvir
@@ -106,14 +194,17 @@ class Node:
         self._body_offset = body_offset
         self._body = None
 
-    EXPECTED_METADATA_KEYS = {'kind'}
-
     @classmethod
     def _check_metadata(cls, metadata):
-        if metadata.keys() == cls.EXPECTED_METADATA_KEYS:
+        field_tys = _all_field_types(cls)
+
+        if not isinstance(metadata, dict):
+            raise TypeError('metadata should be a dict, but got %r (%r)' %
+                (metadata, type(metadata)))
+        if metadata.keys() == field_tys.keys():
             return True
-        missing = cls.EXPECTED_METADATA_KEYS - metadata.keys()
-        unexpected = metadata.keys() - cls.EXPECTED_METADATA_KEYS
+        missing = field_tys.keys() - metadata.keys()
+        unexpected = metadata.keys() - field_tys.keys()
         if missing and extra:
             raise ValueError('missing keys %r and unexpected keys %r for %s' %
                 (missing, unexpected, cls.__name__))
@@ -123,15 +214,21 @@ class Node:
             assert unexpected
             raise ValueError('unexpected keys %r for %s' % (unexpected, cls.__name__))
 
+        for k, v in metadata.items():
+            check_type(field_tys[k], v)
+
     @classmethod
     def new(cls, mvir, body=b'', **metadata):
         assert 'kind' not in metadata
         metadata['kind'] = cls.KIND
+        metadata = cls._metadata_from_cbor(to_cbor(metadata))
+        if isinstance(body, str):
+            body = body.encode('utf-8')
         return cls._create(mvir, metadata, body)
 
     @staticmethod
     def _create(mvir, metadata, body):
-        meta_bytes = cbor.dumps(metadata)
+        meta_bytes = cbor.dumps(to_cbor(metadata))
         h = hashlib.sha256()
         h.update(meta_bytes)
         h.update(body)
@@ -184,8 +281,17 @@ class Node:
         mvir._nodes[node_id] = n
         return n
 
-    @staticmethod
-    def _get(mvir, node_id):
+    @classmethod
+    def _metadata_from_cbor(cls, dct):
+        field_tys = _all_field_types(cls)
+        assert dct.keys() == field_tys.keys()
+        metadata = {}
+        for name, ty in field_tys.items():
+            metadata[name] = from_cbor(ty, dct[name])
+        return metadata
+
+    @classmethod
+    def _get(cls, mvir, node_id):
         if node_id in mvir._nodes:
             return mvir._nodes[node_id]
         else:
@@ -194,6 +300,7 @@ class Node:
                 metadata = cbor.load(f)
                 body_offset = f.tell()
             cls = NODE_KIND_MAP[metadata['kind']]
+            metadata = cls._metadata_from_cbor(metadata)
             n = cls(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n
             return n
@@ -210,6 +317,8 @@ class Node:
     def metadata(self):
         return self._metadata
 
+    kind = property(lambda self: self.metadata()['kind'])
+
     def body(self):
         if self._body is None:
             self._load_body()
@@ -220,7 +329,7 @@ class FileNode(Node):
 
 class TreeNode(Node):
     KIND = 'tree'
-    EXPECTED_METADATA_KEYS = Node.EXPECTED_METADATA_KEYS.union({'files'})
+    files: dict[str, NodeId]
 
     @classmethod
     def _check_metadata(cls, metadata):

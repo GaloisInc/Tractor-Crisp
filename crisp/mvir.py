@@ -340,7 +340,7 @@ class Node:
             return True
         missing = field_tys.keys() - metadata.keys()
         unexpected = metadata.keys() - field_tys.keys()
-        if missing and extra:
+        if missing and unexpected:
             raise ValueError('missing keys %r and unexpected keys %r for %s' %
                 (missing, unexpected, cls.__name__))
         elif missing:

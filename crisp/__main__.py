@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .mvir import MVIR, NodeId, FileNode, LlmOpNode
+from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode
 
 
 def parse_args():
@@ -30,6 +30,11 @@ def parse_args():
 
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
+
+    commit = sub.add_parser('commit')
+
+    checkout = sub.add_parser('checkout')
+    checkout.add_argument('node', nargs='?', default='current')
 
     return ap.parse_args()
 
@@ -168,6 +173,53 @@ def do_show(args, cfg):
     print('---')
     print(n.body().decode('utf-8'))
 
+def get_src_paths(cfg):
+    files = glob.glob(cfg.src_globs, root_dir=cfg.base_dir, recursive=True)
+    for name in files:
+        path = os.path.join(cfg.base_dir, name)
+        yield name, path
+
+def commit_node(mvir, cfg):
+    dct = {}
+    for name, path in get_src_paths(cfg):
+        with open(path, 'rb') as f:
+            dct[name] = FileNode.new(mvir, f.read()).node_id()
+    return TreeNode.new(mvir, files=dct)
+
+def do_commit(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    n = commit_node(mvir, cfg)
+    print('committed %s' % n.node_id())
+
+def do_checkout(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    new_n = mvir.node(node_id)
+    if not isinstance(new_n, TreeNode):
+        raise TypeError('expected TreeNode, but got %r' % (type(new_n),))
+
+    # Commit the old code so it won't be lost
+    old_n = commit_node(mvir, cfg)
+    print('old state is %s' % old_n.node_id())
+
+    # Remove old code
+    for name, path in get_src_paths(cfg):
+        os.unlink(path)
+
+    # Create files matching the new state
+    for name, file_node_id in new_n.files.items():
+        file_n = mvir.node(file_node_id)
+        path = os.path.join(cfg.base_dir, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(file_n.body())
+
+    print('checked out %s' % new_n.node_id())
+
 def main():
     args = parse_args()
 
@@ -184,6 +236,10 @@ def main():
         do_show(args, cfg)
     elif args.cmd == 'index':
         do_index(args, cfg)
+    elif args.cmd == 'commit':
+        do_commit(args, cfg)
+    elif args.cmd == 'checkout':
+        do_checkout(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

@@ -86,7 +86,7 @@ def from_cbor(ty, x):
         return ty.from_cbor(x)
 
 def check_type(ty, x):
-    origin = typing.get_origin(ty)
+    origin = typing.get_origin(ty) or ty
     if origin in (NoneType, bool, int, float, str, bytes):
         assert isinstance(x, ty)
     elif origin is list:
@@ -336,18 +336,17 @@ class Node:
         if not isinstance(metadata, dict):
             raise TypeError('metadata should be a dict, but got %r (%r)' %
                 (metadata, type(metadata)))
-        if metadata.keys() == field_tys.keys():
-            return True
-        missing = field_tys.keys() - metadata.keys()
-        unexpected = metadata.keys() - field_tys.keys()
-        if missing and unexpected:
-            raise ValueError('missing keys %r and unexpected keys %r for %s' %
-                (missing, unexpected, cls.__name__))
-        elif missing:
-            raise ValueError('missing keys %r for %s' % (missing, cls.__name__))
-        else:
-            assert unexpected
-            raise ValueError('unexpected keys %r for %s' % (unexpected, cls.__name__))
+        if metadata.keys() != field_tys.keys():
+            missing = field_tys.keys() - metadata.keys()
+            unexpected = metadata.keys() - field_tys.keys()
+            if missing and unexpected:
+                raise ValueError('missing keys %r and unexpected keys %r for %s' %
+                    (missing, unexpected, cls.__name__))
+            elif missing:
+                raise ValueError('missing keys %r for %s' % (missing, cls.__name__))
+            else:
+                assert unexpected
+                raise ValueError('unexpected keys %r for %s' % (unexpected, cls.__name__))
 
         for k, v in metadata.items():
             check_type(field_tys[k], v)

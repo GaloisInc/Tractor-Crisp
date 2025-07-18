@@ -51,7 +51,9 @@ def to_cbor(x):
     elif isinstance(x, (list, tuple)):
         return [to_cbor(y) for y in x]
     elif isinstance(x, dict):
-        return {to_cbor(k): to_cbor(v) for k,v in x.items()}
+        # Note: dict keys must be sortable.  Sorting ensures that the hash is
+        # consistent even if the dict insertion order varies.
+        return sorted(((to_cbor(k), to_cbor(v)) for k,v in x.items()), key=lambda x: x[0])
     elif isinstance(x, datetime):
         return (x.year, x.month, x.day, x.hour, x.minute, x.second, x.microsecond)
     else:
@@ -72,9 +74,10 @@ def from_cbor(ty, x):
         assert len(elem_tys) == len(x)
         return tuple(from_cbor(t, y) for t, y in zip(elem_tys, x))
     elif origin is dict:
-        assert isinstance(x, dict)
+        # Dicts are serialized as lists of pairs.
+        assert isinstance(x, (list, tuple))
         key_ty, value_ty = typing.get_args(ty)
-        return {from_cbor(key_ty, k): from_cbor(value_ty, v) for k,v in x.items()}
+        return {from_cbor(key_ty, k): from_cbor(value_ty, v) for k,v in x}
     elif origin is datetime:
         assert isinstance(x, (list, tuple))
         assert len(x) == 7
@@ -420,12 +423,14 @@ class Node:
         return n
 
     @classmethod
-    def _metadata_from_cbor(cls, dct):
+    def _metadata_from_cbor(cls, pairs):
         field_tys = _all_field_types(cls)
-        assert dct.keys() == field_tys.keys()
         metadata = {}
-        for name, ty in field_tys.items():
-            metadata[name] = from_cbor(ty, dct[name])
+        for name, value in pairs:
+            assert name not in metadata
+            ty = field_tys[name]
+            metadata[name] = from_cbor(ty, value)
+        assert metadata.keys() == field_tys.keys()
         return metadata
 
     @classmethod
@@ -437,7 +442,12 @@ class Node:
             with open(path, 'rb') as f:
                 metadata = cbor.load(f)
                 body_offset = f.tell()
-            cls = NODE_KIND_MAP[metadata['kind']]
+            for k,v in metadata:
+                if k == 'kind':
+                    cls = NODE_KIND_MAP[v]
+                    break
+            else:
+                raise KeyError('missing `kind` in metadata')
             metadata = cls._metadata_from_cbor(metadata)
             n = cls(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n

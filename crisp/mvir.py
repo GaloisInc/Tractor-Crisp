@@ -455,6 +455,13 @@ class Node:
     def metadata(self):
         return self._metadata
 
+    def read_raw_metadata(self):
+        '''Get the raw CBOR value of the metadata, without running `from_cbor`
+        on it.  Mainly useful for debugging metadata de/serialization.'''
+        path = self._mvir._node_path(self._node_id)
+        with open(path, 'rb') as f:
+            return cbor.load(f)
+
     kind = property(lambda self: self.metadata()['kind'])
 
     def body(self):

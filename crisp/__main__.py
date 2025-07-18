@@ -26,6 +26,7 @@ def parse_args():
 
     show = sub.add_parser('show')
     show.add_argument('node', nargs='?', default='current')
+    show.add_argument('--raw', action='store_true')
 
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
@@ -160,7 +161,10 @@ def do_show(args, cfg):
     print(node_id)
     n = mvir.node(node_id)
     from pprint import pprint
-    pprint(n.metadata())
+    if not args.raw:
+        pprint(n.metadata())
+    else:
+        pprint(n.read_raw_metadata())
     print('---')
     print(n.body().decode('utf-8'))
 

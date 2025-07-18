@@ -522,10 +522,26 @@ class LlmOpNode(Node):
     request = property(lambda self: self._metadata['request'])
     response = property(lambda self: self._metadata['response'])
 
+class TestResultNode(Node):
+    KIND = 'test_result_node'
+    code: NodeId
+    cmd: str
+    exit_code: int
+    # `body` stores the test output
+
+    code = property(lambda self: self._metadata['code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+
+    @property
+    def passed(self):
+        return self.exit_code == 0
+
 NODE_CLASSES = [
     FileNode,
     TreeNode,
     LlmOpNode,
+    TestResultNode,
 ]
 
 def _build_node_kind_map(classes):

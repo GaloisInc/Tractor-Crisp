@@ -36,6 +36,8 @@ def parse_args():
     checkout = sub.add_parser('checkout')
     checkout.add_argument('node', nargs='?', default='current')
 
+    llm = sub.add_parser('llm')
+
     return ap.parse_args()
 
 
@@ -71,16 +73,23 @@ Output the resulting Rust code in a Markdown code block.
 ```
 '''
 
-def do_llm(cfg):
+def do_llm(args, cfg):
+    '''Apply an LLM-based transformation to the codebase.  This takes the files
+    identified by `cfg.src_globs`, passes them to the LLM, and overwrites the
+    files with updated versions.  This creates a new `LlmOpNode` in the MVIR,
+    which references the old and new states of the codebase, and records the
+    node in the `op_history` reflog.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    files = glob.glob(cfg.src_globs, root_dir=cfg.base_dir, recursive=True)
-    assert len(files) == 1, 'expected exactly 1 src file, but got %r' % (files,)
-    path = os.path.join(cfg.base_dir, files[0])
+    n_tree = commit_node(mvir, cfg)
+    assert isinstance(n_tree, TreeNode)
+    assert len(n_tree.files) == 1, 'multi-file projects are not yet supported'
 
-    orig_rust_code = open(path).read()
-    n_old = FileNode.new(mvir, orig_rust_code.encode('utf-8'))
-    mvir.set_tag('current', n_old, 'old')
+    (name, n_file_id), = list(n_tree.files.items())
+    n_file = mvir.node(n_file_id)
+    path = os.path.join(cfg.base_dir, name)
+
+    orig_rust_code = n_file.body().decode('utf-8')
     prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
 
     print(prompt)
@@ -110,23 +119,24 @@ def do_llm(cfg):
     code = d
     print(d)
 
-    # Success - back up the previous version and overwrite with the new one.
-    back_up_file(path)
-    n_new = FileNode.new(mvir, code.encode('utf-8'))
-    mvir.set_tag('current', n_new, 'new')
-    open(path, 'w').write(code)
+    # Success - save the new version.
+    n_new_file = FileNode.new(mvir, code.encode('utf-8'))
+    n_new_tree = TreeNode.new(mvir, files={name: n_new_file.node_id()})
+    open(path, 'wb').write(n_new_file.body())
 
     n_op = LlmOpNode.new(
             mvir,
-            old_code = n_old.node_id(),
-            new_code = n_new.node_id(),
+            old_code = n_tree.node_id(),
+            new_code = n_new_tree.node_id(),
             raw_prompt = FileNode.new(mvir, LLM_PROMPT).node_id(),
             request = FileNode.new(mvir, json.dumps(req)).node_id(),
             response = FileNode.new(mvir, json.dumps(resp)).node_id(),
             )
+    # Record operations and timestamps in the `op_history` reflog.
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
-    for x in mvir.tag_reflog('current'):
-        print(x)
+    print('new state: %s' % n_new_tree.node_id())
+    print('operation: %s' % n_op.node_id())
 
 def do_test(cfg):
     try:
@@ -140,7 +150,7 @@ def do_test(cfg):
 
 def do_main(args, cfg):
     print(cfg)
-    do_llm(cfg)
+    do_llm(args, cfg)
     do_test(cfg)
 
 def do_reflog(args, cfg):
@@ -240,6 +250,8 @@ def main():
         do_commit(args, cfg)
     elif args.cmd == 'checkout':
         do_checkout(args, cfg)
+    elif args.cmd == 'llm':
+        do_llm(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

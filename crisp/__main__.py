@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode
+from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, TestResultNode
 
 
 def parse_args():
@@ -37,6 +37,8 @@ def parse_args():
     checkout.add_argument('node', nargs='?', default='current')
 
     llm = sub.add_parser('llm')
+
+    test = sub.add_parser('test')
 
     return ap.parse_args()
 
@@ -138,20 +140,33 @@ def do_llm(args, cfg):
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
 
-def do_test(cfg):
-    try:
-        subprocess.run(cfg.test_command, shell=True, check=True,
-            cwd=cfg.base_dir)
-        return True
-    except subprocess.CalledProcessError as e:
-        print('test command exited with code %d:\n```sh\n%s\n```' %
-            (e.returncode, e.cmd.rstrip()))
-        return False
+def do_test(args, cfg):
+    '''Run a test on the current codebase.  This produces a `TestResultNode`
+    and adds it to the `test_results` reflog.  If the test succeeds, this also
+    adds it to the `test_passed` reflog.'''
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    n_code = commit_node(mvir, cfg)
+    p = subprocess.run(cfg.test_command, shell=True, cwd=cfg.base_dir,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    n = TestResultNode.new(
+            mvir,
+            code = n_code.node_id(),
+            cmd = cfg.test_command,
+            exit_code = p.returncode,
+            body = p.stdout,
+            )
+    mvir.set_tag('test_results', n.node_id(), None)
+    if n.passed:
+        mvir.set_tag('test_passed', n.node_id(), None)
+    print(n.body().decode('utf-8'))
+    print('\ntest process %s with code %d:\n%s' % (
+        'passed' if n.passed else 'failed', n.exit_code, n.cmd))
+    print('result: %s' % n.node_id())
 
 def do_main(args, cfg):
     print(cfg)
     do_llm(args, cfg)
-    do_test(cfg)
+    do_test(args, cfg)
 
 def do_reflog(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -252,6 +267,8 @@ def main():
         do_checkout(args, cfg)
     elif args.cmd == 'llm':
         do_llm(args, cfg)
+    elif args.cmd == 'test':
+        do_test(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

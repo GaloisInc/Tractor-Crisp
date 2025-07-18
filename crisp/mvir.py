@@ -353,7 +353,7 @@ class Node:
     def new(cls, mvir, body=b'', **metadata):
         assert 'kind' not in metadata
         metadata['kind'] = cls.KIND
-        metadata = cls._metadata_from_cbor(to_cbor(metadata))
+        cls._check_metadata(metadata)
         if isinstance(body, str):
             body = body.encode('utf-8')
         return cls._create(mvir, metadata, body)

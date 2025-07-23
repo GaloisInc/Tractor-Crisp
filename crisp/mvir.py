@@ -6,7 +6,7 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 from types import NoneType
 from weakref import WeakValueDictionary
 
@@ -82,6 +82,13 @@ def from_cbor(ty, x):
         assert isinstance(x, (list, tuple))
         assert len(x) == 7
         return datetime(*x)
+    elif origin is typing.Union:
+        for variant_ty in typing.get_args(ty):
+            try:
+                return from_cbor(variant_ty, x)
+                return
+            except (TypeError, AssertionError):
+                pass
     else:
         return ty.from_cbor(x)
 
@@ -106,6 +113,13 @@ def check_type(ty, x):
         for k, v in x.items():
             check_type(key_ty, k)
             check_type(value_ty, v)
+    elif origin is typing.Union:
+        for variant_ty in typing.get_args(ty):
+            try:
+                check_type(variant_ty, x)
+                return
+            except (TypeError, AssertionError):
+                pass
     else:
         return ty.check_type(x)
 
@@ -500,6 +514,16 @@ class TreeNode(Node):
 
     files = property(lambda self: self._metadata['files'])
 
+class CompileCommandsOpNode(Node):
+    KIND = 'compile_commands_op'
+    cmd: list[str]
+    exit_code: int
+    compile_commands: Optional[NodeId]
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    compile_commands = property(lambda self: self._metadata['compile_commands'])
+
 class LlmOpNode(Node):
     KIND = 'llm_op'
     old_code: NodeId
@@ -540,6 +564,7 @@ class TestResultNode(Node):
 NODE_CLASSES = [
     FileNode,
     TreeNode,
+    CompileCommandsOpNode,
     LlmOpNode,
     TestResultNode,
 ]

@@ -7,9 +7,12 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 
 from .config import Config
-from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, TestResultNode
+from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
+    TestResultNode, CompileCommandsOpNode
+
 
 
 def parse_args():
@@ -35,6 +38,8 @@ def parse_args():
 
     checkout = sub.add_parser('checkout')
     checkout.add_argument('node', nargs='?', default='current')
+
+    cc_cmake = sub.add_parser('cc_cmake')
 
     llm = sub.add_parser('llm')
 
@@ -139,6 +144,32 @@ def do_llm(args, cfg):
 
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
+
+def do_cc_cmake(args, cfg):
+    '''Generate compile_commands.json by running `cmake`.'''
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    src_dir = cfg.transpile.cmake_src_dir
+    with tempfile.TemporaryDirectory(prefix='build.', dir=src_dir) as build_dir:
+        cmake_cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
+        p = subprocess.run(cmake_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if p.returncode == 0:
+            with open(os.path.join(build_dir, 'compile_commands.json')) as f:
+                n_cc = FileNode.new(mvir, f.read())
+        else:
+            n_cc = None
+        n_op = CompileCommandsOpNode.new(
+            mvir,
+            body = p.stdout,
+            cmd = cmake_cmd,
+            exit_code = p.returncode,
+            compile_commands = n_cc.node_id() if n_cc is not None else None,
+            )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+
+    print('cmake process %s with code %d:\n%s' % (
+        'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+    print('result: %s' % n_op.node_id())
 
 def do_test(args, cfg):
     '''Run a test on the current codebase.  This produces a `TestResultNode`
@@ -265,6 +296,8 @@ def main():
         do_commit(args, cfg)
     elif args.cmd == 'checkout':
         do_checkout(args, cfg)
+    elif args.cmd == 'cc_cmake':
+        do_cc_cmake(args, cfg)
     elif args.cmd == 'llm':
         do_llm(args, cfg)
     elif args.cmd == 'test':

@@ -2,6 +2,7 @@ from cbor import cbor
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import json
 import os
 import stat
 import tempfile
@@ -82,6 +83,8 @@ def from_cbor(ty, x):
         assert isinstance(x, (list, tuple))
         assert len(x) == 7
         return datetime(*x)
+    elif origin is typing.Any:
+        return x
     elif origin is typing.Union:
         for variant_ty in typing.get_args(ty):
             try:
@@ -261,7 +264,7 @@ class MVIR:
         size = os.stat(path).st_size
         with open(path, 'rb') as f:
             while f.tell() < size:
-                timestamp, reason = from_cbor(tuple[datetime, str], cbor.load(f))
+                timestamp, reason = from_cbor(tuple[datetime, Any], cbor.load(f))
                 node_id = NodeId(f.read(NodeId.LENGTH))
                 reflog.append(ReflogEntry(node_id, timestamp, reason))
         return reflog
@@ -342,6 +345,7 @@ class Node:
         self._metadata = metadata
         self._body_offset = body_offset
         self._body = None
+        self._body_json = None
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -492,6 +496,11 @@ class Node:
             self._load_body()
         return self._body
 
+    def body_json(self):
+        if self._body_json is None:
+            self._body_json = json.loads(self.body().decode('utf-8'))
+        return self._body_json
+
 class FileNode(Node):
     KIND = 'file'
 
@@ -525,6 +534,20 @@ class CompileCommandsOpNode(Node):
     cmd = property(lambda self: self._metadata['cmd'])
     exit_code = property(lambda self: self._metadata['exit_code'])
     compile_commands = property(lambda self: self._metadata['compile_commands'])
+
+class TranspileOpNode(Node):
+    KIND = 'transpile_op'
+    compile_commands: NodeId
+    c_code: NodeId
+    cmd: list[str]
+    exit_code: int
+    rust_code: Optional[NodeId]
+
+    compile_commands = property(lambda self: self._metadata['compile_commands'])
+    c_code = property(lambda self: self._metadata['c_code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    rust_code = property(lambda self: self._metadata['rust_code'])
 
 class LlmOpNode(Node):
     KIND = 'llm_op'
@@ -567,6 +590,7 @@ NODE_CLASSES = [
     FileNode,
     TreeNode,
     CompileCommandsOpNode,
+    TranspileOpNode,
     LlmOpNode,
     TestResultNode,
 ]

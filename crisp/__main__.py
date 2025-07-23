@@ -13,7 +13,7 @@ from typing import Union, Sequence
 
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode
+    TestResultNode, CompileCommandsOpNode, TranspileOpNode
 
 
 
@@ -45,6 +45,10 @@ def parse_args():
 
     cc_cmake = sub.add_parser('cc_cmake')
     cc_cmake.add_argument('node', nargs='?', default='c_code')
+
+    transpile = sub.add_parser('transpile')
+    transpile.add_argument('compile_commands_node', nargs='?', default='compile_commands')
+    transpile.add_argument('c_code_node', nargs='?')
 
     llm = sub.add_parser('llm')
 
@@ -208,6 +212,10 @@ def do_llm(args, cfg):
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
 
+# We always check out the compile_commands.json at a consistent path, in case
+# it contains relative paths.
+COMPILE_COMMANDS_PATH = 'build/compile_commands.json'
+
 def do_cc_cmake(args, cfg):
     '''Generate compile_commands.json by running `cmake`.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -219,8 +227,8 @@ def do_cc_cmake(args, cfg):
     node = mvir.node(node_id)
 
     with lock_work_dir(cfg, mvir) as wd:
-        src_dir = wd.path
-        build_dir = wd.join('build')
+        src_dir = wd.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
+        build_dir = wd.join(os.path.dirname(COMPILE_COMMANDS_PATH))
 
         wd.checkout(node)
 
@@ -228,9 +236,10 @@ def do_cc_cmake(args, cfg):
         p = subprocess.run(cmake_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         if p.returncode == 0:
-            n_cc = wd.commit_file('build/compile_commands.json')
+            n_cc = wd.commit_file(COMPILE_COMMANDS_PATH)
         else:
             n_cc = None
+        n_cc_id = n_cc.node_id() if n_cc is not None else None
 
     n_op = CompileCommandsOpNode.new(
         mvir,
@@ -238,7 +247,7 @@ def do_cc_cmake(args, cfg):
         c_code = node.node_id(),
         cmd = cmake_cmd,
         exit_code = p.returncode,
-        compile_commands = n_cc.node_id() if n_cc is not None else None,
+        compile_commands = n_cc_id,
         )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_cc is not None:
@@ -248,7 +257,74 @@ def do_cc_cmake(args, cfg):
         print(n_op.body().decode('utf-8'))
     print('cmake process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
-    print('result: %s' % n_op.node_id())
+    print('operation: %s' % n_op.node_id())
+    print('result: %s' % n_cc_id)
+
+def do_transpile(args, cfg):
+    '''Transpile from C to unsafe Rust.'''
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        cc_node_id = NodeId.from_str(args.compile_commands_node)
+    except ValueError:
+        cc_node_id = mvir.tag(args.compile_commands_node)
+    n_cc = mvir.node(cc_node_id)
+
+    if args.c_code_node is not None:
+        try:
+            c_code_node_id = NodeId.from_str(args.c_code_node)
+        except ValueError:
+            c_code_node_id = mvir.tag(args.c_code_node)
+    else:
+        for ie in mvir.index(n_cc.node_id()):
+            if ie.kind == 'compile_commands_op' and ie.key == 'compile_commands':
+                n_op = mvir.node(ie.node_id)
+                c_code_node_id = n_op.c_code
+                break
+        else:
+            raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
+    n_c_code = mvir.node(c_code_node_id)
+
+    with lock_work_dir(cfg, mvir) as wd:
+        output_path = cfg.relative_path(cfg.transpile.output_dir)
+
+        wd.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
+        wd.checkout(n_c_code)
+
+        # Run c2rust-transpile
+        c2rust_cmd = [
+                'c2rust-transpile',
+                wd.join(COMPILE_COMMANDS_PATH),
+                '--output-dir', wd.join(output_path),
+                '--emit-build-files',
+                ]
+        p = subprocess.run(c2rust_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        if p.returncode == 0:
+            n_rust_code = wd.commit(os.path.join(output_path, '**/*.*'))
+        else:
+            n_rust_code = None
+        n_rust_code_id = n_rust_code.node_id() if n_rust_code is not None else None
+
+    n_op = TranspileOpNode.new(
+        mvir,
+        body = p.stdout,
+        compile_commands = n_cc.node_id(),
+        c_code = n_c_code.node_id(),
+        cmd = c2rust_cmd,
+        exit_code = p.returncode,
+        rust_code = n_rust_code_id,
+        )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    if n_rust_code is not None:
+        mvir.set_tag('current', n_rust_code.node_id())
+
+    if p.returncode != 0:
+        print(p.stdout.decode('utf-8'))
+    print('c2rust process %s with code %d:\n%s' % (
+        'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+    print('operation: %s' % n_op.node_id())
+    print('result: %s' % n_rust_code_id)
 
 def do_test(args, cfg):
     '''Run a test on the current codebase.  This produces a `TestResultNode`
@@ -328,10 +404,7 @@ def do_commit(args, cfg):
     all_paths = {}
     for path in args.path:
         abs_path = os.path.abspath(path)
-        assert os.path.commonpath((base, abs_path)) == base, \
-                'path %r is outside project base directory %r' % (abs_path, base)
-        rel_path = os.path.relpath(abs_path, base)
-        assert not rel_path.startswith(os.pardir + os.sep)
+        rel_path = cfg.relative_path(abs_path)
         assert all_paths.get(rel_path, abs_path) == abs_path
         all_paths[rel_path] = abs_path
 
@@ -398,6 +471,8 @@ def main():
         do_checkout(args, cfg)
     elif args.cmd == 'cc_cmake':
         do_cc_cmake(args, cfg)
+    elif args.cmd == 'transpile':
+        do_transpile(args, cfg)
     elif args.cmd == 'llm':
         do_llm(args, cfg)
     elif args.cmd == 'test':

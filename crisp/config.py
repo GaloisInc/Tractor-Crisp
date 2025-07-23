@@ -40,6 +40,16 @@ class Config(ConfigBase):
         object.__setattr__(self, 'mvir_storage_dir',
             os.path.join(config_dir, self.mvir_storage_dir))
 
+    def relative_path(self, path):
+        """Convert `path` to a relative path based on `self.base_dir`."""
+        base_abs = os.path.abspath(self.base_dir)
+        path_abs = os.path.abspath(path)
+        assert os.path.commonpath((base_abs, path_abs)) == base_abs, \
+                'path %r is outside project base directory %r' % (path_abs, base_abs)
+        path_rel = os.path.relpath(path_abs, base_abs)
+        assert not path_rel.startswith(os.pardir + os.sep)
+        return path_rel
+
 @dataclass(frozen = True)
 class TranspileConfig(ConfigBase):
     config_path: str

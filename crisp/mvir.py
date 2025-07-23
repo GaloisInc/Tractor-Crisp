@@ -516,10 +516,12 @@ class TreeNode(Node):
 
 class CompileCommandsOpNode(Node):
     KIND = 'compile_commands_op'
+    c_code: NodeId
     cmd: list[str]
     exit_code: int
     compile_commands: Optional[NodeId]
 
+    c_code = property(lambda self: self._metadata['c_code'])
     cmd = property(lambda self: self._metadata['cmd'])
     exit_code = property(lambda self: self._metadata['exit_code'])
     compile_commands = property(lambda self: self._metadata['compile_commands'])

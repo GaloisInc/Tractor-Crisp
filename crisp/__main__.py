@@ -35,6 +35,8 @@ def parse_args():
     index.add_argument('node', nargs='?', default='current')
 
     commit = sub.add_parser('commit')
+    commit.add_argument('--tag', '-t', default='current')
+    commit.add_argument('path', nargs='*')
 
     checkout = sub.add_parser('checkout')
     checkout.add_argument('node', nargs='?', default='current')
@@ -244,8 +246,29 @@ def commit_node(mvir, cfg):
 
 def do_commit(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    n = commit_node(mvir, cfg)
-    print('committed %s' % n.node_id())
+
+    base = os.path.abspath(cfg.base_dir)
+    all_paths = {}
+    for path in args.path:
+        abs_path = os.path.abspath(path)
+        assert os.path.commonpath((base, abs_path)) == base, \
+                'path %r is outside project base directory %r' % (abs_path, base)
+        rel_path = os.path.relpath(abs_path, base)
+        assert not rel_path.startswith(os.pardir + os.sep)
+        assert all_paths.get(rel_path, abs_path) == abs_path
+        all_paths[rel_path] = abs_path
+
+    dct = {}
+    for rel_path, abs_path in all_paths.items():
+        assert rel_path not in dct
+        with open(abs_path, 'rb') as f:
+            n_file = FileNode.new(mvir, f.read())
+            print('%s: %s' % (rel_path, n_file.node_id()))
+            dct[rel_path] = n_file.node_id()
+    n = TreeNode.new(mvir, files=dct)
+
+    mvir.set_tag(args.tag, n.node_id())
+    print('committed %s = %s' % (args.tag, n.node_id()))
 
 def do_checkout(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')

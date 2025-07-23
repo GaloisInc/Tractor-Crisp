@@ -251,7 +251,7 @@ def do_cc_cmake(args, cfg):
         )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_cc is not None:
-        mvir.set_tag('compile_commands', n_cc.node_id())
+        mvir.set_tag('compile_commands', n_cc.node_id(), n_op.kind)
 
     if n_op.exit_code != 0:
         print(n_op.body().decode('utf-8'))
@@ -317,7 +317,7 @@ def do_transpile(args, cfg):
         )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_rust_code is not None:
-        mvir.set_tag('current', n_rust_code.node_id())
+        mvir.set_tag('current', n_rust_code.node_id(), n_op.kind)
 
     if p.returncode != 0:
         print(p.stdout.decode('utf-8'))
@@ -417,7 +417,7 @@ def do_commit(args, cfg):
             dct[rel_path] = n_file.node_id()
     n = TreeNode.new(mvir, files=dct)
 
-    mvir.set_tag(args.tag, n.node_id())
+    mvir.set_tag(args.tag, n.node_id(), 'commit')
     print('committed %s = %s' % (args.tag, n.node_id()))
 
 def do_checkout(args, cfg):

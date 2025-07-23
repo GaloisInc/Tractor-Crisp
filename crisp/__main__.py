@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import glob
 import json
 import os
+import pathlib
 import requests
 import shutil
 import stat
@@ -51,6 +52,7 @@ def parse_args():
     transpile.add_argument('c_code_node', nargs='?')
 
     llm = sub.add_parser('llm')
+    llm.add_argument('node', nargs='?', default='current')
 
     test = sub.add_parser('test')
 
@@ -155,11 +157,20 @@ def do_llm(args, cfg):
     node in the `op_history` reflog.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    n_tree = commit_node(mvir, cfg)
-    assert isinstance(n_tree, TreeNode)
-    assert len(n_tree.files) == 1, 'multi-file projects are not yet supported'
+    try:
+        node_id = NodeId.from_str(args.node)
+        dest_tag = 'current'
+    except ValueError:
+        node_id = mvir.tag(args.node)
+        dest_tag = args.node
+    n_tree = mvir.node(node_id)
 
-    (name, n_file_id), = list(n_tree.files.items())
+    assert isinstance(n_tree, TreeNode)
+
+    filtered_files = {k: v for k,v in n_tree.files.items()
+        if any(pathlib.Path(k).match(glob) for glob in cfg.src_globs)}
+    assert len(filtered_files) == 1, 'multi-file projects are not yet supported'
+    (name, n_file_id), = list(filtered_files.items())
     n_file = mvir.node(n_file_id)
     path = os.path.join(cfg.base_dir, name)
 
@@ -191,12 +202,12 @@ def do_llm(args, cfg):
         c, sep, d = a.rpartition('\n```rust\n')
     assert sep != ''
     code = d
-    print(d)
 
     # Success - save the new version.
     n_new_file = FileNode.new(mvir, code.encode('utf-8'))
-    n_new_tree = TreeNode.new(mvir, files={name: n_new_file.node_id()})
-    open(path, 'wb').write(n_new_file.body())
+    new_files = n_tree.files.copy()
+    new_files[name] = n_new_file.node_id()
+    n_new_tree = TreeNode.new(mvir, files=new_files)
 
     n_op = LlmOpNode.new(
             mvir,
@@ -208,6 +219,7 @@ def do_llm(args, cfg):
             )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
 
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
@@ -385,7 +397,9 @@ def do_show(args, cfg):
     print(n.body().decode('utf-8'))
 
 def get_src_paths(cfg):
-    files = glob.glob(cfg.src_globs, root_dir=cfg.base_dir, recursive=True)
+    files = set(f
+        for g in cfg.src_globs
+        for f in glob.glob(g, root_dir=cfg.base_dir, recursive=True))
     for name in files:
         path = os.path.join(cfg.base_dir, name)
         yield name, path

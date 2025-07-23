@@ -39,6 +39,8 @@ class Config(ConfigBase):
         object.__setattr__(self, 'base_dir', os.path.join(config_dir, self.base_dir))
         object.__setattr__(self, 'mvir_storage_dir',
             os.path.join(config_dir, self.mvir_storage_dir))
+        if isinstance(self.src_globs, str):
+            object.__setattr__(self, 'src_globs', [self.src_globs])
 
     def relative_path(self, path):
         """Convert `path` to a relative path based on `self.base_dir`."""

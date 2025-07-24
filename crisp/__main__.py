@@ -22,6 +22,10 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', '-c', dest='config_path', default='crisp.toml')
     ap.add_argument('--mvir-storage-dir')
+    ap.add_argument('--keep-work-dir', action='store_true',
+        help='Preserve the `crisp-storage/work` temp directory.  '
+            'Useful for debugging.  You must remove the directory manually '
+            'before running further commands.')
 
     sub = ap.add_subparsers(dest='cmd')
 
@@ -116,6 +120,8 @@ class WorkDir:
     def join(self, *args, **kwargs):
         return os.path.join(self.path, *args, **kwargs)
 
+KEEP_WORK_DIR = False
+
 @contextmanager
 def lock_work_dir(cfg, mvir):
     """
@@ -131,7 +137,8 @@ def lock_work_dir(cfg, mvir):
     try:
         yield WorkDir(mvir, work_dir)
     finally:
-        shutil.rmtree(work_dir)
+        if not KEEP_WORK_DIR:
+            shutil.rmtree(work_dir)
 
 
 LLM_ENDPOINT = 'http://localhost:8080/v1/chat/completions'
@@ -465,6 +472,9 @@ def do_checkout(args, cfg):
 
 def main():
     args = parse_args()
+
+    global KEEP_WORK_DIR
+    KEEP_WORK_DIR = args.keep_work_dir
 
     cfg_kwargs = {}
     if args.mvir_storage_dir is not None:

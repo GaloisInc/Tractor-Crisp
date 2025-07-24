@@ -574,6 +574,9 @@ class LlmOpNode(Node):
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: NodeId
+    # `test_code` is a `TreeNode` containing additional code used only for
+    # testing (e.g. the code for the test driver).
+    test_code: NodeId
     cmd: str
     exit_code: int
     # `body` stores the test output

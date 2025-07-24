@@ -59,6 +59,8 @@ def parse_args():
     llm.add_argument('node', nargs='?', default='current')
 
     test = sub.add_parser('test')
+    test.add_argument('node', nargs='?', default='current')
+    test.add_argument('--c-code', default='c_code')
 
     return ap.parse_args()
 
@@ -346,16 +348,36 @@ def do_transpile(args, cfg):
     print('result: %s' % n_rust_code_id)
 
 def do_test(args, cfg):
-    '''Run a test on the current codebase.  This produces a `TestResultNode`
-    and adds it to the `test_results` reflog.  If the test succeeds, this also
-    adds it to the `test_passed` reflog.'''
+    """
+    Run a test on the current codebase.  This produces a `TestResultNode` and
+    adds it to the `test_results` reflog.  If the test succeeds, this also adds
+    it to the `test_passed` reflog.
+    """
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    n_code = commit_node(mvir, cfg)
-    p = subprocess.run(cfg.test_command, shell=True, cwd=cfg.base_dir,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    n_code = mvir.node(node_id)
+
+    try:
+        c_code_node_id = NodeId.from_str(args.c_code)
+    except ValueError:
+        c_code_node_id = mvir.tag(args.c_code)
+    n_c_code = mvir.node(c_code_node_id)
+
+    with lock_work_dir(cfg, mvir) as wd:
+        wd.checkout(n_code)
+        wd.checkout(n_c_code)
+
+        p = subprocess.run(cfg.test_command, shell=True, cwd=wd.path,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
     n = TestResultNode.new(
             mvir,
             code = n_code.node_id(),
+            test_code = n_c_code.node_id(),
             cmd = cfg.test_command,
             exit_code = p.returncode,
             body = p.stdout,
@@ -363,6 +385,7 @@ def do_test(args, cfg):
     mvir.set_tag('test_results', n.node_id(), None)
     if n.passed:
         mvir.set_tag('test_passed', n.node_id(), None)
+
     print(n.body().decode('utf-8'))
     print('\ntest process %s with code %d:\n%s' % (
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))

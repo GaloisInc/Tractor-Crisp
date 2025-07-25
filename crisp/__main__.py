@@ -37,6 +37,8 @@ def parse_args():
     show = sub.add_parser('show')
     show.add_argument('node', nargs='?', default='current')
     show.add_argument('--raw', action='store_true')
+    show.add_argument('--files', action='store_true',
+        help='If the target node is a TreeNode, show all files in the tree.')
 
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
@@ -427,8 +429,13 @@ def do_show(args, cfg):
         pprint(n.metadata())
     else:
         pprint(n.read_raw_metadata())
-    print('---')
-    print(n.body().decode('utf-8'))
+    if not args.files:
+        print('---')
+        print(n.body().decode('utf-8'))
+    else:
+        for name, file_node_id in n.files.items():
+            print(' --- %s: ---' % name)
+            print(mvir.node(file_node_id).body().decode('utf-8'))
 
 def get_src_paths(cfg):
     files = set(f

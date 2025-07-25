@@ -582,6 +582,7 @@ class TestResultNode(Node):
     # `body` stores the test output
 
     code = property(lambda self: self._metadata['code'])
+    test_code = property(lambda self: self._metadata['test_code'])
     cmd = property(lambda self: self._metadata['cmd'])
     exit_code = property(lambda self: self._metadata['exit_code'])
 

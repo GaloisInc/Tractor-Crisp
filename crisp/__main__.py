@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import analysis
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
@@ -293,24 +294,7 @@ def do_test(args, cfg):
         c_code_node_id = mvir.tag(args.c_code)
     n_c_code = mvir.node(c_code_node_id)
 
-    with lock_work_dir(cfg, mvir) as wd:
-        wd.checkout(n_code)
-        wd.checkout(n_c_code)
-
-        p = subprocess.run(cfg.test_command, shell=True, cwd=wd.path,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-    n = TestResultNode.new(
-            mvir,
-            code = n_code.node_id(),
-            test_code = n_c_code.node_id(),
-            cmd = cfg.test_command,
-            exit_code = p.returncode,
-            body = p.stdout,
-            )
-    mvir.set_tag('test_results', n.node_id(), None)
-    if n.passed:
-        mvir.set_tag('test_passed', n.node_id(), None)
+    n = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
 
     print(n.body().decode('utf-8'))
     print('\ntest process %s with code %d:\n%s' % (

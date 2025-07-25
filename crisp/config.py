@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import os
 import toml
 import typing
+from typing import Optional
 
 class ConfigBase:
     @classmethod
@@ -9,7 +10,7 @@ class ConfigBase:
         d.update(kwargs)
         field_tys = typing.get_type_hints(cls)
         for k, v in d.items():
-            if issubclass(field_tys[k], ConfigBase):
+            if isinstance(field_tys[k], type) and issubclass(field_tys[k], ConfigBase):
                 d[k] = field_tys[k].from_dict(v, config_path)
         return cls(config_path=config_path, **d)
 
@@ -57,6 +58,10 @@ class TranspileConfig(ConfigBase):
     config_path: str
     cmake_src_dir: str
     output_dir: str
+    # Basename (without extension) of the compilation unit that contains the
+    # `main` entry point, if the project produces a binary.  For example, if
+    # `main` is defined in `driver.c`, this should be set to `driver`.
+    bin_main: Optional[str] = None
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

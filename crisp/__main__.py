@@ -319,6 +319,10 @@ def do_transpile(args, cfg):
                 '--output-dir', wd.join(output_path),
                 '--emit-build-files',
                 ]
+        if cfg.transpile.bin_main is not None:
+            c2rust_cmd.extend((
+                '--binary', cfg.transpile.bin_main,
+                ))
         p = subprocess.run(c2rust_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         if p.returncode == 0:

@@ -45,11 +45,10 @@ class WorkContainer:
 
     def stop(self):
         if self.container is not None:
-            #self.container.remove(v=True)
             self.container.stop(timeout=5)
+            #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
-        print('tar size = %d' % len(tar_bytes))
         self.container.put_archive('/root/work/', tar_bytes)
 
     def checkout(self, n_tree):
@@ -118,7 +117,23 @@ class WorkContainer:
             # `exec_run` requires either a list or str, not a tuple.
             cmd = list(cmd)
 
-        return self.container.exec_run(cmd, workdir='/root/work')
+        exit_code, logs = self.container.exec_run(cmd, workdir='/root/work')
+        parsed_logs = b''.join(data for fd, data in _log_entries(logs))
+        return exit_code, parsed_logs
+
+
+def _log_entries(b):
+    i = 0
+
+    while i < len(b):
+        fd = b[i]
+        data_size = int.from_bytes(b[i + 1 : i + 8], byteorder='big', signed=False)
+        i += 8
+        start = i
+        i += data_size
+        end = i
+        data = b[start : end]
+        yield fd, data
 
 
 KEEP_WORK_CONTAINER = False

@@ -5,7 +5,7 @@ import typing
 
 from .config import Config
 from .mvir import MVIR, NodeId, Node, TreeNode, TestResultNode
-from .work_dir import lock_work_dir
+from .work_container import run_work_container
 
 
 def _as_node_id(x):
@@ -112,20 +112,19 @@ def analysis(f):
 @analysis
 def run_tests(cfg: Config, mvir: MVIR,
         code: TreeNode, test_code: TreeNode, cmd: str) -> TestResultNode:
-    with lock_work_dir(cfg, mvir) as wd:
-        wd.checkout(code)
-        wd.checkout(test_code)
+    with run_work_container(cfg, mvir) as wc:
+        wc.checkout(code)
+        wc.checkout(test_code)
 
-        p = subprocess.run(cmd, shell=True, cwd=wd.path,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        exit_code, logs = wc.run(cmd, shell=True)
 
     n = TestResultNode.new(
             mvir,
             code = code.node_id(),
             test_code = test_code.node_id(),
             cmd = cmd,
-            exit_code = p.returncode,
-            body = p.stdout,
+            exit_code = exit_code,
+            body = logs,
             )
     mvir.set_tag('test_results', n.node_id(), None)
     if n.passed:

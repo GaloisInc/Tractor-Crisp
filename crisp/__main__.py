@@ -13,6 +13,7 @@ from . import analysis
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
+from .work_container import run_work_container, set_keep_work_container
 from .work_dir import lock_work_dir, set_keep_work_dir
 
 
@@ -170,27 +171,29 @@ def do_cc_cmake(args, cfg):
         node_id = mvir.tag(args.node)
     node = mvir.node(node_id)
 
-    with lock_work_dir(cfg, mvir) as wd:
-        src_dir = wd.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = wd.join(os.path.dirname(COMPILE_COMMANDS_PATH))
+    with run_work_container(cfg, mvir) as wc:
+        src_dir = wc.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
+        build_dir = wc.join(os.path.dirname(COMPILE_COMMANDS_PATH))
 
-        wd.checkout(node)
+        print(node_id, node)
+        wc.checkout(node)
 
         cmake_cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
-        p = subprocess.run(cmake_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        exit_code, logs = wc.run(cmake_cmd)
 
-        if p.returncode == 0:
-            n_cc = wd.commit_file(COMPILE_COMMANDS_PATH)
+        if exit_code == 0:
+            n_cc = wc.commit_file(COMPILE_COMMANDS_PATH)
         else:
             n_cc = None
         n_cc_id = n_cc.node_id() if n_cc is not None else None
 
     n_op = CompileCommandsOpNode.new(
         mvir,
-        body = p.stdout,
+        # TODO: parse logs
+        body = logs,
         c_code = node.node_id(),
         cmd = cmake_cmd,
-        exit_code = p.returncode,
+        exit_code = exit_code,
         compile_commands = n_cc_id,
         )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
@@ -229,46 +232,47 @@ def do_transpile(args, cfg):
             raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
     n_c_code = mvir.node(c_code_node_id)
 
-    with lock_work_dir(cfg, mvir) as wd:
+    with run_work_container(cfg, mvir) as wc:
         output_path = cfg.relative_path(cfg.transpile.output_dir)
 
-        wd.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
-        wd.checkout(n_c_code)
+        wc.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
+        wc.checkout(n_c_code)
 
         # Run c2rust-transpile
         c2rust_cmd = [
                 'c2rust-transpile',
-                wd.join(COMPILE_COMMANDS_PATH),
-                '--output-dir', wd.join(output_path),
+                wc.join(COMPILE_COMMANDS_PATH),
+                '--output-dir', wc.join(output_path),
                 '--emit-build-files',
                 ]
         if cfg.transpile.bin_main is not None:
             c2rust_cmd.extend((
                 '--binary', cfg.transpile.bin_main,
                 ))
-        p = subprocess.run(c2rust_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        exit_code, logs = wc.run(c2rust_cmd)
 
-        if p.returncode == 0:
-            n_rust_code = wd.commit(os.path.join(output_path, '**/*.*'))
+        if exit_code == 0:
+            n_rust_code = wc.commit_dir(output_path)
         else:
             n_rust_code = None
         n_rust_code_id = n_rust_code.node_id() if n_rust_code is not None else None
 
     n_op = TranspileOpNode.new(
         mvir,
-        body = p.stdout,
+        body = logs,
         compile_commands = n_cc.node_id(),
         c_code = n_c_code.node_id(),
         cmd = c2rust_cmd,
-        exit_code = p.returncode,
+        exit_code = exit_code,
         rust_code = n_rust_code_id,
         )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_rust_code is not None:
         mvir.set_tag('current', n_rust_code.node_id(), n_op.kind)
 
-    if p.returncode != 0:
-        print(p.stdout.decode('utf-8'))
+    if exit_code != 0:
+        # TODO: proper log parsing
+        print(repr(logs))
     print('c2rust process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
     print('operation: %s' % n_op.node_id())

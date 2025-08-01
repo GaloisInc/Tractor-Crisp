@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import analysis
+from . import analysis, llm
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
@@ -79,11 +79,9 @@ Here is a piece of unsafe Rust code produced by C2Rust. Your task is to convert 
 * `#[no_mangle]` functions are FFI entry points, so leave their signatures as is - don't change any argument or return types or try to make them safe. You should still modify their bodies to reduce the amount of unsafe code or to account for changes to other functions that they call.
 * All other functions should be made safe by converting all raw pointers to safe references and removing the `unsafe` and `extern "C"` qualifiers.
 
-Output the resulting Rust code in a Markdown code block.
+Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 
-```Rust
 {orig_rust_code}
-```
 '''
 
 def do_llm(args, cfg):
@@ -107,11 +105,10 @@ def do_llm(args, cfg):
     filtered_files = {k: v for k,v in n_tree.files.items()
         if any(pathlib.Path(k).match(glob) for glob in cfg.src_globs)}
     assert len(filtered_files) == 1, 'multi-file projects are not yet supported'
-    (name, n_file_id), = list(filtered_files.items())
+    (path, n_file_id), = list(filtered_files.items())
     n_file = mvir.node(n_file_id)
-    path = os.path.join(cfg.base_dir, name)
 
-    orig_rust_code = n_file.body().decode('utf-8')
+    orig_rust_code = llm.emit_file(n_file, path)
     prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
 
     print(prompt)
@@ -130,20 +127,15 @@ def do_llm(args, cfg):
     print(' === output ===')
     print(output)
     print(' === end of output ===')
-    # Extract the part delimited by ```Rust ... ```
-    output = '\n%s\n' % output
-    a, sep, b = output.rpartition('\n```\n')
-    assert sep != ''
-    c, sep, d = a.rpartition('\n```Rust\n')
-    if sep == '':
-        c, sep, d = a.rpartition('\n```rust\n')
-    assert sep != ''
-    code = d
+    for out_path, out_text in llm.extract_files(output):
+        print('found ' + out_path)
+        if out_path == path:
+            code = out_text
 
     # Success - save the new version.
     n_new_file = FileNode.new(mvir, code.encode('utf-8'))
     new_files = n_tree.files.copy()
-    new_files[name] = n_new_file.node_id()
+    new_files[path] = n_new_file.node_id()
     n_new_tree = TreeNode.new(mvir, files=new_files)
 
     n_op = LlmOpNode.new(

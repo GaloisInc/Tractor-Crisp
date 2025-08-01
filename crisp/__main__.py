@@ -34,6 +34,10 @@ def parse_args():
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
 
+    tag = sub.add_parser('tag')
+    tag.add_argument('--tag', '-t', default='current')
+    tag.add_argument('node')
+
     show = sub.add_parser('show')
     show.add_argument('node', nargs='?', default='current')
     show.add_argument('--raw', action='store_true')
@@ -315,6 +319,14 @@ def do_reflog(args, cfg):
     for x in mvir.tag_reflog(args.tag):
         print(x)
 
+def do_tag(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    mvir.set_tag(args.tag, node_id, 'tag')
+
 def do_index(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     try:
@@ -426,6 +438,8 @@ def main():
         do_main(args, cfg)
     elif args.cmd == 'reflog':
         do_reflog(args, cfg)
+    elif args.cmd == 'tag':
+        do_tag(args, cfg)
     elif args.cmd == 'show':
         do_show(args, cfg)
     elif args.cmd == 'index':

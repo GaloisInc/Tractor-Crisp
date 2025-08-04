@@ -1,9 +1,11 @@
+from dataclasses import dataclass
 import json
 import os
 import pathlib
 import requests
 
 from .mvir import MVIR, FileNode, TreeNode, LlmOpNode
+from .util import ChunkPrinter
 
 
 def emit_file(n: FileNode, path, file_type='Rust'):
@@ -95,6 +97,163 @@ def extract_files(s):
 
 LLM_ENDPOINT = 'http://localhost:8080/v1/chat/completions'
 
+def sse_events(resp):
+    """
+    Parse a `requests` streaming response as a sequence of messages in
+    Server-Sent Events format.
+    """
+    # A single message may span multiple lines.  We combine the lines in this
+    # accumulator so we can yield the whole message as a unit.
+    acc = bytearray()
+    for line in resp.iter_lines():
+        if len(line) == 0 or line.isspace():
+            yield bytes(acc)
+            acc.clear()
+            continue
+        key, sep, value = line.partition(b':')
+        # If `sep` is missing, no special handling is required.  "Otherwise,
+        # the string is not empty but does not contain a U+003A COLON character
+        # (:).  Process the field using the steps described below, using the
+        # whole line as the field name, and the empty string as the field
+        # value."  Note that this matches the behavior of `partition`.
+        if key.lower() != b'data':
+            print('unknown SSE key %r in %r' % (key, line))
+            continue
+        # "Collect the characters on the line after the first U+003A COLON
+        # character (:), and let `value` be that string. If `value` starts with
+        # a U+0020 SPACE character, remove it from `value`."
+        if value.startswith(b' '):
+            value = value[1:]
+        acc.extend(value)
+
+    # If there are bytes remaining in `acc`, don't yield them.  "If the file
+    # ends in the middle of an event, before the final empty line, the
+    # incomplete event is not dispatched."
+
+@dataclass
+class StreamingMessage:
+    """
+    Partially-initialized message object.  Fields are initialized incrementally
+    by applying deltas as they're received from the server.
+    """
+    role: str | None = None
+    content: str | None = None
+
+    def apply_delta(self, delta):
+        if (role := delta.get('role')) is not None:
+            assert self.role is None or self.role == role, 'duplicate role'
+            self.role = role
+        if (content := delta.get('content')) is not None:
+            if self.content is None:
+                self.content = content
+            else:
+                self.content += content
+
+@dataclass
+class StreamingChoice:
+    """
+    Partially-initialized choice object.  Fields are initialized incrementally
+    by applying deltas as they're received from the server.
+    """
+    finish_reason: str | None
+    message: StreamingMessage
+
+    @staticmethod
+    def new():
+        return StreamingChoice(finish_reason = None, message = StreamingMessage())
+
+    def apply_delta(self, delta):
+        if (finish_reason := delta.get('finish_reason')) is not None:
+            assert self.finish_reason is None or self.finish_reason == finish_reason, \
+                    'duplicate finish_reason'
+            self.finish_reason = finish_reason
+        if (message_delta := delta.get('delta')) is not None:
+            self.message.apply_delta(message_delta)
+
+def do_request(req, stream=False):
+    """
+    Send the JSON chat completion request `req` to the default endpoint, and
+    return the JSON response.  The request and response text are printed to
+    stdout.  If `stream` is set, tokens are printed to stdout as they're
+    received, instead of all at once at the end; in either case, the function
+    returns only after receiving the entire response.
+    """
+    p = ChunkPrinter()
+    for msg in req['messages']:
+        p.end_line()
+        p.print(' === %s ===' % msg['role'])
+        p.write(msg['content'])
+
+    if not stream:
+        # Non-streaming case is simple.
+        resp_dct = requests.post(LLM_ENDPOINT, json=req).json()
+
+        msg = resp_dct['choices'][0]['message']
+        p.set_count(resp_dct['usage']['completion_tokens'])
+        p.end_line()
+        p.print(' === %s ===' % msg['role'])
+        p.write(msg['content'])
+        p.finish()
+
+        return resp_dct
+
+    req = req.copy()
+    req['stream'] = True
+    resp = requests.post(LLM_ENDPOINT, json=req, stream=True)
+
+    resp_dct = {}
+    resp_choices = {}
+    for evt in sse_events(resp):
+        if evt == b'[DONE]':
+            break
+        j = json.loads(evt.decode('utf-8'))
+
+        for choice_delta in j.get('choices', ()):
+            index = choice_delta['index']
+            if (choice := resp_choices.get(index)) is None:
+                choice = StreamingChoice.new()
+                resp_choices[index] = choice
+
+            prev_role = choice.message.role
+            prev_content_len = len(choice.message.content or '')
+
+            choice.apply_delta(choice_delta)
+
+            if index == 0:
+                if choice.message.role is not None:
+                    if prev_role is None:
+                        p.end_line()
+                        p.print(' === %s ===' % choice.message.role)
+                        if choice.message.content is not None:
+                            p.write(choice.message.content)
+                    else:
+                        content = choice.message.content or ''
+                        p.write(content[prev_content_len:])
+                    p.flush()
+                p.increment()
+
+        for k, v in j.items():
+            if k == 'choices':
+                continue
+            if resp_dct.get(k) is not None:
+                continue
+            resp_dct[k] = v
+
+    p.finish()
+
+    resp_dct['choices'] = [
+            {
+                'index': index,
+                'finish_reason': choice.finish_reason,
+                'message': {
+                    'role': choice.message.role,
+                    'content': choice.message.content,
+                },
+            }
+            for index, choice in resp_choices.items()]
+
+    return resp_dct
+
 def run_rewrite(
         mvir: MVIR,
         prompt_fmt: str,
@@ -116,13 +275,9 @@ def run_rewrite(
     if not think:
         req_messages.append({'role': 'assistant', 'content': '<think>\n</think>\n'})
     req = {'messages': req_messages}
-    resp = requests.post(LLM_ENDPOINT, json=req).json()
+    resp = do_request(req, stream=True)
 
     output = resp['choices'][0]['message']['content']
-    print(' === output ===')
-    print(output)
-    print(' === end of output ===')
-
     output_files = input_code.files.copy()
     for out_path, out_text in extract_files(output):
         assert out_path in output_files, \

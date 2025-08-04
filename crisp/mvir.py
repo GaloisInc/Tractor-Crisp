@@ -98,20 +98,20 @@ def from_cbor(ty, x):
 def check_type(ty, x):
     origin = typing.get_origin(ty) or ty
     if origin in (NoneType, bool, int, float, str, bytes):
-        assert isinstance(x, ty)
+        assert isinstance(x, ty), 'expected %r, but got %r: %r' % (origin, type(x), x)
     elif origin is list:
-        assert isinstance(x, list)
+        assert isinstance(x, list), 'expected %r, but got %r: %r' % (origin, type(x), x)
         elem_ty, = typing.get_args(ty)
         for y in x:
             check_type(elem_ty, y)
     elif origin is tuple:
-        assert isinstance(x, (list, tuple))
+        assert isinstance(x, (list, tuple)), 'expected %r, but got %r: %r' % (origin, type(x), x)
         elem_tys = typing.get_args(ty)
         assert len(elem_tys) == len(x)
         for t, y in zip(elem_tys, x):
             check_type(t, y)
     elif origin is dict:
-        assert isinstance(x, dict)
+        assert isinstance(x, dict), 'expected %r, but got %r: %r' % (origin, type(x), x)
         key_ty, value_ty = typing.get_args(ty)
         for k, v in x.items():
             check_type(key_ty, k)

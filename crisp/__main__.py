@@ -1,6 +1,5 @@
 import argparse
 import glob
-import json
 import os
 import pathlib
 import requests
@@ -71,8 +70,6 @@ def parse_args():
     return ap.parse_args()
 
 
-LLM_ENDPOINT = 'http://localhost:8080/v1/chat/completions'
-
 LLM_PROMPT = '''
 Here is a piece of unsafe Rust code produced by C2Rust. Your task is to convert it to safe Rust, without changing its behavior.
 
@@ -81,7 +78,7 @@ Here is a piece of unsafe Rust code produced by C2Rust. Your task is to convert 
 
 Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 
-{orig_rust_code}
+{input_files}
 '''
 
 def do_llm(args, cfg):
@@ -100,56 +97,10 @@ def do_llm(args, cfg):
         dest_tag = args.node
     n_tree = mvir.node(node_id)
 
-    assert isinstance(n_tree, TreeNode)
+    n_new_tree, n_op = llm.run_rewrite(mvir, LLM_PROMPT, n_tree,
+        glob_filter = cfg.src_globs)
 
-    filtered_files = {k: v for k,v in n_tree.files.items()
-        if any(pathlib.Path(k).match(glob) for glob in cfg.src_globs)}
-    assert len(filtered_files) == 1, 'multi-file projects are not yet supported'
-    (path, n_file_id), = list(filtered_files.items())
-    n_file = mvir.node(n_file_id)
-
-    orig_rust_code = llm.emit_file(n_file, path)
-    prompt = LLM_PROMPT.format(orig_rust_code=orig_rust_code)
-
-    print(prompt)
-    print('send request...')
-    req = {
-        'messages': [
-            {'role': 'user', 'content': prompt},
-            {'role': 'assistant', 'content': '<think>\n</think>\n'},
-        ],
-    }
-    resp = requests.post(LLM_ENDPOINT, json=req).json()
-
-    print(resp)
-
-    output = resp['choices'][0]['message']['content']
-    print(' === output ===')
-    print(output)
-    print(' === end of output ===')
-    for out_path, out_text in llm.extract_files(output):
-        print('found ' + out_path)
-        if out_path == path:
-            code = out_text
-
-    # Success - save the new version.
-    n_new_file = FileNode.new(mvir, code.encode('utf-8'))
-    new_files = n_tree.files.copy()
-    new_files[path] = n_new_file.node_id()
-    n_new_tree = TreeNode.new(mvir, files=new_files)
-
-    n_op = LlmOpNode.new(
-            mvir,
-            old_code = n_tree.node_id(),
-            new_code = n_new_tree.node_id(),
-            raw_prompt = FileNode.new(mvir, LLM_PROMPT).node_id(),
-            request = FileNode.new(mvir, json.dumps(req)).node_id(),
-            response = FileNode.new(mvir, json.dumps(resp)).node_id(),
-            )
-    # Record operations and timestamps in the `op_history` reflog.
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
-
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
 

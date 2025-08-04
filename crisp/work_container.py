@@ -1,23 +1,11 @@
 from contextlib import contextmanager
+import docker
 import io
 import os
 import tarfile
 
 from .mvir import FileNode, TreeNode
 
-
-CONTAINER_RUNTIME = os.environ.get('CRISP_CONTAINER_RUNTIME', 'podman')
-
-def _mk_client():
-    match CONTAINER_RUNTIME:
-        case 'docker':
-            import docker
-            return docker.from_env()
-        case 'podman':
-            import podman
-            return podman.client.from_env()
-        case x:
-            raise ValueError('unknown CRISP_CONTAINER_RUNTIME: %r' % (x,))
 
 class WorkContainer:
     """
@@ -31,7 +19,7 @@ class WorkContainer:
     """
     def __init__(self, mvir):
         self.mvir = mvir
-        self.client = _mk_client()
+        self.client = docker.from_env()
         try:
             self.image = self.client.images.get('tractor-crisp-user')
         except:

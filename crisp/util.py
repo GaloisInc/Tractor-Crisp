@@ -64,6 +64,21 @@ class ChunkPrinter:
             self._emit_eol()
         self._emit_chunk(parts[-1])
 
+    def _emit_chunk_bytes(self, b):
+        if len(b) == 0:
+            return
+        if self.at_bol:
+            self._emit_tag()
+        sys.stdout.flush()
+        sys.stdout.buffer.write(b)
+
+    def write_bytes(self, b):
+        parts = b.split(b'\n')
+        for part in parts[:-1]:
+            self._emit_chunk_bytes(part)
+            self._emit_eol()
+        self._emit_chunk_bytes(parts[-1])
+
     def print(self, s):
         self.write(s)
         self._emit_eol()

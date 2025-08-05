@@ -247,7 +247,6 @@ def do_test(args, cfg):
 
     n = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
 
-    print(n.body().decode('utf-8'))
     print('\ntest process %s with code %d:\n%s' % (
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))
     print('result: %s' % n.node_id())

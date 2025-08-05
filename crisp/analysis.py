@@ -116,7 +116,7 @@ def run_tests(cfg: Config, mvir: MVIR,
         wc.checkout(code)
         wc.checkout(test_code)
 
-        exit_code, logs = wc.run(cmd, shell=True)
+        exit_code, logs = wc.run(cmd, shell=True, stream=True)
 
     n = TestResultNode.new(
             mvir,

@@ -95,7 +95,7 @@ def extract_files(s):
     return files
 
 
-LLM_ENDPOINT = 'http://localhost:8080/v1/chat/completions'
+LLM_ENDPOINT = 'http://localhost:8081/v1/chat/completions'
 
 def sse_events(resp):
     """

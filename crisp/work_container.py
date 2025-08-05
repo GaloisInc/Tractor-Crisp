@@ -5,6 +5,7 @@ import os
 import tarfile
 
 from .mvir import FileNode, TreeNode
+from .util import ChunkPrinter
 
 
 class WorkContainer:
@@ -97,7 +98,7 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False):
+    def run(self, cmd, shell=False, stream=False):
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -105,23 +106,34 @@ class WorkContainer:
             # `exec_run` requires either a list or str, not a tuple.
             cmd = list(cmd)
 
-        exit_code, logs = self.container.exec_run(cmd, workdir='/root/work')
-        parsed_logs = b''.join(data for fd, data in _log_entries(logs))
-        return exit_code, parsed_logs
+        if not stream:
+            exit_code, logs = self.container.exec_run(
+                    cmd, workdir='/root/work', stream=stream)
+            sys.stdout.flush()
+            sys.stdout.buffer.write(logs)
+            sys.stdout.flush()
+            return exit_code, logs
 
+        # High-level `exec_run` API doesn't return the exit code when streaming
+        # is enabled, so use the low-level API instead.
+        exec_info = self.client.api.exec_create(
+                self.container.id, cmd, workdir='/root/work')
+        exec_id = exec_info['Id']
+        stream = self.client.api.exec_start(exec_id, stream=True)
 
-def _log_entries(b):
-    i = 0
+        p = ChunkPrinter()
+        acc = bytearray()
+        for data in stream:
+            p.write_bytes(data)
+            p.flush()
+            p.increment()
+            acc.extend(data)
+        p.finish()
 
-    while i < len(b):
-        fd = b[i]
-        data_size = int.from_bytes(b[i + 1 : i + 8], byteorder='big', signed=False)
-        i += 8
-        start = i
-        i += data_size
-        end = i
-        data = b[start : end]
-        yield fd, data
+        logs = bytes(acc)
+        exit_code = self.client.api.exec_inspect(exec_id).get('ExitCode')
+
+        return exit_code, logs
 
 
 KEEP_WORK_CONTAINER = False
@@ -130,9 +142,7 @@ KEEP_WORK_CONTAINER = False
 def run_work_container(cfg, mvir):
     wc = WorkContainer(mvir)
     wc.start()
-    print('status', wc.container.status)
     yield wc
-    print('status', wc.container.status)
     if not KEEP_WORK_CONTAINER:
         wc.stop()
     else:

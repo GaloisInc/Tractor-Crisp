@@ -63,6 +63,10 @@ def parse_args():
     llm = sub.add_parser('llm')
     llm.add_argument('node', nargs='?', default='current')
 
+    llm_repair = sub.add_parser('llm-repair')
+    llm_repair.add_argument('node', nargs='?', default='current')
+    llm_repair.add_argument('--c-code', default='c_code')
+
     test = sub.add_parser('test')
     test.add_argument('node', nargs='?', default='current')
     test.add_argument('--c-code', default='c_code')
@@ -99,6 +103,49 @@ def do_llm(args, cfg):
 
     n_new_tree, n_op = llm.run_rewrite(mvir, LLM_PROMPT, n_tree,
         glob_filter = cfg.src_globs)
+
+    mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
+    print('new state: %s' % n_new_tree.node_id())
+    print('operation: %s' % n_op.node_id())
+
+
+LLM_REPAIR_PROMPT = '''
+I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
+
+Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+
+{input_files}
+
+Build/test logs:
+
+```
+{test_output}
+```
+'''
+
+def do_llm_repair(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        node_id = NodeId.from_str(args.node)
+        dest_tag = 'current'
+    except ValueError:
+        node_id = mvir.tag(args.node)
+        dest_tag = args.node
+    n_tree = mvir.node(node_id)
+
+    try:
+        c_code_node_id = NodeId.from_str(args.c_code)
+    except ValueError:
+        c_code_node_id = mvir.tag(args.c_code)
+    n_c_code = mvir.node(c_code_node_id)
+
+    n_test = analysis.run_tests(cfg, mvir, n_tree, n_c_code, cfg.test_command)
+
+    n_new_tree, n_op = llm.run_rewrite(mvir, LLM_REPAIR_PROMPT, n_tree,
+        glob_filter = cfg.src_globs,
+        format_kwargs = {'test_output': n_test.body_str()},
+        think=True)
 
     mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
     print('new state: %s' % n_new_tree.node_id())
@@ -396,6 +443,8 @@ def main():
         do_transpile(args, cfg)
     elif args.cmd == 'llm':
         do_llm(args, cfg)
+    elif args.cmd == 'llm-repair':
+        do_llm_repair(args, cfg)
     elif args.cmd == 'test':
         do_test(args, cfg)
     else:

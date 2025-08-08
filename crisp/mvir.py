@@ -496,6 +496,9 @@ class Node:
             self._load_body()
         return self._body
 
+    def body_str(self):
+        return self.body().decode('utf-8')
+
     def body_json(self):
         if self._body_json is None:
             self._body_json = json.loads(self.body().decode('utf-8'))

@@ -279,11 +279,13 @@ def run_rewrite(
 
     output = resp['choices'][0]['message']['content']
     output_files = input_code.files.copy()
+    files_changed = 0
     for out_path, out_text in extract_files(output):
         assert out_path in output_files, \
             'output contained unknown file path %r' % (out_path,)
         # TODO: also check that `out_path` matches `glob_filter`
         output_files[out_path] = FileNode.new(mvir, out_text.encode('utf-8')).node_id()
+    assert output_files != input_code.files, 'output contained no files'
     output_code = TreeNode.new(mvir, files=output_files)
 
     n_op = LlmOpNode.new(

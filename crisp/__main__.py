@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from . import analysis, llm
+from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
@@ -151,9 +152,6 @@ def do_llm_repair(args, cfg):
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
 
-# We always check out the compile_commands.json at a consistent path, in case
-# it contains relative paths.
-COMPILE_COMMANDS_PATH = 'build/compile_commands.json'
 
 def do_cc_cmake(args, cfg):
     '''Generate compile_commands.json by running `cmake`.'''
@@ -165,41 +163,14 @@ def do_cc_cmake(args, cfg):
         node_id = mvir.tag(args.node)
     node = mvir.node(node_id)
 
-    with run_work_container(cfg, mvir) as wc:
-        src_dir = wc.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = wc.join(os.path.dirname(COMPILE_COMMANDS_PATH))
-
-        print(node_id, node)
-        wc.checkout(node)
-
-        cmake_cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
-        exit_code, logs = wc.run(cmake_cmd)
-
-        if exit_code == 0:
-            n_cc = wc.commit_file(COMPILE_COMMANDS_PATH)
-        else:
-            n_cc = None
-        n_cc_id = n_cc.node_id() if n_cc is not None else None
-
-    n_op = CompileCommandsOpNode.new(
-        mvir,
-        # TODO: parse logs
-        body = logs,
-        c_code = node.node_id(),
-        cmd = cmake_cmd,
-        exit_code = exit_code,
-        compile_commands = n_cc_id,
-        )
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
-    if n_cc is not None:
-        mvir.set_tag('compile_commands', n_cc.node_id(), n_op.kind)
+    n_op = analysis.cc_cmake(cfg, mvir, node)
 
     if n_op.exit_code != 0:
         print(n_op.body().decode('utf-8'))
     print('cmake process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
     print('operation: %s' % n_op.node_id())
-    print('result: %s' % n_cc_id)
+    print('result: %s' % n_op.compile_commands)
 
 def do_transpile(args, cfg):
     '''Transpile from C to unsafe Rust.'''

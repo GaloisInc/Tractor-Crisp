@@ -102,7 +102,7 @@ def do_llm(args, cfg):
         dest_tag = args.node
     n_tree = mvir.node(node_id)
 
-    n_new_tree, n_op = llm.run_rewrite(mvir, LLM_PROMPT, n_tree,
+    n_new_tree, n_op = llm.run_rewrite(cfg, mvir, LLM_PROMPT, n_tree,
         glob_filter = cfg.src_globs)
 
     mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
@@ -143,7 +143,7 @@ def do_llm_repair(args, cfg):
 
     n_test = analysis.run_tests(cfg, mvir, n_tree, n_c_code, cfg.test_command)
 
-    n_new_tree, n_op = llm.run_rewrite(mvir, LLM_REPAIR_PROMPT, n_tree,
+    n_new_tree, n_op = llm.run_rewrite(cfg, mvir, LLM_REPAIR_PROMPT, n_tree,
         glob_filter = cfg.src_globs,
         format_kwargs = {'test_output': n_test.body_str()},
         think=True)

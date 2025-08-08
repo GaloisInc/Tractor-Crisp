@@ -2,8 +2,10 @@ from dataclasses import dataclass
 import json
 import os
 import pathlib
+import re
 import requests
 
+from .config import Config, ModelConfig
 from .mvir import MVIR, FileNode, TreeNode, LlmOpNode
 from .util import ChunkPrinter
 
@@ -95,7 +97,7 @@ def extract_files(s):
     return files
 
 
-LLM_ENDPOINT = 'http://localhost:8081/v1/chat/completions'
+LLM_API = 'http://localhost:8081/v1'
 
 def sse_events(resp):
     """
@@ -186,7 +188,7 @@ def do_request(req, stream=False):
 
     if not stream:
         # Non-streaming case is simple.
-        resp_dct = requests.post(LLM_ENDPOINT, json=req).json()
+        resp_dct = requests.post(LLM_API + '/chat/completions', json=req).json()
 
         msg = resp_dct['choices'][0]['message']
         p.set_count(resp_dct['usage']['completion_tokens'])
@@ -199,7 +201,7 @@ def do_request(req, stream=False):
 
     req = req.copy()
     req['stream'] = True
-    resp = requests.post(LLM_ENDPOINT, json=req, stream=True)
+    resp = requests.post(LLM_API + '/chat/completions', json=req, stream=True)
 
     resp_dct = {}
     resp_choices = {}
@@ -254,7 +256,22 @@ def do_request(req, stream=False):
 
     return resp_dct
 
+MODEL_REGEX_MULTIPART_SUFFIX = re.compile(r'(.*)-[0-9]{5}-of-[0-9]{5}$')
+MODEL_REGEX_QUANT_SUFFIX = re.compile(r'(.*)-(UD-)?(I?Q[0-9]_[A-Z0-9_]*|BF16|FP16)$')
+
+def get_default_model() -> str:
+    resp = requests.get(LLM_API + '/models').json()
+    name = resp['data'][0]['id']
+    name = os.path.basename(name)
+    name = os.path.splitext(name)[0]
+    if (m := MODEL_REGEX_MULTIPART_SUFFIX.match(name)) is not None:
+        name = m.group(1)
+    if (m := MODEL_REGEX_QUANT_SUFFIX.match(name)) is not None:
+        name = m.group(1)
+    return name
+
 def run_rewrite(
+        cfg: Config,
         mvir: MVIR,
         prompt_fmt: str,
         input_code: TreeNode,
@@ -264,6 +281,12 @@ def run_rewrite(
         format_kwargs: dict = {},
         think: bool = False,
         ) -> TreeNode:
+    model = cfg.model
+    if model is None:
+        model = get_default_model()
+    print('using model %r' % model)
+    model_cfg = cfg.models.get(model) or ModelConfig()
+
     input_files_str = emit_files(mvir, input_code, glob_filter=glob_filter,
         file_type_map=file_type_map)
     prompt = prompt_fmt.format(input_files=input_files_str, **format_kwargs)
@@ -272,9 +295,13 @@ def run_rewrite(
     req_messages = [
         {'role': 'user', 'content': prompt},
     ]
-    if not think:
-        req_messages.append({'role': 'assistant', 'content': '<think>\n</think>\n'})
-    req = {'messages': req_messages}
+    prefill = model_cfg.prefill if not think else model_cfg.prefill_think
+    if len(prefill) > 0:
+        req_messages.append({'role': 'assistant', 'content': prefill})
+    req = {
+            'messages': req_messages,
+            'model': model,
+            }
     resp = do_request(req, stream=True)
 
     output = resp['choices'][0]['message']['content']

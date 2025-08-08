@@ -1,8 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import toml
 import typing
 from typing import Optional
+
+def _is_config_type(ty):
+    return isinstance(ty, type) and issubclass(ty, ConfigBase)
 
 class ConfigBase:
     @classmethod
@@ -10,9 +13,17 @@ class ConfigBase:
         d.update(kwargs)
         field_tys = typing.get_type_hints(cls)
         for k, v in d.items():
-            if isinstance(field_tys[k], type) and issubclass(field_tys[k], ConfigBase):
-                d[k] = field_tys[k].from_dict(v, config_path)
-        return cls(config_path=config_path, **d)
+            ty = field_tys[k]
+            if _is_config_type(ty):
+                d[k] = ty.from_dict(v, config_path)
+            origin = typing.get_origin(ty)
+            args = typing.get_args(ty)
+            if origin is dict and _is_config_type(args[1]):
+                d[k] = {kk: args[1].from_dict(vv, config_path)
+                    for kk, vv in v.items()}
+        if 'config_path' in field_tys and 'config_path' not in d:
+            d['config_path'] = config_path
+        return cls(**d)
 
     @classmethod
     def from_toml_file(cls, f, **kwargs):
@@ -34,6 +45,10 @@ class Config(ConfigBase):
     test_command: str
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
+    # `model = None` means call `/v1/models` and pick the first from the list.
+    model: str | None = None
+
+    models: dict[str, 'ModelConfig'] = field(default_factory=dict)
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)
@@ -69,3 +84,8 @@ class TranspileConfig(ConfigBase):
             os.path.join(config_dir, self.cmake_src_dir))
         object.__setattr__(self, 'output_dir',
             os.path.join(config_dir, self.output_dir))
+
+@dataclass(frozen = True)
+class ModelConfig(ConfigBase):
+    prefill: str = ''
+    prefill_think: str = ''

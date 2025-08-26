@@ -1,0 +1,22 @@
+# Container for building and testing user code.  User code that's been modified
+# (either by AI or by symbolic rewriting) is always run inside a container so
+# that any bugs that might be introduced can't damage the user's development
+# environment.
+
+FROM ubuntu:24.04
+
+RUN apt-get clean
+RUN apt-get update
+RUN apt-get upgrade -y
+RUN apt-get install -y build-essential
+RUN apt-get install -y git curl cmake
+RUN apt-get install -y llvm clang libclang-dev python3 libssl-dev pkg-config
+
+# Install rustup & pin to C2Rust's nightly
+WORKDIR /tmp
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup.rs \
+  && sh ./rustup.rs -y --default-toolchain nightly-2022-08-08
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Build and install C2Rust
+RUN cargo install --locked c2rust

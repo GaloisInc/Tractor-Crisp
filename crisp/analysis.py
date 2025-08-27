@@ -1,12 +1,14 @@
+import cbor
 from functools import wraps
 import inspect
+import json
 import os
 import subprocess
 import typing
 
 from .config import Config
 from .mvir import MVIR, NodeId, Node, TreeNode, TestResultNode, \
-        CompileCommandsOpNode
+        CompileCommandsOpNode, FindUnsafeAnalysisNode
 from .work_container import WorkContainer, run_work_container
 
 
@@ -159,7 +161,6 @@ def _cc_cmake_impl(cfg: Config, mvir: MVIR, wc: WorkContainer,
         )
     return n_op
 
-@analysis
 def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
     with run_work_container(cfg, mvir) as wc:
         src_dir = wc.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
@@ -171,3 +172,101 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
     if n_op.compile_commands is not None:
         mvir.set_tag('compile_commands', n_op.compile_commands, n_op.kind)
     return n_op
+
+_CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
+
+
+def crisp_git_state(subdir=None) -> str:
+    """
+    Get a string representing the current state of the CRISP repo.  This is
+    useful for ensuring that analysis tools get rerun when the tools change.
+    If `subdir` is set, only the state of that subdirectory is considered.
+    """
+    if subdir is None:
+        rev_cmd = ('git', 'rev-parse', 'HEAD')
+    else:
+        rev_cmd = ('git', 'rev-parse', 'HEAD:' + subdir)
+    p = subprocess.run(rev_cmd, cwd=_CRISP_DIR, stdout=subprocess.PIPE)
+    if p.returncode != 0:
+        return 'unknown'
+    rev = p.stdout.decode('utf-8').strip()
+
+    status_cmd = ('git', 'status', '--porcelain=v1', '-z')
+    if subdir is not None:
+        status_cmd = status_cmd + (subdir,)
+    p = subprocess.run(status_cmd, cwd=_CRISP_DIR, check=True, stdout=subprocess.PIPE)
+
+    parts = p.stdout.split(b'\0')
+    i = 0
+    max_mtime = None
+    had_error = False
+    while i < len(parts):
+        # Format of each line is usually `XY file.txt\0`, but renames and
+        # copies have two filenames: `XY newfile.txt\0oldfile.txt\0`.
+        part = parts[i]
+        if len(part) == 0:
+            i += 1
+            continue
+        assert part[2:3] == b' '
+        name = part[3:].decode('utf-8')
+        i += 1
+
+        try:
+            mtime = os.stat(os.path.join(_CRISP_DIR, name)).st_mtime
+            if max_mtime is None or mtime > max_mtime:
+                max_mtime = mtime
+        except OSError as e:
+            print('error checking mtime of %s: %s' % (name, e))
+            had_error = True
+
+        if part[0] in b'RC' or part[1] in b'RC':
+            i += 1
+
+    if max_mtime is not None:
+        suffix = '-dirty-%d' % max_mtime
+    elif had_error:
+        suffix = '-dirty'
+    else:
+        suffix = ''
+
+    return rev + suffix
+
+
+@analysis
+def _find_unsafe_impl(cfg: Config, mvir: MVIR,
+        code: TreeNode, commit: str) -> FindUnsafeAnalysisNode:
+    find_unsafe_dir = os.path.join(_CRISP_DIR, 'tools/find_unsafe')
+
+    subprocess.run(('cargo', 'build', '--release'),
+        cwd=find_unsafe_dir, check=True)
+
+    input_cbor_bytes = cbor.dumps({
+        name: mvir.node(node_id).body_str()
+        for name, node_id in code.files.items()
+        if name.endswith('.rs')
+    })
+    p = subprocess.run(('cargo', 'run', '--release'),
+        cwd=find_unsafe_dir,
+        input=input_cbor_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    if p.returncode != 0:
+        print('command failed with exit code %d' % p.returncode)
+        print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
+        print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
+        p.check_returncode()
+
+    # Check that stdout is valid json
+    _ = json.loads(p.stdout.decode('utf-8'))
+
+    n = FindUnsafeAnalysisNode.new(
+            mvir,
+            code = code.node_id(),
+            commit = commit,
+            stderr = p.stderr.decode('utf-8'),
+            body = p.stdout,
+            )
+    return n
+
+def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
+    commit = crisp_git_state('tools/find_unsafe')
+    return _find_unsafe_impl(cfg, mvir, code, commit)

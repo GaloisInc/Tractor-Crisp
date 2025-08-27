@@ -82,8 +82,8 @@ fn read_files_single_stdin() -> HashMap<path::PathBuf, String> {
 }
 
 fn main() {
-    //let files = read_files_cbor();
-    let files = read_files_single_stdin();
+    let files = read_files_cbor();
+    //let files = read_files_single_stdin();
 
     let mut outputs = HashMap::new();
     for (file_name, src) in files {

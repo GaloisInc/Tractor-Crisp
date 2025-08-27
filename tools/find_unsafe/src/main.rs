@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path;
 use ciborium;
+use clap::Parser;
 use serde::Serialize;
 use syn::{self, Attribute, Meta, Path, Ident, Item, ItemFn};
 use syn::visit::{self, Visit};
@@ -68,11 +69,19 @@ impl<'ast> Visit<'ast> for Visitor {
 }
 
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Expect the raw contents of a single file on stdin, instead of a CBOR dictionary mapping
+    /// file names to file contents.
+    #[clap(long)]
+    single_file: bool,
+}
+
 fn read_files_cbor() -> HashMap<path::PathBuf, String> {
     ciborium::from_reader(io::stdin()).unwrap()
 }
 
-fn read_files_single_stdin() -> HashMap<path::PathBuf, String> {
+fn read_files_single() -> HashMap<path::PathBuf, String> {
     let path = path::PathBuf::from("input.rs");
     let mut src = String::new();
     io::stdin().read_to_string(&mut src).unwrap();
@@ -82,8 +91,13 @@ fn read_files_single_stdin() -> HashMap<path::PathBuf, String> {
 }
 
 fn main() {
-    let files = read_files_cbor();
-    //let files = read_files_single_stdin();
+    let args = Args::parse();
+
+    let files = if args.single_file {
+        read_files_single()
+    } else {
+        read_files_cbor()
+    };
 
     let mut outputs = HashMap::new();
     for (file_name, src) in files {

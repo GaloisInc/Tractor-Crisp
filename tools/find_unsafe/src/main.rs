@@ -4,7 +4,7 @@ use std::path;
 use ciborium;
 use clap::Parser;
 use serde::Serialize;
-use syn::{self, Attribute, Meta, Path, Ident, Item, ItemFn};
+use syn::{self, Attribute, Meta, Path, ItemFn};
 use syn::visit::{self, Visit};
 
 
@@ -82,7 +82,6 @@ fn read_files_cbor() -> HashMap<path::PathBuf, String> {
 }
 
 fn read_files_single() -> HashMap<path::PathBuf, String> {
-    let path = path::PathBuf::from("input.rs");
     let mut src = String::new();
     io::stdin().read_to_string(&mut src).unwrap();
     HashMap::from([

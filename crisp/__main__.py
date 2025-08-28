@@ -31,6 +31,7 @@ def parse_args():
     sub = ap.add_subparsers(dest='cmd')
 
     main = sub.add_parser('main')
+    main.add_argument('node', nargs='?', default='c_code')
 
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
@@ -176,31 +177,8 @@ def do_cc_cmake(args, cfg):
     print('operation: %s' % n_op.node_id())
     print('result: %s' % n_op.compile_commands)
 
-def do_transpile(args, cfg):
-    '''Transpile from C to unsafe Rust.'''
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-
-    try:
-        cc_node_id = NodeId.from_str(args.compile_commands_node)
-    except ValueError:
-        cc_node_id = mvir.tag(args.compile_commands_node)
-    n_cc = mvir.node(cc_node_id)
-
-    if args.c_code_node is not None:
-        try:
-            c_code_node_id = NodeId.from_str(args.c_code_node)
-        except ValueError:
-            c_code_node_id = mvir.tag(args.c_code_node)
-    else:
-        for ie in mvir.index(n_cc.node_id()):
-            if ie.kind == 'compile_commands_op' and ie.key == 'compile_commands':
-                n_op = mvir.node(ie.node_id)
-                c_code_node_id = n_op.c_code
-                break
-        else:
-            raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
-    n_c_code = mvir.node(c_code_node_id)
-
+def transpile_common(cfg: Config, mvir: MVIR,
+        n_cc: FileNode, n_c_code: TreeNode) -> TranspileOpNode:
     with run_work_container(cfg, mvir) as wc:
         output_path = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -244,8 +222,38 @@ def do_transpile(args, cfg):
         print(repr(logs))
     print('c2rust process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+
+    return n_op
+
+def do_transpile(args, cfg):
+    '''Transpile from C to unsafe Rust.'''
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        cc_node_id = NodeId.from_str(args.compile_commands_node)
+    except ValueError:
+        cc_node_id = mvir.tag(args.compile_commands_node)
+    n_cc = mvir.node(cc_node_id)
+
+    if args.c_code_node is not None:
+        try:
+            c_code_node_id = NodeId.from_str(args.c_code_node)
+        except ValueError:
+            c_code_node_id = mvir.tag(args.c_code_node)
+    else:
+        for ie in mvir.index(n_cc.node_id()):
+            if ie.kind == 'compile_commands_op' and ie.key == 'compile_commands':
+                n_op = mvir.node(ie.node_id)
+                c_code_node_id = n_op.c_code
+                break
+        else:
+            raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
+    n_c_code = mvir.node(c_code_node_id)
+
+    n_op = transpile_common(cfg, mvir, n_cc, n_c_code)
+
     print('operation: %s' % n_op.node_id())
-    print('result: %s' % n_rust_code_id)
+    print('result: %s' % n_op.rust_code)
 
 def do_test(args, cfg):
     """
@@ -288,10 +296,76 @@ def do_find_unsafe(args, cfg):
 
     print('\nresult: %s' % n.node_id())
 
+def count_unsafe(cfg: Config, mvir: MVIR, n_code: TreeNode) -> int:
+    n_find_unsafe = analysis.find_unsafe(cfg, mvir, n_code)
+    j_unsafe = n_find_unsafe.body_json()
+    unsafe_count = sum(len(file_info['internal_unsafe_fns'])
+        for file_info in j_unsafe.values())
+    return unsafe_count
+
 def do_main(args, cfg):
-    print(cfg)
-    do_llm(args, cfg)
-    do_test(args, cfg)
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        c_code_node_id = NodeId.from_str(args.node)
+    except ValueError:
+        c_code_node_id = mvir.tag(args.node)
+    n_c_code = mvir.node(c_code_node_id)
+
+
+
+    #n_code = mvir.node(NodeId.from_str('fc06167dbf8f68f30180e7d37bd43fd048b3a700be8f9036ae4f539d60643d3f'))
+    #n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
+    #print(n_op_test, n_op_test.node_id())
+    #assert False
+
+
+
+    print(' ** cc_cmake')
+    n_op_cc = analysis.cc_cmake(cfg, mvir, n_c_code)
+    n_cc = mvir.node(n_op_cc.compile_commands)
+    print(' ** transpile')
+    n_op_transpile = transpile_common(cfg, mvir, n_cc, n_c_code)
+    n_code = mvir.node(n_op_transpile.rust_code)
+    print('n_code = %s' % n_code.node_id())
+
+    for safety_try in range(3):
+        print(' ** count_unsafe')
+        unsafe_count = count_unsafe(cfg, mvir, n_code)
+        print('\n\niteration %d: %d unsafe functions remaining' %
+              (safety_try + 1, unsafe_count))
+        if unsafe_count == 0:
+            break
+        print('code = %s' % n_code.node_id())
+
+        print(' ** llm (safety)')
+        n_new_code, n_op_llm = llm.run_rewrite(
+                cfg, mvir, LLM_PROMPT, n_code, glob_filter = cfg.src_globs)
+
+        for repair_try in range(3):
+            print(' ** run_tests')
+            n_op_test = analysis.run_tests(cfg, mvir, n_new_code, n_c_code, cfg.test_command)
+            print('\n  repair iteration %d: test exit code = %d' %
+                  (repair_try + 1, n_op_test.exit_code))
+            if n_op_test.passed:
+                n_code = n_new_code
+                break
+
+            print(' ** llm (repair)')
+            n_new_code, n_op_llm = llm.run_rewrite(cfg, mvir, LLM_REPAIR_PROMPT, n_new_code,
+                glob_filter = cfg.src_globs,
+                format_kwargs = {'test_output': n_op_test.body_str()},
+                think=True)
+
+    print('\n\n')
+    print('final code = %s' % n_code.node_id())
+    print('final c code = %s' % n_c_code.node_id())
+    print(' ** run_tests')
+    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
+    print(' ** count_unsafe')
+    unsafe_count = count_unsafe(cfg, mvir, n_code)
+    print('final unsafe count = %d' % unsafe_count)
+    print('final test exit code = %d' % n_op_test.exit_code)
 
 def do_reflog(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')

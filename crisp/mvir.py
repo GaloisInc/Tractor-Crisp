@@ -194,8 +194,9 @@ class MVIR:
         return os.path.join(self._path, 'nodes', first, rest)
 
     def _nodes_newer_than(self, mtime):
-        '''Yields `NodeId`s for all nodes whose file is newer than `mtime`.  If
-        `mtime` is `None`, yields all `NodeId`s that exist on disk.'''
+        '''Yields `NodeId`s for all nodes whose file is newer than or equal to
+        `mtime`.  If `mtime` is `None`, yields all `NodeId`s that exist on
+        disk.'''
         base = os.path.join(self._path, 'nodes')
         for dir_name in os.listdir(base):
             if dir_name.startswith('.'):
@@ -284,22 +285,61 @@ class MVIR:
         self._stamp_mtime_cache[name] = mtime
         return mtime
 
-    def _touch_stamp(self, name):
+    def _touch_stamp(self, name, content=b''):
         self._stamp_mtime_cache.pop(name, None)
         path = self._stamp_path(name)
         if not os.path.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
-            pass
+            if len(content) > 0:
+                f.write(content)
+
+    def _read_stamp(self, name):
+        path = self._stamp_path(name)
+        if not os.path.exists(path):
+            return b''
+        with open(path, 'rb') as f:
+            return f.read()
+
+    # Index update logic
+    #
+    # Note on timestamps: we use mtime comparisons extensively to determine
+    # which parts of the index need updates, but we assume only that the clock
+    # never goes backwards, not that it goes forward between operations.  In
+    # some cases on WSL it seems that two files written close together will get
+    # identical mtimes down to the nanosecond.  Similar issues may occur on
+    # filesystems with coarse-grained timestamps.  Thus, any time we see two
+    # equal timestamps, we assume that either file may be newer than the other
+    # (which usually means we must conservatively try to update the index).
 
     def _check_index(self):
         index_mtime = self._stamp_mtime('index')
         nodes_mtime = self._stamp_mtime('nodes')
-        if index_mtime is None or (nodes_mtime is not None and nodes_mtime > index_mtime):
+        if index_mtime is None or (nodes_mtime is not None and nodes_mtime >= index_mtime):
             self._update_index(index_mtime)
 
     def _update_index(self, prev_mtime):
+        # Load the set of nodes that were processed during the last index
+        # update.
+        prev_bytes = self._read_stamp('index')
+        prev_nodes = set(NodeId(prev_bytes[i : i + NodeId.LENGTH])
+            for i in range(0, len(prev_bytes), NodeId.LENGTH))
+
+        processed_nodes = bytearray()
         for src_id in self._nodes_newer_than(prev_mtime):
+            # `src_id` refers to a node with `mtime >= index_mtime`.  We record
+            # all such nodes in `processed_nodes`, even if they were previously
+            # processed.  This is important if the final `_touch_stamp` leaves
+            # the `index_mtime` unchanged: in that case, the next index update
+            # might see these same nodes again, and needs to know that they
+            # were already processed (even though they were processed by the
+            # previous update, not the current one).
+            processed_nodes.extend(src_id.raw)
+
+            if src_id in prev_nodes:
+                # Node was already processed.
+                continue
+
             n = self.node(src_id)
             for k, v in n.metadata().items():
                 for dest_id in _metadata_node_ids(v):
@@ -310,7 +350,7 @@ class MVIR:
                     with open(path, 'ab') as f:
                         cbor.dump(entry.to_cbor(), f)
 
-        self._touch_stamp('index')
+        self._touch_stamp('index', processed_nodes)
 
     def _index_path(self, node_id):
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()

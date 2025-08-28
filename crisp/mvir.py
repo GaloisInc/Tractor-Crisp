@@ -223,7 +223,7 @@ class MVIR:
             for file_name in os.listdir(dir_path):
                 if file_name.startswith('.'):
                     continue
-                file_path = os.path.join(base, dir_name)
+                file_path = os.path.join(dir_path, file_name)
                 if mtime is not None:
                     file_mtime = os.stat(file_path).st_mtime_ns
                     if file_mtime < mtime:

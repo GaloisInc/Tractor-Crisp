@@ -367,7 +367,11 @@ class Node:
                 raise ValueError('unexpected keys %r for %s' % (unexpected, cls.__name__))
 
         for k, v in metadata.items():
-            check_type(field_tys[k], v)
+            try:
+                check_type(field_tys[k], v)
+            except (AssertionError, TypeError):
+                print('error checking field %r' % k)
+                raise
 
     @classmethod
     def new(cls, mvir, body=b'', **metadata):
@@ -593,6 +597,18 @@ class TestResultNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class FindUnsafeAnalysisNode(Node):
+    KIND = 'find_unsafe_analysis'
+    code: NodeId
+    # Commit hash of the `find_unsafe` version that was used
+    commit: str
+    stderr: str
+    # `body` stores the JSON output
+
+    code = property(lambda self: self._metadata['code'])
+    commit = property(lambda self: self._metadata['commit'])
+    stderr = property(lambda self: self._metadata['stderr'])
+
 NODE_CLASSES = [
     FileNode,
     TreeNode,
@@ -600,6 +616,7 @@ NODE_CLASSES = [
     TranspileOpNode,
     LlmOpNode,
     TestResultNode,
+    FindUnsafeAnalysisNode,
 ]
 
 def _build_node_kind_map(classes):

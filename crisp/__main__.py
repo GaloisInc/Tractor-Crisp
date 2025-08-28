@@ -1,5 +1,6 @@
 import argparse
 import glob
+import json
 import os
 import pathlib
 import requests
@@ -71,6 +72,9 @@ def parse_args():
     test = sub.add_parser('test')
     test.add_argument('node', nargs='?', default='current')
     test.add_argument('--c-code', default='c_code')
+
+    find_unsafe = sub.add_parser('find_unsafe')
+    find_unsafe.add_argument('node', nargs='?', default='current')
 
     return ap.parse_args()
 
@@ -269,6 +273,21 @@ def do_test(args, cfg):
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))
     print('result: %s' % n.node_id())
 
+def do_find_unsafe(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+    n_code = mvir.node(node_id)
+
+    n = analysis.find_unsafe(cfg, mvir, n_code)
+
+    json.dump(n.body_json(), sys.stdout, indent='  ')
+
+    print('\nresult: %s' % n.node_id())
+
 def do_main(args, cfg):
     print(cfg)
     do_llm(args, cfg)
@@ -418,6 +437,8 @@ def main():
         do_llm_repair(args, cfg)
     elif args.cmd == 'test':
         do_test(args, cfg)
+    elif args.cmd == 'find_unsafe':
+        do_find_unsafe(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

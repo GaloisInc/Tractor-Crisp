@@ -20,3 +20,12 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 # Build and install C2Rust
 RUN cargo install --locked c2rust
+
+# Update crates.io index for future use.  There's no dedicated command to force
+# an update, but adding a dependency will do it.
+# https://stackoverflow.com/a/74708239
+RUN mkdir /tmp/empty_project \
+    && cd /tmp/empty_project \
+    && cargo init \
+    && cargo add serde \
+    && rm -rf /tmp/empty_project

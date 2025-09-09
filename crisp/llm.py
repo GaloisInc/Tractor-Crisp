@@ -312,7 +312,10 @@ def run_rewrite(
             'output contained unknown file path %r' % (out_path,)
         # TODO: also check that `out_path` matches `glob_filter`
         output_files[out_path] = FileNode.new(mvir, out_text.encode('utf-8')).node_id()
-    assert output_files != input_code.files, 'output contained no files'
+    if output_files == input_code.files:
+        print('warning: output contained no files')
+        # Proceed.  In the case of `do_main`, this will try again, since there
+        # are still unsafety and/or test failures.
     output_code = TreeNode.new(mvir, files=output_files)
 
     n_op = LlmOpNode.new(

@@ -328,6 +328,11 @@ def do_main(args, cfg):
     n_op_transpile = transpile_common(cfg, mvir, n_cc, n_c_code)
     n_code = mvir.node(n_op_transpile.rust_code)
     print('n_code = %s' % n_code.node_id())
+    print(' ** run_tests')
+    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
+    if n_op_test.exit_code != 0:
+        print('error: test exit code after transpile = %d' % n_op_test.exit_code)
+        return
 
     for safety_try in range(3):
         print(' ** count_unsafe')

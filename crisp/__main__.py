@@ -85,6 +85,7 @@ Here is a piece of unsafe Rust code produced by C2Rust. Your task is to convert 
 
 * `#[no_mangle]` functions are FFI entry points, so leave their signatures as is - don't change any argument or return types or try to make them safe. You should still modify their bodies to reduce the amount of unsafe code or to account for changes to other functions that they call.
 * All other functions should be made safe by converting all raw pointers to safe references and removing the `unsafe` and `extern "C"` qualifiers.
+* Within function bodies, replace unsafe operations and libc calls with safe equivalents.
 
 Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 

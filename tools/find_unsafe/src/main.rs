@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
 use std::path;
 use ciborium;
 use clap::Parser;
 use serde::Serialize;
-use syn::{self, Attribute, Meta, Path, ItemFn};
+use syn::{self, Attribute, Meta, Path, ItemFn, ExprUnsafe};
 use syn::visit::{self, Visit};
 
 
@@ -51,20 +51,33 @@ fn fn_is_exported(f: &ItemFn) -> bool {
 struct Output {
     /// Functions that are not accessible from other compilation units and are also unsafe.
     internal_unsafe_fns: Vec<String>,
+    /// Functions that contain an unsafe block.
+    fns_containing_unsafe: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct Visitor {
     out: Output,
+    current_fn: Option<String>,
 }
 
 impl<'ast> Visit<'ast> for Visitor {
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
+        let name = item_fn.sig.ident.to_string();
         if !fn_is_exported(item_fn) && item_fn.sig.unsafety.is_some() {
-            self.out.internal_unsafe_fns.push(item_fn.sig.ident.to_string());
+            self.out.internal_unsafe_fns.push(name.clone());
         }
 
+        let old = self.current_fn.replace(name);
         visit::visit_item_fn(self, item_fn);
+        self.current_fn = old;
+    }
+
+    fn visit_expr_unsafe(&mut self, x: &'ast ExprUnsafe) {
+        if let Some(ref name) = self.current_fn {
+            self.out.fns_containing_unsafe.insert(name.clone());
+        }
+        visit::visit_expr_unsafe(self, x);
     }
 }
 

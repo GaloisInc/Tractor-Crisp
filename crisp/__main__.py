@@ -299,7 +299,8 @@ def do_find_unsafe(args, cfg):
 def count_unsafe(cfg: Config, mvir: MVIR, n_code: TreeNode) -> int:
     n_find_unsafe = analysis.find_unsafe(cfg, mvir, n_code)
     j_unsafe = n_find_unsafe.body_json()
-    unsafe_count = sum(len(file_info['internal_unsafe_fns'])
+    unsafe_count = sum(
+        len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
         for file_info in j_unsafe.values())
     return unsafe_count
 

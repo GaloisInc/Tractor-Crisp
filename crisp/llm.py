@@ -10,6 +10,13 @@ from .mvir import MVIR, FileNode, TreeNode, LlmOpNode
 from .util import ChunkPrinter
 
 
+API_BASE = os.environ.get('CRISP_API_BASE', 'http://localhost:8080/v1')
+# API key to include with requests.  If unset, no API key is included.
+API_KEY = os.environ.get('CRISP_API_KEY')
+# Model to request from the API.  If unset, the first available model is used.
+API_MODEL = os.environ.get('CRISP_API_MODEL')
+
+
 def emit_file(n: FileNode, path, file_type='Rust'):
     """
     Generate markdown-formatted text giving the contents of file `n`.  Produces
@@ -96,8 +103,6 @@ def extract_files(s):
 
     return files
 
-
-LLM_API = 'http://localhost:8081/v1'
 
 def sse_events(resp):
     """
@@ -186,9 +191,14 @@ def do_request(req, stream=False):
         p.print(' === %s ===' % msg['role'])
         p.write(msg['content'])
 
+    headers = {}
+    if API_KEY is not None:
+        headers['Authorization'] = 'Bearer %s' % API_KEY
+
     if not stream:
         # Non-streaming case is simple.
-        resp_dct = requests.post(LLM_API + '/chat/completions', json=req).json()
+        resp_dct = requests.post(API_BASE + '/chat/completions',
+                json=req, headers=headers).json()
 
         msg = resp_dct['choices'][0]['message']
         p.set_count(resp_dct['usage']['completion_tokens'])
@@ -201,7 +211,8 @@ def do_request(req, stream=False):
 
     req = req.copy()
     req['stream'] = True
-    resp = requests.post(LLM_API + '/chat/completions', json=req, stream=True)
+    resp = requests.post(API_BASE + '/chat/completions',
+            json=req, headers=headers, stream=True)
 
     resp_dct = {}
     resp_choices = {}
@@ -260,7 +271,7 @@ MODEL_REGEX_MULTIPART_SUFFIX = re.compile(r'(.*)-[0-9]{5}-of-[0-9]{5}$')
 MODEL_REGEX_QUANT_SUFFIX = re.compile(r'(.*)-(UD-)?(I?Q[0-9]_[A-Z0-9_]*|BF16|FP16)$')
 
 def get_default_model() -> str:
-    resp = requests.get(LLM_API + '/models').json()
+    resp = requests.get(API_BASE + '/models').json()
     name = resp['data'][0]['id']
     name = os.path.basename(name)
     name = os.path.splitext(name)[0]
@@ -281,7 +292,7 @@ def run_rewrite(
         format_kwargs: dict = {},
         think: bool = False,
         ) -> TreeNode:
-    model = cfg.model
+    model = API_MODEL or cfg.model
     if model is None:
         model = get_default_model()
     print('using model %r' % model)

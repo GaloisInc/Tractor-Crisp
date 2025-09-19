@@ -100,9 +100,24 @@ def commit_tree(mvir: MVIR, repo: pygit2.Repository, tree: TreeNode,
                 blob = repo.create_blob(x.body())
                 tb.insert(name, blob, pygit2.GIT_FILEMODE_BLOB)
         return tb.write()
-    tree = build_tree(tree_files)
+    git_tree = build_tree(tree_files)
+
+    meta = []
+    for ie in mvir.index(tree.node_id()):
+        n = mvir.node(ie.node_id)
+        if isinstance(n, mvir_module.TestResultNode):
+            meta.append('test exit code = %d' % n.exit_code)
+        elif isinstance(n, mvir_module.FindUnsafeAnalysisNode):
+            j_unsafe = n.body_json()
+            unsafe_count = sum(
+                len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
+                for file_info in j_unsafe.values())
+            meta.append('unsafe count = %d' % unsafe_count)
+
+    if len(meta) > 0:
+        msg = msg + '\n\n' + '\n'.join(meta)
 
     sig = pygit2.Signature('CRISP', 'crisp@example.com', 0, 0, 'utf-8')
-    commit = repo.create_commit(None, sig, sig, msg, tree,
+    commit = repo.create_commit(None, sig, sig, msg, git_tree,
             [parent] if parent is not None else [])
     return commit

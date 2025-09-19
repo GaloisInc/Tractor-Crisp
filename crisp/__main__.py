@@ -77,6 +77,10 @@ def parse_args():
     find_unsafe = sub.add_parser('find_unsafe')
     find_unsafe.add_argument('node', nargs='?', default='current')
 
+    git = sub.add_parser('git')
+    git.add_argument('-n', '--node', default='current')
+    git.add_argument('args', nargs='*')
+
     return ap.parse_args()
 
 
@@ -486,6 +490,33 @@ def do_checkout(args, cfg):
 
     print('checked out %s' % new_n.node_id())
 
+def do_git(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    try:
+        node_id = NodeId.from_str(args.node)
+    except ValueError:
+        node_id = mvir.tag(args.node)
+
+    from . import git
+    oid = git.render(mvir, mvir.node(node_id))
+    env = os.environb.copy()
+    env[b'GIT_DIR'] = os.fsencode(git.repo_path(mvir))
+
+    # If the user writes `{}` anywhere in the git args, it will be replaced
+    # with the generated git object ID.  Otherwise, the object ID will be
+    # appended to the command.
+    cmd = ['git'] + args.args
+    replaced = False
+    for i, arg in enumerate(cmd):
+        if '{}' in arg:
+            cmd[i] = arg.format(str(oid))
+            replaced = True
+    if not replaced:
+        cmd.append(str(oid))
+
+    os.execvpe('git', cmd, env)
+
 def main():
     args = parse_args()
 
@@ -522,6 +553,8 @@ def main():
         do_test(args, cfg)
     elif args.cmd == 'find_unsafe':
         do_find_unsafe(args, cfg)
+    elif args.cmd == 'git':
+        do_git(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

@@ -81,13 +81,15 @@ def parse_args():
 
 
 LLM_PROMPT = '''
-Here is a piece of unsafe Rust code produced by C2Rust. Your task is to convert it to safe Rust, without changing its behavior.
+This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
-* `#[no_mangle]` functions are FFI entry points, so leave their signatures as is - don't change any argument or return types or try to make them safe. You should still modify their bodies to reduce the amount of unsafe code or to account for changes to other functions that they call.
-* All other functions should be made safe by converting all raw pointers to safe references and removing the `unsafe` and `extern "C"` qualifiers.
-* Within function bodies, replace unsafe operations and libc calls with safe equivalents.
+HOWEVER, any function marked #[no_mangle] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature and contains nontrivial logic, you should handle it as follows:
+1. For a #[no_mangle] entry point named `foo`, make a new function `foo_impl` without the #[no_mangle] attribute.
+2. Move all the logic from `foo` into `foo_impl`, and have `foo` simply be a wrapper that calls `foo_impl`.
+3. If there are any calls to `foo` in the Rust code, change them to call `foo_impl` instead.
+You can then make `foo_impl` safe like any other function, leaving `foo` as a simple unsafe wrapper for FFI callers.
 
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 
 {input_files}
 '''

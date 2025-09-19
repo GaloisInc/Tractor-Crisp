@@ -84,6 +84,32 @@ def parse_args():
     return ap.parse_args()
 
 
+def parse_node_id_arg(mvir, s):
+    node_id, _ = parse_node_id_arg_and_check_tag(mvir, s)
+    return node_id
+
+def parse_node_id_arg_and_check_tag(mvir, s):
+    """
+    Parse `s` as a node ID.  Returns `(s, is_tag)`, where `is_tag` is `True` if
+    `s` is a tag name.
+    """
+    if len(s) == 2 * NodeId.LENGTH:
+        try:
+            node_id = NodeId.from_str(s)
+            return (node_id, False)
+        except ValueError:
+            pass
+    if mvir.has_tag(s):
+        return (mvir.tag(s), True)
+    matches = mvir.node_ids_with_prefix(s)
+    if len(matches) == 0:
+        raise ValueError('node %r not found' % s)
+    elif len(matches) == 1:
+        return (matches[0], False)
+    else:
+        raise ValueError('found multiple nodes with prefix %r: %r' % (s, matches))
+
+
 LLM_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
@@ -106,12 +132,8 @@ def do_llm(args, cfg):
     node in the `op_history` reflog.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-        dest_tag = 'current'
-    except ValueError:
-        node_id = mvir.tag(args.node)
-        dest_tag = args.node
+    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
+    dest_tag = args.node if is_tag else 'current'
     n_tree = mvir.node(node_id)
 
     n_new_tree, n_op = llm.run_rewrite(cfg, mvir, LLM_PROMPT, n_tree,
@@ -139,18 +161,11 @@ Build/test logs:
 def do_llm_repair(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-        dest_tag = 'current'
-    except ValueError:
-        node_id = mvir.tag(args.node)
-        dest_tag = args.node
+    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
+    dest_tag = args.node if is_tag else 'current'
     n_tree = mvir.node(node_id)
 
-    try:
-        c_code_node_id = NodeId.from_str(args.c_code)
-    except ValueError:
-        c_code_node_id = mvir.tag(args.c_code)
+    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)
 
     n_test = analysis.run_tests(cfg, mvir, n_tree, n_c_code, cfg.test_command)
@@ -169,10 +184,7 @@ def do_cc_cmake(args, cfg):
     '''Generate compile_commands.json by running `cmake`.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     node = mvir.node(node_id)
 
     n_op = analysis.cc_cmake(cfg, mvir, node)
@@ -236,17 +248,11 @@ def do_transpile(args, cfg):
     '''Transpile from C to unsafe Rust.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        cc_node_id = NodeId.from_str(args.compile_commands_node)
-    except ValueError:
-        cc_node_id = mvir.tag(args.compile_commands_node)
+    cc_node_id = parse_node_id_arg(mvir, args.compile_commands_node)
     n_cc = mvir.node(cc_node_id)
 
     if args.c_code_node is not None:
-        try:
-            c_code_node_id = NodeId.from_str(args.c_code_node)
-        except ValueError:
-            c_code_node_id = mvir.tag(args.c_code_node)
+        c_code_node_id = parse_node_id_arg(mvir, args.c_code_node)
     else:
         for ie in mvir.index(n_cc.node_id()):
             if ie.kind == 'compile_commands_op' and ie.key == 'compile_commands':
@@ -270,16 +276,10 @@ def do_test(args, cfg):
     """
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     n_code = mvir.node(node_id)
 
-    try:
-        c_code_node_id = NodeId.from_str(args.c_code)
-    except ValueError:
-        c_code_node_id = mvir.tag(args.c_code)
+    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)
 
     n = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
@@ -291,10 +291,7 @@ def do_test(args, cfg):
 def do_find_unsafe(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     n_code = mvir.node(node_id)
 
     n = analysis.find_unsafe(cfg, mvir, n_code)
@@ -314,20 +311,8 @@ def count_unsafe(cfg: Config, mvir: MVIR, n_code: TreeNode) -> int:
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        c_code_node_id = NodeId.from_str(args.node)
-    except ValueError:
-        c_code_node_id = mvir.tag(args.node)
+    c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
-
-
-
-    #n_code = mvir.node(NodeId.from_str('fc06167dbf8f68f30180e7d37bd43fd048b3a700be8f9036ae4f539d60643d3f'))
-    #n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
-    #print(n_op_test, n_op_test.node_id())
-    #assert False
-
-
 
     print(' ** cc_cmake')
     n_op_cc = analysis.cc_cmake(cfg, mvir, n_c_code)
@@ -387,27 +372,18 @@ def do_reflog(args, cfg):
 
 def do_tag(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     mvir.set_tag(args.tag, node_id, 'tag')
 
 def do_index(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     for x in mvir.index(node_id):
         print(x)
 
 def do_show(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     print(node_id)
     n = mvir.node(node_id)
     from pprint import pprint
@@ -464,10 +440,7 @@ def do_commit(args, cfg):
 def do_checkout(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
     new_n = mvir.node(node_id)
     if not isinstance(new_n, TreeNode):
         raise TypeError('expected TreeNode, but got %r' % (type(new_n),))
@@ -493,10 +466,7 @@ def do_checkout(args, cfg):
 def do_git(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    try:
-        node_id = NodeId.from_str(args.node)
-    except ValueError:
-        node_id = mvir.tag(args.node)
+    node_id = parse_node_id_arg(mvir, args.node)
 
     from . import git
     oid = git.render(mvir, mvir.node(node_id))

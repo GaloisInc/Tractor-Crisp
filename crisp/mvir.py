@@ -193,6 +193,16 @@ class MVIR:
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
         return os.path.join(self._path, 'nodes', first, rest)
 
+    def node_ids_with_prefix(self, s):
+        s = s.lower()
+        first, rest = s[:2], s[2:]
+        dir_path = os.path.join(self._path, 'nodes', first)
+        try:
+            file_names = os.listdir(dir_path)
+        except OSError:
+            return []
+        return [NodeId.from_str(first + name) for name in file_names if name.startswith(rest)]
+
     def _nodes_newer_than(self, mtime):
         '''Yields `NodeId`s for all nodes whose file is newer than or equal to
         `mtime`.  If `mtime` is `None`, yields all `NodeId`s that exist on
@@ -258,6 +268,10 @@ class MVIR:
             f.seek(-NodeId.LENGTH, os.SEEK_END)
             raw = f.read(NodeId.LENGTH)
             return NodeId(raw)
+
+    def has_tag(self, name):
+        path = self._tag_path(name)
+        return os.path.exists(path)
 
     def tag_reflog(self, name):
         path = self._tag_path(name)

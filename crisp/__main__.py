@@ -55,6 +55,8 @@ def parse_args():
 
     checkout = sub.add_parser('checkout')
     checkout.add_argument('node', nargs='?', default='current')
+    checkout.add_argument('--path', default='.',
+        help='check out the files into this directory')
 
     cc_cmake = sub.add_parser('cc_cmake')
     cc_cmake.add_argument('node', nargs='?', default='c_code')
@@ -445,18 +447,10 @@ def do_checkout(args, cfg):
     if not isinstance(new_n, TreeNode):
         raise TypeError('expected TreeNode, but got %r' % (type(new_n),))
 
-    # Commit the old code so it won't be lost
-    old_n = commit_node(mvir, cfg)
-    print('old state is %s' % old_n.node_id())
-
-    # Remove old code
-    for name, path in get_src_paths(cfg):
-        os.unlink(path)
-
     # Create files matching the new state
     for name, file_node_id in new_n.files.items():
         file_n = mvir.node(file_node_id)
-        path = os.path.join(cfg.base_dir, name)
+        path = os.path.join(args.path, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(file_n.body())

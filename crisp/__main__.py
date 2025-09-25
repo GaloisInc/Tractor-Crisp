@@ -14,7 +14,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
-from .work_container import run_work_container, set_keep_work_container
+from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 
 
@@ -200,27 +200,27 @@ def do_cc_cmake(args, cfg):
 
 def transpile_common(cfg: Config, mvir: MVIR,
         n_cc: FileNode, n_c_code: TreeNode) -> TranspileOpNode:
-    with run_work_container(cfg, mvir) as wc:
+    with run_sandbox(cfg, mvir) as sb:
         output_path = cfg.relative_path(cfg.transpile.output_dir)
 
-        wc.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
-        wc.checkout(n_c_code)
+        sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
+        sb.checkout(n_c_code)
 
         # Run c2rust-transpile
         c2rust_cmd = [
                 'c2rust-transpile',
-                wc.join(COMPILE_COMMANDS_PATH),
-                '--output-dir', wc.join(output_path),
+                sb.join(COMPILE_COMMANDS_PATH),
+                '--output-dir', sb.join(output_path),
                 '--emit-build-files',
                 ]
         if cfg.transpile.bin_main is not None:
             c2rust_cmd.extend((
                 '--binary', cfg.transpile.bin_main,
                 ))
-        exit_code, logs = wc.run(c2rust_cmd)
+        exit_code, logs = sb.run(c2rust_cmd)
 
         if exit_code == 0:
-            n_rust_code = wc.commit_dir(output_path)
+            n_rust_code = sb.commit_dir(output_path)
         else:
             n_rust_code = None
         n_rust_code_id = n_rust_code.node_id() if n_rust_code is not None else None

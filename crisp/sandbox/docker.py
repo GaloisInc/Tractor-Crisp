@@ -5,8 +5,8 @@ import os
 import sys
 import tarfile
 
-from .mvir import FileNode, TreeNode
-from .util import ChunkPrinter
+from ..mvir import FileNode, TreeNode
+from ..util import ChunkPrinter
 
 
 class WorkContainer:

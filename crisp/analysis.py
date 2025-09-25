@@ -9,7 +9,7 @@ import typing
 from .config import Config
 from .mvir import MVIR, NodeId, Node, TreeNode, TestResultNode, \
         CompileCommandsOpNode, FindUnsafeAnalysisNode
-from .work_container import WorkContainer, run_work_container
+from .sandbox import Sandbox, run_sandbox
 
 
 def _as_node_id(x):
@@ -33,7 +33,7 @@ def analysis(f):
     Some arguments are handled specially:
     * The function should take an `MVIR` argument, which is used by the
       decorator.
-    * Any `Config` or `WorkContainer` arguments are ignored by the decorator.
+    * Any `Config` or `Sandbox` arguments are ignored by the decorator.
     * The first `Node` or `NodeId` argument will be looked up in the MVIR index
       to find cached results.  This argument is otherwise treated normally.
 
@@ -55,7 +55,7 @@ def analysis(f):
     match_fields = set()
     for param in sig.parameters.values():
         param_type = param.annotation
-        if param_type in (Config, WorkContainer):
+        if param_type in (Config, Sandbox):
             continue
         if param_type is MVIR:
             mvir_param_name = param.name
@@ -116,11 +116,11 @@ def analysis(f):
 @analysis
 def run_tests(cfg: Config, mvir: MVIR,
         code: TreeNode, test_code: TreeNode, cmd: str) -> TestResultNode:
-    with run_work_container(cfg, mvir) as wc:
-        wc.checkout(code)
-        wc.checkout(test_code)
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(code)
+        sb.checkout(test_code)
 
-        exit_code, logs = wc.run(cmd, shell=True, stream=True)
+        exit_code, logs = sb.run(cmd, shell=True, stream=True)
 
     n = TestResultNode.new(
             mvir,
@@ -140,13 +140,13 @@ def run_tests(cfg: Config, mvir: MVIR,
 COMPILE_COMMANDS_PATH = 'build/compile_commands.json'
 
 @analysis
-def _cc_cmake_impl(cfg: Config, mvir: MVIR, wc: WorkContainer,
+def _cc_cmake_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
         c_code: TreeNode, cmd: list[str]) -> CompileCommandsOpNode:
-    wc.checkout(c_code)
-    exit_code, logs = wc.run(cmd)
+    sb.checkout(c_code)
+    exit_code, logs = sb.run(cmd)
 
     if exit_code == 0:
-        n_cc = wc.commit_file(COMPILE_COMMANDS_PATH)
+        n_cc = sb.commit_file(COMPILE_COMMANDS_PATH)
     else:
         n_cc = None
     n_cc_id = n_cc.node_id() if n_cc is not None else None
@@ -162,11 +162,11 @@ def _cc_cmake_impl(cfg: Config, mvir: MVIR, wc: WorkContainer,
     return n_op
 
 def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
-    with run_work_container(cfg, mvir) as wc:
-        src_dir = wc.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = wc.join(os.path.dirname(COMPILE_COMMANDS_PATH))
+    with run_sandbox(cfg, mvir) as sb:
+        src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
+        build_dir = sb.join(os.path.dirname(COMPILE_COMMANDS_PATH))
         cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
-        n_op = _cc_cmake_impl(cfg, mvir, wc, c_code, cmd)
+        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:

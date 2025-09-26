@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import analysis, llm
+from . import analysis, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
@@ -485,6 +485,7 @@ def main():
     args = parse_args()
 
     set_keep_work_dir(args.keep_work_dir)
+    sandbox.set_keep(args.keep_work_dir)
 
     cfg_kwargs = {}
     if args.mvir_storage_dir is not None:

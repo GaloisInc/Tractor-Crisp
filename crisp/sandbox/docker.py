@@ -68,6 +68,12 @@ class WorkContainer:
         tar_bytes = b''.join(tar_bytes_iter)
         tar_io = io.BytesIO(tar_bytes)
         files = {}
+        # If the user calls `commit_dir('foo/bar'), we want to produce a
+        # `TreeNode` with file names like `foo/bar/README.txt`.  However, the
+        # paths returned by `get_archive` are prefixed with just the basename
+        # of the requested path, like `bar/README.txt`.  We add this prefix to
+        # get the desired path.
+        dest_prefix = os.path.dirname(rel_path)
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
                 match info.type:
@@ -78,7 +84,9 @@ class WorkContainer:
                     case t:
                         raise ValueError('expected REGTYPE or DIRTYPE, but got %r' % (t,))
                 f = t.extractfile(info)
-                files[info.name] = FileNode.new(self.mvir, f.read()).node_id()
+                dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
+                assert dest_path not in files, 'duplicate entry for %s' % dest_path
+                files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 
     def commit_file(self, rel_path):

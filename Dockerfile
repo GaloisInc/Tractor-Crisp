@@ -56,6 +56,7 @@ ENV PYTHONPATH=/opt/tractor-crisp
 COPY tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/Cargo.toml ./tools/find_unsafe/
 COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
+RUN cd tools/find_unsafe && cargo build --release
 
 # Add `/usr/local/bin/crisp` wrapper script
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \

@@ -328,6 +328,7 @@ def do_main(args, cfg):
     if n_op_test.exit_code != 0:
         print('error: test exit code after transpile = %d' % n_op_test.exit_code)
         return
+    mvir.set_tag('current', n_code.node_id(), ('main', 'transpile'))
 
     for safety_try in range(3):
         print(' ** count_unsafe')
@@ -349,6 +350,7 @@ def do_main(args, cfg):
                   (repair_try + 1, n_op_test.exit_code))
             if n_op_test.passed:
                 n_code = n_new_code
+                mvir.set_tag('current', n_code.node_id(), ('main', 'safety', safety_try))
                 break
 
             print(' ** llm (repair)')

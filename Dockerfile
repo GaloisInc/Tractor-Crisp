@@ -19,6 +19,15 @@ RUN rustup toolchain add \
     -c rustfmt-preview,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2022-08-08
 
+# Update crates.io index for future use.  There's no dedicated command to force
+# an update, but adding a dependency will do it.
+# https://stackoverflow.com/a/74708239
+RUN mkdir /tmp/empty_project \
+    && cd /tmp/empty_project \
+    && cargo +nightly-2022-08-08 init \
+    && cargo +nightly-2022-08-08 add serde \
+    && rm -rf /tmp/empty_project
+
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
 RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers

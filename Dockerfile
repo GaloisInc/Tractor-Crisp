@@ -49,7 +49,7 @@ RUN virtualenv venv
 RUN venv/bin/pip3 install -r requirements.txt
 
 COPY crisp/ ./crisp/
-RUN find crisp/ -name __pycache__ | xargs rm -r
+RUN find crisp/ -name __pycache__ | xargs --no-run-if-empty rm -r
 # TODO: use `pip3 install -e .` after setting up python project files
 ENV PYTHONPATH=/opt/tractor-crisp
 

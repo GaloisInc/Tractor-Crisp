@@ -192,7 +192,9 @@ def do_cc_cmake(args, cfg):
     n_op = analysis.cc_cmake(cfg, mvir, node)
 
     if n_op.exit_code != 0:
-        print(n_op.body().decode('utf-8'))
+        body = n_op.body()
+        assert body is not None
+        print(body.decode('utf-8'))
     print('cmake process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
     print('operation: %s' % n_op.node_id())
@@ -494,34 +496,26 @@ def main():
         cfg_kwargs['mvir_storage_dir'] = os.path.abspath(args.mvir_storage_dir)
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
 
-    if args.cmd == 'main':
-        do_main(args, cfg)
-    elif args.cmd == 'reflog':
-        do_reflog(args, cfg)
-    elif args.cmd == 'tag':
-        do_tag(args, cfg)
-    elif args.cmd == 'show':
-        do_show(args, cfg)
-    elif args.cmd == 'index':
-        do_index(args, cfg)
-    elif args.cmd == 'commit':
-        do_commit(args, cfg)
-    elif args.cmd == 'checkout':
-        do_checkout(args, cfg)
-    elif args.cmd == 'cc_cmake':
-        do_cc_cmake(args, cfg)
-    elif args.cmd == 'transpile':
-        do_transpile(args, cfg)
-    elif args.cmd == 'llm':
-        do_llm(args, cfg)
-    elif args.cmd == 'llm-repair':
-        do_llm_repair(args, cfg)
-    elif args.cmd == 'test':
-        do_test(args, cfg)
-    elif args.cmd == 'find_unsafe':
-        do_find_unsafe(args, cfg)
-    elif args.cmd == 'git':
-        do_git(args, cfg)
+    dispatch = { x.__name__: x for x in [
+        do_main,
+        do_reflog,
+        do_tag,
+        do_show,
+        do_index,
+        do_commit,
+        do_checkout,
+        do_cc_cmake,
+        do_transpile,
+        do_llm,
+        do_llm_repair,
+        do_test,
+        do_find_unsafe,
+        do_git,
+    ]}
+
+    fn_name = "do_" + args.cmd
+    if fn_name in dispatch:
+        dispatch[fn_name](args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

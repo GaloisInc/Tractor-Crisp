@@ -31,7 +31,7 @@ class WorkContainer:
 
     def start(self):
         self.container = self.client.containers.run(
-                self.image, ('sleep', '1000'), detach=True, remove=True)
+            self.image, ['sleep', '1000'], detach=True, remove=True)
 
     def stop(self):
         if self.container is not None:

@@ -192,9 +192,8 @@ def do_cc_cmake(args, cfg):
     n_op = analysis.cc_cmake(cfg, mvir, node)
 
     if n_op.exit_code != 0:
-        body = n_op.body()
-        assert body is not None
-        print(body.decode('utf-8'))
+        body = n_op.body_str()
+        print(body)
     print('cmake process %s with code %d:\n%s' % (
         'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
     print('operation: %s' % n_op.node_id())

@@ -15,8 +15,9 @@ RUN apt-get install -y llvm clang libclang-dev python3 libssl-dev pkg-config
 # Install rustup & pin to C2Rust's nightly
 WORKDIR /tmp
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup.rs \
-  && sh ./rustup.rs -y --default-toolchain nightly-2022-08-08
+  && sh ./rustup.rs -y --default-toolchain 1.88.0
 ENV PATH="/root/.cargo/bin:$PATH"
+RUN rustup toolchain add nightly-2022-08-08
 
 # Build and install C2Rust
 RUN cargo install --locked c2rust
@@ -26,6 +27,6 @@ RUN cargo install --locked c2rust
 # https://stackoverflow.com/a/74708239
 RUN mkdir /tmp/empty_project \
     && cd /tmp/empty_project \
-    && cargo init \
-    && cargo add serde \
+    && cargo +nightly-2022-08-08 init \
+    && cargo +nightly-2022-08-08 add serde \
     && rm -rf /tmp/empty_project

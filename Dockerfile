@@ -6,7 +6,7 @@ RUN apt-get update
 
 # c2rust deps
 RUN apt-get install -y \
-    build-essential llvm clang libclang-dev cmake \
+    build-essential llvm llvm-dev clang libclang-dev cmake \
     libssl-dev pkg-config python3 git
 
 # Install c2rust

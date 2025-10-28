@@ -16,7 +16,7 @@ RUN cargo install \
 
 # Install the default toolchain for c2rust transpiled projects
 RUN rustup toolchain add \
-    -c rustfmt-preview,rustc-dev,rust-src,miri,rust-analyzer \
+    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2022-08-08
 
 # Update crates.io index for future use.  There's no dedicated command to force

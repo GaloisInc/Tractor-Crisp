@@ -88,19 +88,36 @@ def run_crisp(cli_args, *args, **kwargs):
 
 LIB_CONFIG_STR = '''
 base_dir = "{base_dir}"
-src_globs = "rust/src/*.rs"
+src_globs = "translated_rust/src/*.rs"
 test_command = """
 set -e
+export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
-sed -i -e 's/staticlib/cdylib/' rust/Cargo.toml
-cargo build --manifest-path rust/Cargo.toml
-ln -s librust.so rust/target/debug/lib{lib_name}.so
-cargo run --manifest-path runner/Cargo.toml -- -b rust/target/debug lib
+sed -i -e 's/staticlib/cdylib/' translated_rust/Cargo.toml
+sed -i -e 's/name = "translated_rust"/name = "{example_name}"/' translated_rust/Cargo.toml
+python3 -m runtests -s . --rust --verbose
 """
 
 [transpile]
 cmake_src_dir = "test_case"
-output_dir = "rust"
+output_dir = "translated_rust"
+'''
+
+BIN_CONFIG_STR = '''
+base_dir = "{base_dir}"
+src_globs = "translated_rust/src/*.rs"
+test_command = """
+set -e
+export PYTHONPATH=$PWD/deployment/scripts/github-actions
+cd {example_dir}
+sed -i -e 's/name = "main"/name = "{example_name}"/' translated_rust/Cargo.toml
+python3 -m runtests -s . --rust --verbose
+"""
+
+[transpile]
+cmake_src_dir = "test_case"
+output_dir = "translated_rust"
+bin_main = "main"
 '''
 
 def main():
@@ -108,7 +125,6 @@ def main():
 
     # Extract CMake target info
     target_info = get_target_info(args.project_dir)
-    from pprint import pprint; pprint(target_info)
 
     # Write crisp.toml
     base_dir = find_git_root(args.project_dir)
@@ -116,18 +132,19 @@ def main():
 
     match target_info['type']:
         case 'STATIC_LIBRARY' | 'SHARED_LIBRARY':
-            pass
+            cfg_template = LIB_CONFIG_STR
+        case 'EXECUTABLE':
+            cfg_template = BIN_CONFIG_STR
         case t:
             raise ValueError('unknown CMake target type %r' % (t,))
 
-    cfg_str = LIB_CONFIG_STR.format(
-            lib_name = target_info['name'],
+    cfg_str = cfg_template.format(
             base_dir = os.path.relpath(base_dir, args.project_dir),
             example_dir = example_dir_rel,
+            example_name = target_info['name'],
             )
     with open(os.path.join(args.project_dir, 'crisp.toml'), 'w') as f:
         f.write(cfg_str)
-        print(cfg_str)
 
     # Collect source files
     src_files = []
@@ -135,7 +152,8 @@ def main():
             os.path.join(args.project_dir, 'runner'),
             os.path.join(args.project_dir, 'test_case'),
             os.path.join(args.project_dir, 'test_vectors'),
-            os.path.join(base_dir, 'tools/cando'),
+            os.path.join(base_dir, 'deployment'),
+            os.path.join(base_dir, 'tools'),
             ]
     for start_dir in commit_dirs:
         for root, dirs, files in os.walk(start_dir):
@@ -144,7 +162,7 @@ def main():
                 rel_path = os.path.relpath(path, args.project_dir)
                 src_files.append(rel_path)
             for i in reversed(range(len(dirs))):
-                if dirs[i] == 'target':
+                if dirs[i] in ('target', '__pycache__'):
                     del dirs[i]
 
     run_crisp(args, 'commit', '-t', 'c_code', *src_files)

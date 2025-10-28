@@ -1,6 +1,10 @@
-FROM docker.io/rust:bookworm
+# Need gcc-13 for hayroll.
+# Debian bookworm (12) only has gcc-12.
+# Debian trixie (13) has gcc-13.
+FROM docker.io/rust:trixie
 
-RUN rustup default 1.87.0
+# rust-analyzer (required by hayroll)'s deps require Rust 1.89
+RUN rustup default 1.90.0
 
 RUN apt-get update
 
@@ -13,6 +17,12 @@ RUN apt-get install -y \
 RUN cargo install \
     --locked \
     c2rust
+
+# Install hayroll
+RUN git clone https://github.com/UW-HARVEST/Hayroll \
+    && cd Hayroll \
+    && ./prerequisites.bash --no-sudo --llvm-version 18 \
+    && ./build.bash
 
 # Install the default toolchain for c2rust transpiled projects
 RUN rustup toolchain add \

@@ -142,10 +142,10 @@ class Workflow:
 
             # Run c2rust-transpile
             c2rust_cmd = [
-                    'c2rust-transpile',
+                    'hayroll', 'transpile',
                     sb.join(COMPILE_COMMANDS_PATH),
                     '--output-dir', sb.join(output_path),
-                    '--emit-build-files',
+                    #'--emit-build-files',
                     ]
             if cfg.transpile.bin_main is not None:
                 c2rust_cmd.extend((

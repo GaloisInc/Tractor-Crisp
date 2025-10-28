@@ -140,12 +140,12 @@ class Workflow:
             sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
 
-            # Run c2rust-transpile
+            # Run c2rust-transpile through hayroll.
             c2rust_cmd = [
-                    'c2rust-transpile',
+                    'hayroll',
+                    'transpile',
                     sb.join(COMPILE_COMMANDS_PATH),
                     '--output-dir', sb.join(output_path),
-                    '--emit-build-files',
                     ]
             if cfg.transpile.bin_main is not None:
                 c2rust_cmd.extend((

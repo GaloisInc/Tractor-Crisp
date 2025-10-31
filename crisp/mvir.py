@@ -43,7 +43,7 @@ class NodeId:
 
     @classmethod
     def check_type(cls, x):
-        assert isinstance(x, cls)
+        assert isinstance(x, cls), 'expected %r, but got %r' % (cls, type(x))
 
 
 def to_cbor(x):
@@ -610,6 +610,18 @@ class TranspileOpNode(Node):
     exit_code = property(lambda self: self._metadata['exit_code'])
     rust_code = property(lambda self: self._metadata['rust_code'])
 
+class SplitFfiOpNode(Node):
+    KIND = 'split_ffi_op'
+    old_code: NodeId
+    new_code: NodeId
+    # Commit hash of the `split_ffi_entry_points` version that was used
+    commit: str
+    # `body` stores the log output
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    commit = property(lambda self: self._metadata['commit'])
+
 class LlmOpNode(Node):
     KIND = 'llm_op'
     old_code: NodeId
@@ -668,6 +680,7 @@ NODE_CLASSES = [
     TreeNode,
     CompileCommandsOpNode,
     TranspileOpNode,
+    SplitFfiOpNode,
     LlmOpNode,
     TestResultNode,
     FindUnsafeAnalysisNode,

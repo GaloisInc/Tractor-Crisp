@@ -1,13 +1,17 @@
 import functools
 import inspect
+import os
+import subprocess
 from typing import Any
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
-        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode
+        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
+        SplitFfiOpNode
 from .sandbox import run_sandbox
+from .work_dir import lock_work_dir
 
 
 LLM_SAFETY_PROMPT = '''
@@ -37,6 +41,9 @@ Build/test logs:
 {test_output}
 ```
 '''
+
+
+_CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
 
 def _print_step_value(prefix: str, x: Any):
@@ -203,3 +210,64 @@ class Workflow:
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
+
+    @step
+    def split_ffi(self, n_tree: TreeNode) -> TreeNode:
+        op = self.split_ffi_op(n_tree)
+        return self.mvir.node(op.new_code)
+
+    @step
+    def split_ffi_op(self, n_tree: TreeNode) -> SplitFfiOpNode:
+        """
+        Note: the `split_ffi` tool may expand proc macros, so it should only be
+        used on trusted code (i.e. not LLM output).
+        """
+        cfg, mvir = self.cfg, self.mvir
+
+        split_ffi_dir = os.path.join(_CRISP_DIR, 'tools/split_ffi_entry_points')
+        subprocess.run(('cargo', 'build', '--release'),
+            cwd=split_ffi_dir, check=True)
+
+        commit = analysis.crisp_git_state('tools/split_ffi_entry_points')
+
+        # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
+        # tricks like `base_dir = ".."` used by the testing scripts.
+        # TODO: clean up config path handling and get rid of this
+        config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+        base_path = os.path.abspath(cfg.base_dir)
+        rust_path = os.path.join(config_path, cfg.transpile.output_dir)
+        rust_path_rel = os.path.relpath(rust_path, base_path)
+
+        with lock_work_dir(cfg, mvir) as wd:
+            wd.checkout(n_tree)
+
+            wd_rust_path = os.path.abspath(os.path.join(wd.path, rust_path_rel))
+            p = subprocess.run(
+                ('cargo', 'run', '--release',
+                    '--manifest-path', os.path.join(split_ffi_dir, 'Cargo.toml'),
+                    '--', wd_rust_path),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            if p.returncode != 0:
+                print('command failed with exit code %d' % p.returncode)
+                print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
+                print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
+                p.check_returncode()
+
+            p2 = subprocess.run(('cargo', 'fmt'), cwd=wd_rust_path,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            new_files = n_tree.files.copy()
+            for k in new_files:
+                new_files[k] = wd.commit_file(k).node_id()
+            n_new_tree = TreeNode.new(mvir, files=new_files)
+
+        n_op = SplitFfiOpNode.new(
+                mvir,
+                old_code = n_tree.node_id(),
+                new_code = n_new_tree.node_id(),
+                commit = commit,
+                body = p.stdout + b'\n\n' + p2.stdout,
+                )
+
+        return n_op

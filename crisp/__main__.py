@@ -13,7 +13,7 @@ from . import analysis, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode, TranspileOpNode
+    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import Workflow
@@ -64,6 +64,9 @@ def parse_args():
     transpile = sub.add_parser('transpile')
     transpile.add_argument('compile_commands_node', nargs='?', default='compile_commands')
     transpile.add_argument('c_code_node', nargs='?')
+
+    split_ffi = sub.add_parser('split-ffi')
+    split_ffi.add_argument('node', nargs='?', default='current')
 
     llm = sub.add_parser('llm')
     llm.add_argument('node', nargs='?', default='current')
@@ -192,6 +195,22 @@ def do_transpile(args, cfg):
 
     print('operation: %s' % n_op.node_id())
     print('result: %s' % n_op.rust_code)
+
+def do_split_ffi(args, cfg):
+    '''Run `split_ffi_entry_points` tool on Rust code.'''
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
+    dest_tag = args.node if is_tag else 'current'
+    n_tree = mvir.node(node_id)
+
+    n_op = w.split_ffi_op(n_tree)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    mvir.set_tag(dest_tag, n_op.new_code, n_op.kind)
+    print('new state: %s' % n_op.new_code)
+    print('operation: %s' % n_op.node_id())
 
 def do_test(args, cfg):
     """
@@ -406,6 +425,8 @@ def main():
         do_cc_cmake(args, cfg)
     elif args.cmd == 'transpile':
         do_transpile(args, cfg)
+    elif args.cmd == 'split-ffi':
+        do_split_ffi(args, cfg)
     elif args.cmd == 'llm':
         do_llm(args, cfg)
     elif args.cmd == 'llm-repair':

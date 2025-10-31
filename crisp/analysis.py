@@ -267,6 +267,6 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR,
             )
     return n
 
-def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
+def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> FindUnsafeAnalysisNode:
     commit = crisp_git_state('tools/find_unsafe')
     return _find_unsafe_impl(cfg, mvir, code, commit)

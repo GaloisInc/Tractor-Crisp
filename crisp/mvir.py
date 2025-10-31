@@ -364,7 +364,7 @@ class MVIR:
                     with open(path, 'ab') as f:
                         cbor.dump(entry.to_cbor(), f)
 
-        self._touch_stamp('index', processed_nodes)
+        self._touch_stamp('index', bytes(processed_nodes))
 
     def _index_path(self, node_id):
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
@@ -428,7 +428,7 @@ class Node:
                 raise
 
     @classmethod
-    def new(cls, mvir, body=b'', **metadata):
+    def new(cls, mvir, body: bytes | str = b'', **metadata):
         assert 'kind' not in metadata
         metadata['kind'] = cls.KIND
         cls._check_metadata(metadata)
@@ -437,7 +437,7 @@ class Node:
         return cls._create(mvir, metadata, body)
 
     @staticmethod
-    def _create(mvir, metadata, body):
+    def _create(mvir, metadata, body: bytes):
         meta_bytes = cbor.dumps(to_cbor(metadata))
         h = hashlib.sha256()
         h.update(meta_bytes)
@@ -549,17 +549,18 @@ class Node:
 
     kind = property(lambda self: self.metadata()['kind'])
 
-    def body(self):
+    def body(self) -> bytes:
         if self._body is None:
             self._load_body()
+        assert self._body is not None
         return self._body
 
-    def body_str(self):
+    def body_str(self) -> str:
         return self.body().decode('utf-8')
 
     def body_json(self):
         if self._body_json is None:
-            self._body_json = json.loads(self.body().decode('utf-8'))
+            self._body_json = json.loads(self.body_str())
         return self._body_json
 
 class FileNode(Node):

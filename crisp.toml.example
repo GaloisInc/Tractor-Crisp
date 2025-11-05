@@ -1,0 +1,25 @@
+base_dir = "."
+src_globs = "rust/src/*.rs"
+
+# CRISP runs these shell commands to check whether translation steps correctly
+# preserve the behavior of the original program.  The example `test_command`
+# just builds the code, but doesn't test it; you may wish to add additional
+# steps to build and run project-specific test cases.  The `test_command`
+# should exit with code 0 on success (e.g. when the tests pass) and nonzero
+# otherwise.
+test_command = """
+set -e
+cargo build --manifest-path rust/Cargo.toml
+"""
+
+[transpile]
+
+# Directory containing the main `CMakeLists.txt` for the C project.
+cmake_src_dir = "."
+
+# Where to output the generated Rust code.  If you change this, also change
+# `src_globs` above to match.
+output_dir = "rust"
+
+# If the C project produces a binary instead of a library, uncomment this.
+#bin_main = "main"

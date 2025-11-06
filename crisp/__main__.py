@@ -16,7 +16,7 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
-
+from .workflow import Workflow
 
 
 def parse_args():
@@ -302,70 +302,39 @@ def do_find_unsafe(args, cfg):
 
     print('\nresult: %s' % n.node_id())
 
-def count_unsafe(cfg: Config, mvir: MVIR, n_code: TreeNode) -> int:
-    n_find_unsafe = analysis.find_unsafe(cfg, mvir, n_code)
-    j_unsafe = n_find_unsafe.body_json()
-    unsafe_count = sum(
-        len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
-        for file_info in j_unsafe.values())
-    return unsafe_count
-
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    print(' ** cc_cmake')
-    n_op_cc = analysis.cc_cmake(cfg, mvir, n_c_code)
-    n_cc = mvir.node(n_op_cc.compile_commands)
-    print(' ** transpile')
-    n_op_transpile = transpile_common(cfg, mvir, n_cc, n_c_code)
-    n_code = mvir.node(n_op_transpile.rust_code)
-    print('n_code = %s' % n_code.node_id())
-    print(' ** run_tests')
-    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
-    if n_op_test.exit_code != 0:
-        print('error: test exit code after transpile = %d' % n_op_test.exit_code)
+    n_code = w.transpile(n_c_code)
+    if n_code is None:
         return
-    mvir.set_tag('current', n_code.node_id(), ('main', 'transpile'))
+    w.accept(n_code, ('main', 'transpile'))
 
     for safety_try in range(3):
-        print(' ** count_unsafe')
-        unsafe_count = count_unsafe(cfg, mvir, n_code)
-        print('\n\niteration %d: %d unsafe functions remaining' %
-              (safety_try + 1, unsafe_count))
+        unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:
             break
-        print('code = %s' % n_code.node_id())
 
-        print(' ** llm (safety)')
-        n_new_code, n_op_llm = llm.run_rewrite(
-                cfg, mvir, LLM_PROMPT, n_code, glob_filter = cfg.src_globs)
+        n_new_code = w.llm_safety(n_code)
 
         for repair_try in range(3):
-            print(' ** run_tests')
-            n_op_test = analysis.run_tests(cfg, mvir, n_new_code, n_c_code, cfg.test_command)
-            print('\n  repair iteration %d: test exit code = %d' %
-                  (repair_try + 1, n_op_test.exit_code))
-            if n_op_test.passed:
+            n_op_test = w.test_op(n_new_code, n_c_code)
+            if n_op_test.exit_code == 0:
+                w.accept(n_new_code, ('main', 'safety', safety_try))
                 n_code = n_new_code
-                mvir.set_tag('current', n_code.node_id(), ('main', 'safety', safety_try))
                 break
 
-            print(' ** llm (repair)')
-            n_new_code, n_op_llm = llm.run_rewrite(cfg, mvir, LLM_REPAIR_PROMPT, n_new_code,
-                glob_filter = cfg.src_globs,
-                format_kwargs = {'test_output': n_op_test.body_str()},
-                think=True)
+            n_new_code = w.llm_repair(n_new_code, n_op_test)
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
-    print(' ** run_tests')
-    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
-    print(' ** count_unsafe')
-    unsafe_count = count_unsafe(cfg, mvir, n_code)
+    n_op_test = w.test_op(n_code, n_c_code)
+    unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 

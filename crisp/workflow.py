@@ -1,7 +1,10 @@
+import functools
+import inspect
+
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .mvir import MVIR, FileNode, TreeNode, TranspileOpNode, TestResultNode
+from .mvir import MVIR, Node, FileNode, TreeNode, TranspileOpNode, TestResultNode
 from .sandbox import run_sandbox
 
 
@@ -34,6 +37,31 @@ Build/test logs:
 '''
 
 
+def step(f):
+    name = f.__name__
+    sig = inspect.signature(f)
+
+    @functools.wraps(f)
+    def g(*args, **kwargs):
+        print(' ** ' + name)
+        bound = sig.bind(*args, **kwargs)
+        for arg_name, val in bound.arguments.items():
+            if isinstance(val, Workflow):
+                continue
+            if isinstance(val, Node):
+                val = val.node_id()
+            print('%s = %s' % (arg_name, val))
+        result = f(*args, **kwargs)
+        if result is not None:
+            show_result = result
+            if isinstance(show_result, Node):
+                show_result = show_result.node_id()
+            print('result = %s' % (show_result,))
+        return result
+
+    return g
+
+
 class Workflow:
     def __init__(self, cfg: Config, mvir: MVIR):
         self.cfg = cfg
@@ -42,12 +70,14 @@ class Workflow:
     def accept(self, code: TreeNode, reason = None):
         self.mvir.set_tag('current', code.node_id(), reason)
 
-    def transpile(self, c_code: TreeNode) -> TreeNode:
-        print(' ** cc_cmake')
+    @step
+    def cc_cmake(self, c_code: TreeNode) -> FileNode:
         n_op_cc = analysis.cc_cmake(self.cfg, self.mvir, c_code)
         compile_commands = self.mvir.node(n_op_cc.compile_commands)
+        return compile_commands
 
-        print(' ** transpile')
+    def transpile(self, c_code: TreeNode) -> TreeNode:
+        compile_commands = self.cc_cmake(c_code)
         n_op_transpile = self.transpile_cc_op(c_code, compile_commands)
         code = self.mvir.node(n_op_transpile.rust_code)
 
@@ -56,6 +86,7 @@ class Workflow:
             return None
         return code
 
+    @step
     def transpile_cc_op(self, n_c_code: TreeNode, n_cc: FileNode) -> TranspileOpNode:
         cfg, mvir = self.cfg, self.mvir
         with run_sandbox(cfg, mvir) as sb:
@@ -106,17 +137,13 @@ class Workflow:
         n = self.test_op(code, c_code)
         return n.exit_code == 0
 
+    @step
     def test_op(self, code: TreeNode, c_code: TreeNode) -> TestResultNode:
-        print(' ** test')
-        print('code = %s' % code.node_id())
-        print('c_code = %s' % c_code.node_id())
         n = analysis.run_tests(self.cfg, self.mvir, code, c_code, self.cfg.test_command)
-        print('test exit code = %d' % n.exit_code)
         return n
 
+    @step
     def count_unsafe(self, n_code: TreeNode) -> int:
-        print(' ** count_unsafe')
-        print('code = %s' % n_code.node_id())
         n_find_unsafe = analysis.find_unsafe(self.cfg, self.mvir, n_code)
         j_unsafe = n_find_unsafe.body_json()
         unsafe_count = sum(
@@ -125,23 +152,19 @@ class Workflow:
         print('%d unsafe functions remaining' % unsafe_count)
         return unsafe_count
 
+    @step
     def llm_safety(self, n_code: TreeNode) -> TreeNode:
-        print(' ** llm (safety)')
-        print('code = %s' % n_code.node_id())
         n_new_code, n_op_llm = llm.run_rewrite(
                 self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs)
-        print('new code = %s' % n_new_code.node_id())
         return n_new_code
 
+    @step
     def llm_repair(self, n_code: TreeNode, n_op_test: TestResultNode) -> TreeNode:
-        print(' ** llm (repair)')
-        print('code = %s' % n_code.node_id())
         n_new_code, n_op_llm = llm.run_rewrite(
                 self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
-        print('new code = %s' % n_new_code.node_id())
         return n_new_code
 

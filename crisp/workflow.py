@@ -1,10 +1,12 @@
 import functools
 import inspect
+from typing import Any
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .mvir import MVIR, Node, FileNode, TreeNode, TranspileOpNode, TestResultNode
+from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
+        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode
 from .sandbox import run_sandbox
 
 
@@ -37,26 +39,40 @@ Build/test logs:
 '''
 
 
+def _print_step_value(prefix: str, x: Any):
+    if isinstance(x, (tuple, list)):
+        for i, y in enumerate(x):
+            _print_step_value('%s[%d]' % (prefix, i), y)
+    elif isinstance(x, dict):
+        for k, v in x.items():
+            _print_step_value('%s[%r]' % (prefix, k), y)
+    else:
+        if isinstance(x, Node):
+            x = x.node_id()
+        print('%s = %s' % (prefix, x))
+
 def step(f):
     name = f.__name__
     sig = inspect.signature(f)
 
     @functools.wraps(f)
-    def g(*args, **kwargs):
-        print(' ** ' + name)
-        bound = sig.bind(*args, **kwargs)
-        for arg_name, val in bound.arguments.items():
-            if isinstance(val, Workflow):
-                continue
-            if isinstance(val, Node):
-                val = val.node_id()
-            print('%s = %s' % (arg_name, val))
-        result = f(*args, **kwargs)
+    def g(self, *args, **kwargs):
+        if self._step_depth == 0:
+            print(' ** ' + name)
+            bound = sig.bind(self, *args, **kwargs)
+            for arg_name, val in bound.arguments.items():
+                if isinstance(val, Workflow):
+                    continue
+                _print_step_value(arg_name, val)
+
+        self._step_depth += 1
+        try:
+            result = f(self, *args, **kwargs)
+        finally:
+            self._step_depth -= 1
+
         if result is not None:
-            show_result = result
-            if isinstance(show_result, Node):
-                show_result = show_result.node_id()
-            print('result = %s' % (show_result,))
+            _print_step_value(name + ' result', result)
         return result
 
     return g
@@ -66,16 +82,22 @@ class Workflow:
     def __init__(self, cfg: Config, mvir: MVIR):
         self.cfg = cfg
         self.mvir = mvir
+        self._step_depth = 0
 
     def accept(self, code: TreeNode, reason = None):
         self.mvir.set_tag('current', code.node_id(), reason)
 
     @step
     def cc_cmake(self, c_code: TreeNode) -> FileNode:
-        n_op_cc = analysis.cc_cmake(self.cfg, self.mvir, c_code)
+        n_op_cc = self.cc_cmake_op(c_code)
         compile_commands = self.mvir.node(n_op_cc.compile_commands)
         return compile_commands
 
+    @step
+    def cc_cmake_op(self, c_code: TreeNode) -> CompileCommandsOpNode:
+        return analysis.cc_cmake(self.cfg, self.mvir, c_code)
+
+    @step
     def transpile(self, c_code: TreeNode) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
         n_op_transpile = self.transpile_cc_op(c_code, compile_commands)
@@ -133,6 +155,7 @@ class Workflow:
 
         return n_op
 
+    @step
     def test(self, code: TreeNode, c_code: TreeNode) -> bool:
         n = self.test_op(code, c_code)
         return n.exit_code == 0
@@ -144,7 +167,7 @@ class Workflow:
 
     @step
     def count_unsafe(self, n_code: TreeNode) -> int:
-        n_find_unsafe = analysis.find_unsafe(self.cfg, self.mvir, n_code)
+        n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()
         unsafe_count = sum(
             len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
@@ -153,18 +176,30 @@ class Workflow:
         return unsafe_count
 
     @step
+    def find_unsafe_op(self, n_code: TreeNode) -> FindUnsafeAnalysisNode:
+        return analysis.find_unsafe(self.cfg, self.mvir, n_code)
+
+    @step
     def llm_safety(self, n_code: TreeNode) -> TreeNode:
-        n_new_code, n_op_llm = llm.run_rewrite(
-                self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
-                glob_filter = self.cfg.src_globs)
+        n_new_code, n_op_llm = self.llm_safety_op(n_code)
         return n_new_code
 
     @step
+    def llm_safety_op(self, n_code: TreeNode) -> tuple[TreeNode, LlmOpNode]:
+        return llm.run_rewrite(
+                self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
+                glob_filter = self.cfg.src_globs)
+
+    @step
     def llm_repair(self, n_code: TreeNode, n_op_test: TestResultNode) -> TreeNode:
-        n_new_code, n_op_llm = llm.run_rewrite(
+        n_new_code, n_op_llm = self.llm_repair_op(n_code, n_op_test)
+        return n_new_code
+
+    @step
+    def llm_repair_op(self, n_code: TreeNode,
+            n_op_test: TestResultNode) -> tuple[TreeNode, LlmOpNode]:
+        return llm.run_rewrite(
                 self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
-        return n_new_code
-

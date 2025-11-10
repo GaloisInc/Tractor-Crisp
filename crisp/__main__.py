@@ -16,7 +16,7 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
-
+from .workflow import Workflow
 
 
 def parse_args():
@@ -112,20 +112,6 @@ def parse_node_id_arg_and_check_tag(mvir, s):
         raise ValueError('found multiple nodes with prefix %r: %r' % (s, matches))
 
 
-LLM_PROMPT = '''
-This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
-
-HOWEVER, any function marked #[no_mangle] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature and contains nontrivial logic, you should handle it as follows:
-1. For a #[no_mangle] entry point named `foo`, make a new function `foo_impl` without the #[no_mangle] attribute.
-2. Move all the logic from `foo` into `foo_impl`, and have `foo` simply be a wrapper that calls `foo_impl`.
-3. If there are any calls to `foo` in the Rust code, change them to call `foo_impl` instead.
-You can then make `foo_impl` safe like any other function, leaving `foo` as a simple unsafe wrapper for FFI callers.
-
-After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
-
-{input_files}
-'''
-
 def do_llm(args, cfg):
     '''Apply an LLM-based transformation to the codebase.  This takes the files
     identified by `cfg.src_globs`, passes them to the LLM, and overwrites the
@@ -133,35 +119,22 @@ def do_llm(args, cfg):
     which references the old and new states of the codebase, and records the
     node in the `op_history` reflog.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
     dest_tag = args.node if is_tag else 'current'
     n_tree = mvir.node(node_id)
 
-    n_new_tree, n_op = llm.run_rewrite(cfg, mvir, LLM_PROMPT, n_tree,
-        glob_filter = cfg.src_globs)
+    n_new_tree, n_op = w.llm_safety_op(n_tree)
 
     mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
     print('new state: %s' % n_new_tree.node_id())
     print('operation: %s' % n_op.node_id())
 
 
-LLM_REPAIR_PROMPT = '''
-I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
-
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
-
-{input_files}
-
-Build/test logs:
-
-```
-{test_output}
-```
-'''
-
 def do_llm_repair(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
     dest_tag = args.node if is_tag else 'current'
@@ -170,12 +143,8 @@ def do_llm_repair(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)
 
-    n_test = analysis.run_tests(cfg, mvir, n_tree, n_c_code, cfg.test_command)
-
-    n_new_tree, n_op = llm.run_rewrite(cfg, mvir, LLM_REPAIR_PROMPT, n_tree,
-        glob_filter = cfg.src_globs,
-        format_kwargs = {'test_output': n_test.body_str()},
-        think=True)
+    n_test = w.test_op(n_tree, n_c_code)
+    n_new_tree, n_op = w.llm_repair_op(n_tree, n_test)
 
     mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
     print('new state: %s' % n_new_tree.node_id())
@@ -185,11 +154,12 @@ def do_llm_repair(args, cfg):
 def do_cc_cmake(args, cfg):
     '''Generate compile_commands.json by running `cmake`.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     node_id = parse_node_id_arg(mvir, args.node)
     node = mvir.node(node_id)
 
-    n_op = analysis.cc_cmake(cfg, mvir, node)
+    n_op = w.cc_cmake_op(node)
 
     if n_op.exit_code != 0:
         print(n_op.body().decode('utf-8'))
@@ -198,57 +168,10 @@ def do_cc_cmake(args, cfg):
     print('operation: %s' % n_op.node_id())
     print('result: %s' % n_op.compile_commands)
 
-def transpile_common(cfg: Config, mvir: MVIR,
-        n_cc: FileNode, n_c_code: TreeNode) -> TranspileOpNode:
-    with run_sandbox(cfg, mvir) as sb:
-        output_path = cfg.relative_path(cfg.transpile.output_dir)
-
-        sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
-        sb.checkout(n_c_code)
-
-        # Run c2rust-transpile
-        c2rust_cmd = [
-                'c2rust-transpile',
-                sb.join(COMPILE_COMMANDS_PATH),
-                '--output-dir', sb.join(output_path),
-                '--emit-build-files',
-                ]
-        if cfg.transpile.bin_main is not None:
-            c2rust_cmd.extend((
-                '--binary', cfg.transpile.bin_main,
-                ))
-        exit_code, logs = sb.run(c2rust_cmd)
-
-        if exit_code == 0:
-            n_rust_code = sb.commit_dir(output_path)
-        else:
-            n_rust_code = None
-        n_rust_code_id = n_rust_code.node_id() if n_rust_code is not None else None
-
-    n_op = TranspileOpNode.new(
-        mvir,
-        body = logs,
-        compile_commands = n_cc.node_id(),
-        c_code = n_c_code.node_id(),
-        cmd = c2rust_cmd,
-        exit_code = exit_code,
-        rust_code = n_rust_code_id,
-        )
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
-    if n_rust_code is not None:
-        mvir.set_tag('current', n_rust_code.node_id(), n_op.kind)
-
-    if exit_code != 0:
-        # TODO: proper log parsing
-        print(repr(logs))
-    print('c2rust process %s with code %d:\n%s' % (
-        'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
-
-    return n_op
-
 def do_transpile(args, cfg):
     '''Transpile from C to unsafe Rust.'''
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     cc_node_id = parse_node_id_arg(mvir, args.compile_commands_node)
     n_cc = mvir.node(cc_node_id)
@@ -265,7 +188,7 @@ def do_transpile(args, cfg):
             raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
     n_c_code = mvir.node(c_code_node_id)
 
-    n_op = transpile_common(cfg, mvir, n_cc, n_c_code)
+    n_op = w.transpile_cc_op(n_c_code, n_cc)
 
     print('operation: %s' % n_op.node_id())
     print('result: %s' % n_op.rust_code)
@@ -277,6 +200,7 @@ def do_test(args, cfg):
     it to the `test_passed` reflog.
     """
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     node_id = parse_node_id_arg(mvir, args.node)
     n_code = mvir.node(node_id)
@@ -284,7 +208,7 @@ def do_test(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)
 
-    n = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
+    n = w.test_op(n_code, n_c_code)
 
     print('\ntest process %s with code %d:\n%s' % (
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))
@@ -292,80 +216,50 @@ def do_test(args, cfg):
 
 def do_find_unsafe(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     node_id = parse_node_id_arg(mvir, args.node)
     n_code = mvir.node(node_id)
 
-    n = analysis.find_unsafe(cfg, mvir, n_code)
+    n = w.find_unsafe_op(n_code)
 
     json.dump(n.body_json(), sys.stdout, indent='  ')
 
     print('\nresult: %s' % n.node_id())
 
-def count_unsafe(cfg: Config, mvir: MVIR, n_code: TreeNode) -> int:
-    n_find_unsafe = analysis.find_unsafe(cfg, mvir, n_code)
-    j_unsafe = n_find_unsafe.body_json()
-    unsafe_count = sum(
-        len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
-        for file_info in j_unsafe.values())
-    return unsafe_count
-
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    print(' ** cc_cmake')
-    n_op_cc = analysis.cc_cmake(cfg, mvir, n_c_code)
-    n_cc = mvir.node(n_op_cc.compile_commands)
-    print(' ** transpile')
-    n_op_transpile = transpile_common(cfg, mvir, n_cc, n_c_code)
-    n_code = mvir.node(n_op_transpile.rust_code)
-    print('n_code = %s' % n_code.node_id())
-    print(' ** run_tests')
-    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
-    if n_op_test.exit_code != 0:
-        print('error: test exit code after transpile = %d' % n_op_test.exit_code)
+    n_code = w.transpile(n_c_code)
+    if n_code is None:
         return
-    mvir.set_tag('current', n_code.node_id(), ('main', 'transpile'))
+    w.accept(n_code, ('main', 'transpile'))
 
     for safety_try in range(3):
-        print(' ** count_unsafe')
-        unsafe_count = count_unsafe(cfg, mvir, n_code)
-        print('\n\niteration %d: %d unsafe functions remaining' %
-              (safety_try + 1, unsafe_count))
+        unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:
             break
-        print('code = %s' % n_code.node_id())
 
-        print(' ** llm (safety)')
-        n_new_code, n_op_llm = llm.run_rewrite(
-                cfg, mvir, LLM_PROMPT, n_code, glob_filter = cfg.src_globs)
+        n_new_code = w.llm_safety(n_code)
 
         for repair_try in range(3):
-            print(' ** run_tests')
-            n_op_test = analysis.run_tests(cfg, mvir, n_new_code, n_c_code, cfg.test_command)
-            print('\n  repair iteration %d: test exit code = %d' %
-                  (repair_try + 1, n_op_test.exit_code))
-            if n_op_test.passed:
+            n_op_test = w.test_op(n_new_code, n_c_code)
+            if n_op_test.exit_code == 0:
+                w.accept(n_new_code, ('main', 'safety', safety_try))
                 n_code = n_new_code
-                mvir.set_tag('current', n_code.node_id(), ('main', 'safety', safety_try))
                 break
 
-            print(' ** llm (repair)')
-            n_new_code, n_op_llm = llm.run_rewrite(cfg, mvir, LLM_REPAIR_PROMPT, n_new_code,
-                glob_filter = cfg.src_globs,
-                format_kwargs = {'test_output': n_op_test.body_str()},
-                think=True)
+            n_new_code = w.llm_repair(n_new_code, n_op_test)
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
-    print(' ** run_tests')
-    n_op_test = analysis.run_tests(cfg, mvir, n_code, n_c_code, cfg.test_command)
-    print(' ** count_unsafe')
-    unsafe_count = count_unsafe(cfg, mvir, n_code)
+    n_op_test = w.test_op(n_code, n_c_code)
+    unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 

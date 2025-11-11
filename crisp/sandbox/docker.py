@@ -31,7 +31,7 @@ class WorkContainer:
 
     def start(self):
         self.container = self.client.containers.run(
-                self.image, ('sleep', '1000'), detach=True, remove=True)
+            self.image, ['sleep', '1000'], detach=True, remove=True)
 
     def stop(self):
         if self.container is not None:
@@ -39,6 +39,7 @@ class WorkContainer:
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
+        assert self.container is not None
         self.container.put_archive('/root/work/', tar_bytes)
 
     def checkout(self, n_tree):
@@ -64,6 +65,7 @@ class WorkContainer:
 
     def commit_dir(self, rel_path):
         assert not os.path.isabs(rel_path)
+        assert self.container is not None
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
         tar_io = io.BytesIO(tar_bytes)
@@ -91,6 +93,7 @@ class WorkContainer:
 
     def commit_file(self, rel_path):
         assert not os.path.isabs(rel_path)
+        assert self.container is not None
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
         tar_io = io.BytesIO(tar_bytes)
@@ -108,6 +111,7 @@ class WorkContainer:
         return os.path.join('/root/work', *args, **kwargs)
 
     def run(self, cmd, shell=False, stream=False):
+        assert self.container is not None
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]

@@ -1,0 +1,630 @@
+use std::collections::BTreeSet;
+use std::env;
+use std::fs;
+use std::iter;
+use std::mem;
+use std::path::Path;
+use std::str::FromStr;
+use proc_macro2::{TokenStream, TokenTree, Delimiter, Spacing, Span};
+use quote::ToTokens;
+use ra_ap_hir::Semantics;
+use ra_ap_ide_db::RootDatabase;
+use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
+use ra_ap_project_model::CargoConfig;
+use ra_ap_syntax::SyntaxNode;
+use syn;
+use syn::spanned::Spanned;
+use syn::visit_mut::{self, VisitMut};
+
+
+struct FlatTokens {
+    stack: Vec<(proc_macro2::token_stream::IntoIter, Delimiter, Span)>,
+}
+
+impl FlatTokens {
+    pub fn new(ts: TokenStream) -> FlatTokens {
+        FlatTokens {
+            stack: vec![(ts.into_iter(), Delimiter::None, Span::call_site())],
+        }
+    }
+}
+
+impl Iterator for FlatTokens {
+    type Item = Token;
+    fn next(&mut self) -> Option<Token> {
+        while let Some(&mut (ref mut it, delim, span_close)) = self.stack.last_mut() {
+            match it.next() {
+                Some(TokenTree::Group(g)) => {
+                    // Return the open delimiter and continue with the contents of the group.
+                    self.stack.push((g.stream().into_iter(), g.delimiter(), g.span_close()));
+                    let open_ch = match g.delimiter() {
+                        Delimiter::Parenthesis => '(',
+                        Delimiter::Bracket => '[',
+                        Delimiter::Brace => '{',
+                        // Skip over `Delimiter::None`, and `continue` to try the next available
+                        // token.
+                        Delimiter::None => continue,
+                    };
+                    let range = g.span_open().byte_range();
+                    return Some(Token {
+                        text: open_ch.to_string().into(),
+                        spacing: Spacing::Alone,
+                        span: (range.start, range.end),
+                    });
+                },
+                Some(tt@TokenTree::Ident(_)) |
+                Some(tt@TokenTree::Punct(_)) |
+                Some(tt@TokenTree::Literal(_)) => return Some(Token::from_token_tree(tt)),
+                None => {
+                    // Pop the now-empty group and return the close delimiter.
+                    self.stack.pop();
+                    let close_ch = match delim {
+                        Delimiter::Parenthesis => ')',
+                        Delimiter::Bracket => ']',
+                        Delimiter::Brace => '}',
+                        // Skip over `Delimiter::None`, and `continue` to try the next available
+                        // token.
+                        Delimiter::None => continue,
+                    };
+                    let range = span_close.byte_range();
+                    return Some(Token {
+                        text: close_ch.to_string().into(),
+                        spacing: Spacing::Alone,
+                        span: (range.start, range.end),
+                    });
+                },
+            }
+        }
+        None
+    }
+}
+
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Token {
+    text: Box<str>,
+    /// Spacing, for punctuation tokens.  This is `Spacing::Alone` for all non-`Punct` tokens.
+    spacing: Spacing,
+    span: (usize, usize),
+}
+
+impl Token {
+    pub fn from_token_tree(tt: TokenTree) -> Token {
+        let text = tt.to_string().into_boxed_str();
+        let spacing = match tt {
+            TokenTree::Punct(ref p) => p.spacing(),
+            _ => Spacing::Alone,
+        };
+        let range = tt.span().byte_range();
+        let start = range.start;
+        let end = range.end;
+        Token { text, spacing, span: (start, end) }
+    }
+}
+
+
+struct TokenIndex<'a> {
+    tokens: &'a [Token],
+    /// Multi-map mapping `(start, end)` to indexes in `tokens` that have that span.
+    index: BTreeSet<((usize, usize), usize)>,
+}
+
+impl<'a> TokenIndex<'a> {
+    pub fn new(tokens: &'a [Token]) -> TokenIndex<'a> {
+        let mut index = BTreeSet::new();
+        for (i, t) in tokens.iter().enumerate() {
+            index.insert((t.span, i));
+        }
+        TokenIndex { tokens, index }
+    }
+
+    pub fn find<'b>(&'b self, t: &Token) -> Option<usize> {
+        let (start, end) = t.span;
+        let lo = ((start, end), 0);
+        let hi = ((start, end), usize::MAX);
+        let mut found = None;
+        for &(_, i) in self.index.range(lo ..= hi) {
+            if self.tokens[i] == *t {
+                if found.is_none() {
+                    found = Some(i);
+                } else {
+                    // Found multiple identical tokens.  This is ambiguous.
+                    return None;
+                }
+            }
+        }
+        found
+    }
+}
+
+
+struct OutputBuffer {
+    s: String,
+    /// Whether the most recently emitted chunk had `Spacing::Joint`.
+    prev_was_joint: bool,
+    /// Index in `s` of the start of the most recent line.
+    prev_bol: usize,
+}
+
+impl OutputBuffer {
+    pub fn new() -> OutputBuffer {
+        OutputBuffer {
+            s: String::new(),
+            prev_was_joint: true,
+            prev_bol: 0,
+        }
+    }
+
+    /// Emit a token or a group of tokens.
+    ///
+    /// This assumes that the start of `chunk` is the start of a token (not whitespace or a non-doc
+    /// comment) and that the end of `chunk` is the end of a token.
+    pub fn emit(&mut self, chunk: &str, spacing: Spacing) {
+        let cur_line = &self.s[self.prev_bol..];
+        if self.prev_was_joint {
+            // No whitespace is allowed between a `Joint` token and the subsequent token.
+        } else {
+            if cur_line.contains("//") {
+                // Note this can throw false positives, such as if `//` appears inside a string
+                // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
+                // if needed.
+                self.s.push('\n');
+                self.prev_bol = self.s.len();
+            } else {
+                self.s.push(' ');
+            }
+        }
+
+        // If `chunk` contains a newline, update the beginning-of-line position.
+        if let Some(i) = chunk.bytes().rposition(|b| b == b'\n') {
+            self.prev_bol = self.s.len() + i + 1;
+        }
+
+        self.s.push_str(chunk);
+        self.prev_was_joint = matches!(spacing, Spacing::Joint);
+    }
+
+    pub fn finish(self) -> String {
+        self.s
+    }
+}
+
+fn render_output(
+    orig: &str,
+    orig_tokens: &[Token],
+    ti: &TokenIndex,
+    ts: TokenStream,
+    buf: &mut OutputBuffer,
+) {
+    if let Some(t) = orig_tokens.get(0) {
+        let (start_pos, _) = t.span;
+        buf.emit(&orig[0 .. start_pos], Spacing::Joint);
+    }
+
+    struct Run {
+        /// Byte offset of the start of the first token in the run.
+        start_pos: usize,
+        /// Index in `orig_tokens` of the last token in the run.
+        end_idx: usize,
+    }
+    let mut current_run: Option<Run> = None;
+    for t in FlatTokens::new(ts) {
+        // Try to continue the current run.
+        if let Some(ref mut run) = current_run {
+            if orig_tokens.get(run.end_idx + 1) == Some(&t) {
+                run.end_idx += 1;
+                continue;
+            } else {
+                // End the current run.
+                let end_token = &orig_tokens[run.end_idx];
+                let start_pos = run.start_pos;
+                let (_, end_pos) = end_token.span;
+                buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
+                current_run = None;
+            }
+        }
+
+        // Try to start a new run.
+        debug_assert!(current_run.is_none());
+        if let Some(idx) = ti.find(&t) {
+            let (start_pos, _) = t.span;
+            current_run = Some(Run { start_pos, end_idx: idx });
+            continue;
+        }
+
+        // This token is not part of a run.  Emit it directly.
+        buf.emit(&t.text, t.spacing);
+    }
+
+    if let Some(run) = current_run {
+        let end_token = &orig_tokens[run.end_idx];
+        let start_pos = run.start_pos;
+        let (_, end_pos) = end_token.span;
+        buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
+    }
+
+    if let Some(t) = orig_tokens.last() {
+        let (_, end_pos) = t.span;
+        buf.emit(&orig[end_pos .. orig.len()], Spacing::Joint);
+    }
+}
+
+
+struct AddDerivedItemVisitor<F>(F);
+
+impl<F: FnMut(&mut syn::Item) -> Option<syn::Item>> AddDerivedItemVisitor<F> {
+    fn visit_items(&mut self, items: &mut Vec<syn::Item>) {
+        let new_items = Vec::with_capacity(items.len());
+        let old_items = mem::replace(items, new_items);
+        for mut item in old_items {
+            let derived_item = (self.0)(&mut item);
+            items.push(item);
+            if let Some(derived_item) = derived_item {
+                items.push(derived_item);
+            }
+        }
+    }
+}
+
+impl<F: FnMut(&mut syn::Item) -> Option<syn::Item>> VisitMut for AddDerivedItemVisitor<F> {
+    fn visit_item_mod_mut(&mut self, im: &mut syn::ItemMod) {
+        let items = match im.content {
+            Some((_, ref mut x)) => x,
+            None => return,
+        };
+        self.visit_items(items);
+        visit_mut::visit_item_mod_mut(self, im);
+    }
+
+    fn visit_file_mut(&mut self, f: &mut syn::File) {
+        self.visit_items(&mut f.items);
+        visit_mut::visit_file_mut(self, f);
+    }
+}
+
+fn add_ffi_wrapper(
+    _db: &RootDatabase,
+    _sema: &Semantics<RootDatabase>,
+    _root: SyntaxNode,
+    item: &mut syn::Item,
+) -> Option<syn::Item> {
+    let fn_item = match *item {
+        syn::Item::Fn(ref mut x) => x,
+        _ => return None,
+    };
+    let fn_name = fn_item.sig.ident.to_string();
+
+    // Example of gathering semantic information from rust-analyzer:
+    /*
+    let range = span_to_text_range(fn_item.span());
+    let cover = root.covering_element(range);
+    // If this assert fails, we might need to look for a `FN` ancestor of `cover` instead.
+    debug_assert_eq!(cover.kind(), SyntaxKind::FN);
+    let cover = cover.into_node().unwrap();
+    let f_ast = ast::Fn::cast(cover).unwrap();
+    eprintln!("f_ast = {f_ast:?}");
+
+    let f = sema.to_fn_def(&f_ast).unwrap();
+    eprintln!("f = {f:?}");
+
+    let attrs = f.attrs(db);
+    // etc...
+    */
+
+    // Walk over the attributes of `fn_item`, sorting them into attrs that should remain on the
+    // inner function and ones that should be moved or copied onto the newly-generated wrapper.
+    let mut inner_attrs = Vec::with_capacity(fn_item.attrs.len());
+    let mut wrapper_attrs = Vec::new();
+    let mut need_wrapper = false;
+
+    for mut attr in mem::take(&mut fn_item.attrs) {
+        let mut pm = ParsedMeta::from(attr.meta);
+
+        let mut move_to_wrapper = false;
+        pm.with_innermost_mut(&mut |pm| {
+            match pm {
+                ParsedMeta::NoMangle(..) => {
+                    move_to_wrapper = true;
+                    *pm = ParsedMeta::ExportName(ParsedMetaExportName {
+                        ident: syn::Ident::new("export_name", Span::call_site()),
+                        eq: syn::Token![=](Span::call_site()),
+                        name: syn::LitStr::new(&fn_name, Span::call_site()),
+                    });
+                },
+                ParsedMeta::ExportName(..) => {
+                    move_to_wrapper = true;
+                },
+                _ => {},
+            }
+        });
+
+        attr.meta = pm.into();
+
+        if move_to_wrapper {
+            wrapper_attrs.push(attr);
+            need_wrapper = true;
+        } else {
+            inner_attrs.push(attr);
+        }
+    }
+
+    fn_item.attrs = inner_attrs;
+
+    if !need_wrapper {
+        return None;
+    }
+
+    let wrapper_name = format!("{fn_name}_ffi");
+    let mut fn_wrapper = syn::ItemFn {
+        attrs: wrapper_attrs,
+        vis: fn_item.vis.clone(),
+        sig: fn_item.sig.clone(),
+        block: Box::new(syn::Block {
+            brace_token: syn::token::Brace::default(),
+            stmts: Vec::new(),
+        }),
+    };
+    fn_wrapper.sig.ident = syn::Ident::new(&wrapper_name, Span::call_site());
+
+    let mut arg_exprs = Vec::new();
+    for (i, arg) in fn_wrapper.sig.inputs.iter_mut().enumerate() {
+        let ident = match *arg {
+            syn::FnArg::Receiver(_) => syn::Ident::new("self", Span::call_site()),
+            syn::FnArg::Typed(ref mut pt) => {
+                match *pt.pat {
+                    syn::Pat::Ident(ref pi) => pi.ident.clone(),
+                    _ => {
+                        let ident = syn::Ident::new(&format!("arg{i}"), Span::call_site());
+                        *pt.pat = syn::Pat::Ident(syn::PatIdent {
+                            attrs: Vec::new(),
+                            by_ref: None,
+                            mutability: None,
+                            ident: ident.clone(),
+                            subpat: None,
+                        });
+                        ident
+                    },
+                }
+            },
+        };
+        let expr = syn::Expr::Path(syn::ExprPath {
+            attrs: Vec::new(),
+            qself: None,
+            path: syn::Path::from(ident),
+        });
+        arg_exprs.push(expr);
+    }
+
+    let wrapper_expr = syn::Expr::Call(syn::ExprCall {
+        attrs: Vec::new(),
+        func: Box::new(syn::Expr::Path(syn::ExprPath {
+            attrs: Vec::new(),
+            qself: None,
+            path: syn::Path::from(syn::Ident::new(&fn_name, Span::call_site())),
+        })),
+        paren_token: syn::token::Paren::default(),
+        args: arg_exprs.into_iter().collect(),
+    });
+    let wrapper_stmt = syn::Stmt::Expr(wrapper_expr, None);
+    fn_wrapper.block.stmts.push(wrapper_stmt);
+
+    Some(fn_wrapper.into())
+}
+
+/*
+fn span_to_text_range(span: Span) -> TextRange {
+    let span_range = span.byte_range();
+    let lo = TextSize::try_from(span_range.start).unwrap();
+    let hi = TextSize::try_from(span_range.end).unwrap();
+    TextRange::new(lo, hi)
+}
+*/
+
+
+// Helpers for dealing with nested meta items in attrs, like `#[unsafe(no_mangle)]`
+
+#[derive(Clone)]
+enum ParsedMeta {
+    Meta(syn::Meta),
+    Unsafe(Box<ParsedMetaUnsafe>),
+    NoMangle(ParsedMetaNoMangle),
+    ExportName(ParsedMetaExportName),
+}
+
+#[derive(Clone)]
+struct ParsedMetaUnsafe {
+    ident: syn::Ident,
+    paren: syn::token::Paren,
+    inner: ParsedMeta,
+}
+
+#[derive(Clone)]
+struct ParsedMetaNoMangle {
+    ident: syn::Ident,
+}
+
+#[derive(Clone)]
+struct ParsedMetaExportName {
+    ident: syn::Ident,
+    eq: syn::Token![=],
+    name: syn::LitStr,
+}
+
+impl ParsedMeta {
+    pub fn parse(meta: &syn::Meta) -> syn::Result<ParsedMeta> {
+        let ident = meta.path().require_ident()?;
+        let ident_str = ident.to_string();
+        match ident_str.as_str() {
+            "unsafe" => {
+                let ml = meta.require_list()?;
+                let ident = ml.path.require_ident()?.clone();
+                let paren = match ml.delimiter {
+                    syn::MacroDelimiter::Paren(p) => p,
+                    _ => return Err(
+                        syn::Error::new(ml.delimiter.span().open(), "expected parens")),
+                };
+                let meta: syn::Meta = syn::parse2(ml.tokens.clone())?;
+                let inner = ParsedMeta::from(meta);
+                Ok(ParsedMeta::Unsafe(Box::new(ParsedMetaUnsafe { ident, paren, inner })))
+            },
+            "no_mangle" => {
+                let _ = meta.require_path_only()?;
+                let ident = ident.clone();
+                Ok(ParsedMeta::NoMangle(ParsedMetaNoMangle { ident }))
+            },
+            "export_name" => {
+                let mnv = meta.require_name_value()?;
+                let ident = mnv.path.require_ident()?.clone();
+                let eq = mnv.eq_token;
+                let expr_lit = match mnv.value {
+                    syn::Expr::Lit(ref el) => el,
+                    _ => return Err(syn::Error::new(mnv.value.span(), "expected Lit")),
+                };
+                let syn::ExprLit { ref attrs, ref lit } = *expr_lit;
+                if attrs.len() > 0 {
+                    return Err(syn::Error::new(expr_lit.span(), "name must not have attrs"));
+                }
+                let name = match *lit {
+                    syn::Lit::Str(ref ls) => ls.clone(),
+                    _ => return Err(syn::Error::new(lit.span(), "expected Str")),
+                };
+                Ok(ParsedMeta::ExportName(ParsedMetaExportName { ident, eq, name }))
+            },
+            _ => Ok(ParsedMeta::Meta(meta.clone())),
+        }
+    }
+
+    pub fn with_innermost_mut(&mut self, f: &mut impl FnMut(&mut ParsedMeta)) {
+        match *self {
+            ParsedMeta::Meta(..) |
+            ParsedMeta::NoMangle(..) |
+            ParsedMeta::ExportName(..) => f(self),
+            ParsedMeta::Unsafe(ref mut pmu) => pmu.inner.with_innermost_mut(f),
+        }
+    }
+}
+
+impl From<syn::Meta> for ParsedMeta {
+    fn from(meta: syn::Meta) -> ParsedMeta {
+        match Self::parse(&meta) {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("warning: failed to parse `{}`: {e}", meta.to_token_stream());
+                ParsedMeta::Meta(meta)
+            },
+        }
+    }
+}
+
+impl From<ParsedMeta> for syn::Meta {
+    fn from(pm: ParsedMeta) -> syn::Meta {
+        syn::parse2(pm.into_token_stream()).unwrap()
+    }
+}
+
+impl ToTokens for ParsedMeta {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match *self {
+            ParsedMeta::Meta(ref x) => x.to_tokens(tokens),
+            ParsedMeta::Unsafe(ref x) => x.to_tokens(tokens),
+            ParsedMeta::NoMangle(ref x) => x.to_tokens(tokens),
+            ParsedMeta::ExportName(ref x) => x.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for ParsedMetaUnsafe {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.ident.to_tokens(tokens);
+        self.paren.surround(tokens, |tokens| {
+            self.inner.to_tokens(tokens);
+        });
+    }
+}
+
+impl ToTokens for ParsedMetaNoMangle {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.ident.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for ParsedMetaExportName {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.ident.to_tokens(tokens);
+        self.eq.to_tokens(tokens);
+        self.name.to_tokens(tokens);
+    }
+}
+
+
+fn main() {
+    let cargo_dir_path = env::args().nth(1).unwrap();
+    let cargo_dir_path = Path::new(&cargo_dir_path);
+
+    let cargo_config = CargoConfig::default();
+
+    let load_cargo_config: LoadCargoConfig = LoadCargoConfig {
+        load_out_dirs_from_check: true,
+        with_proc_macro_server: ProcMacroServerChoice::Sysroot,
+        prefill_caches: false,
+    };
+
+    let (db, vfs, _proc_macro_client) = ra_ap_load_cargo::load_workspace_at(
+        cargo_dir_path,
+        &cargo_config,
+        &load_cargo_config,
+        &|_msg| {},
+    ).unwrap();
+
+    // Assume the first file in `vfs` is the crate root.
+    let (first_file_id, _) = vfs.iter().next().unwrap();
+
+    let sema = Semantics::new(&db);
+
+    eprintln!("processing crate...");
+    let krate = sema.first_crate(first_file_id).unwrap();
+
+    let mut files = Vec::new();
+    for m in krate.modules(&db) {
+        let src = m.definition_source(&db);
+        let node = src.value.node();
+        if let Some(editioned_file_id) = m.as_source_file_id(&db) {
+            sema.parse(editioned_file_id);
+            let file_id = editioned_file_id.file_id(&db);
+            let vfs_path = vfs.file_path(file_id);
+            if let Some(path) = vfs_path.as_path() {
+                files.push((path.to_path_buf(), node));
+            }
+        }
+    }
+
+    for (path, root) in files {
+        // Only rewrite files that are inside the provided cargo dir.  If our strategy for finding
+        // the main crate is wrong, this will keep us from overwriting files unexpectedly.
+        let mut ancestors = iter::successors(Some(path.as_path()), |p| p.parent());
+        if !ancestors.any(|a| a == cargo_dir_path) {
+            eprintln!("skip {path:?}: outside cargo dir {cargo_dir_path:?}");
+            continue;
+        }
+
+        let code = fs::read_to_string(&path).unwrap();
+
+        let ts = TokenStream::from_str(&code).unwrap();
+        let orig_tokens = FlatTokens::new(ts.clone()).collect::<Vec<_>>();
+        let ti = TokenIndex::new(&orig_tokens);
+
+        let mut ast: syn::File = syn::parse2(ts.clone()).unwrap();
+        let mut v = AddDerivedItemVisitor(|i: &mut syn::Item| -> Option<syn::Item> {
+            add_ffi_wrapper(&db, &sema, root.clone(), i)
+        });
+        v.visit_file_mut(&mut ast);
+
+        let new_ts = ast.into_token_stream();
+
+        let mut buf = OutputBuffer::new();
+        render_output(&code, &orig_tokens, &ti, new_ts, &mut buf);
+        let s = buf.finish();
+        fs::write(&path, &s).unwrap();
+        eprintln!("wrote {:?}", path);
+    }
+}

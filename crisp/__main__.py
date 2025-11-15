@@ -362,7 +362,7 @@ def commit_node(mvir, cfg):
 def do_commit(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, ".")
 
-    base = os.path.abspath(cfg.base_dir)
+    _base = os.path.abspath(cfg.base_dir)
     all_paths = {}
     for path in args.path:
         abs_path = os.path.abspath(path)

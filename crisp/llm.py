@@ -354,7 +354,7 @@ def run_rewrite(
 
     output = resp["choices"][0]["message"]["content"]
     output_files = input_code.files.copy()
-    files_changed = 0
+    _files_changed = 0
     for out_short_path, out_text in extract_files(output):
         assert out_short_path in short_path_map, (
             "output contained unknown file path %r" % (out_short_path,)

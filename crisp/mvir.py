@@ -663,6 +663,21 @@ class TestResultNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class CargoCheckJsonAnalysisNode(Node):
+    KIND = 'cargo_check_json_analysis_node'
+    code: NodeId
+    exit_code: int
+    json: NodeId
+    # `body` stores the complete stdout and stderr logs
+
+    code = property(lambda self: self._metadata['code'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    json = property(lambda self: self._metadata['json'])
+
+    @property
+    def passed(self):
+        return self.exit_code == 0
+
 class FindUnsafeAnalysisNode(Node):
     KIND = 'find_unsafe_analysis'
     code: NodeId
@@ -683,6 +698,7 @@ NODE_CLASSES = [
     SplitFfiOpNode,
     LlmOpNode,
     TestResultNode,
+    CargoCheckJsonAnalysisNode,
     FindUnsafeAnalysisNode,
 ]
 

@@ -9,7 +9,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
         TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode
+        SplitFfiOpNode, CargoCheckJsonAnalysisNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -170,6 +170,17 @@ class Workflow:
     @step
     def test_op(self, code: TreeNode, c_code: TreeNode) -> TestResultNode:
         n = analysis.run_tests(self.cfg, self.mvir, code, c_code, self.cfg.test_command)
+        return n
+
+    @step
+    def cargo_check_json(self, code: TreeNode) -> list[dict]:
+        n = self.cargo_check_json_op(code)
+        n_json = self.mvir.node(n.json)
+        return n_json.body_json()
+
+    @step
+    def cargo_check_json_op(self, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+        n = analysis.cargo_check_json(self.cfg, self.mvir, code)
         return n
 
     @step

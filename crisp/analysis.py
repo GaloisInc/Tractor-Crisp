@@ -7,8 +7,8 @@ import subprocess
 import typing
 
 from .config import Config
-from .mvir import MVIR, NodeId, Node, TreeNode, TestResultNode, \
-        CompileCommandsOpNode, FindUnsafeAnalysisNode
+from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
+        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -134,6 +134,42 @@ def run_tests(cfg: Config, mvir: MVIR,
     if n.passed:
         mvir.set_tag('test_passed', n.node_id(), None)
     return n
+
+@analysis
+def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+    """
+    Run `cargo check --message-format json` and capture the JSONL output.
+    """
+
+    # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
+    # tricks like `base_dir = ".."` used by the testing scripts.
+    # TODO: clean up config path handling and get rid of this
+    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+    base_path = os.path.abspath(cfg.base_dir)
+    rust_path = os.path.join(config_path, cfg.transpile.output_dir)
+    rust_path_rel = os.path.relpath(rust_path, base_path)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(code)
+        exit_code, logs = sb.run(
+                'cd %s && cargo check --message-format=json' % rust_path_rel,
+                shell=True, stream=True)
+
+    j = []
+    for line in logs.splitlines():
+        if line.startswith(b'{'):
+            j.append(json.loads(line))
+    n_json = FileNode.new(mvir, json.dumps(j))
+
+    n_op = CargoCheckJsonAnalysisNode.new(
+            mvir,
+            code = code.node_id(),
+            exit_code = exit_code,
+            json = n_json.node_id(),
+            body = logs,
+            )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
 
 # We always check out the compile_commands.json at a consistent path, in case
 # it contains relative paths.

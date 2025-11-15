@@ -79,6 +79,9 @@ def parse_args():
     test.add_argument('node', nargs='?', default='current')
     test.add_argument('--c-code', default='c_code')
 
+    test = sub.add_parser('cargo-check-json')
+    test.add_argument('node', nargs='?', default='current')
+
     find_unsafe = sub.add_parser('find_unsafe')
     find_unsafe.add_argument('node', nargs='?', default='current')
 
@@ -232,6 +235,22 @@ def do_test(args, cfg):
     print('\ntest process %s with code %d:\n%s' % (
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))
     print('result: %s' % n.node_id())
+
+def do_cargo_check_json(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n = w.cargo_check_json_op(n_code)
+    n_json = mvir.node(n.json)
+    print(n_json.body_str())
+
+    print('\ncargo check process %s with code %d' % (
+        'passed' if n.passed else 'failed', n.exit_code))
+    print('operation: %s' % n.node_id())
+    print('json: %s' % n_json.node_id())
 
 def do_find_unsafe(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -433,6 +452,8 @@ def main():
         do_llm_repair(args, cfg)
     elif args.cmd == 'test':
         do_test(args, cfg)
+    elif args.cmd == 'cargo-check-json':
+        do_cargo_check_json(args, cfg)
     elif args.cmd == 'find_unsafe':
         do_find_unsafe(args, cfg)
     elif args.cmd == 'git':

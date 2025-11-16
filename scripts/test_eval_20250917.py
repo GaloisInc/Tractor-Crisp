@@ -1,10 +1,8 @@
 import argparse
 import json
 import os
-import sys
 import subprocess
 import tempfile
-import toml
 
 
 def parse_args():

@@ -4,12 +4,10 @@ import os
 import pwd
 import shlex
 import subprocess
-import sys
 import tarfile
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
-from ..work_dir import WorkDir
 
 
 class SudoSandbox:

@@ -73,3 +73,5 @@ jobs:
       - run: cargo test --release --all-features
 
       - run: cargo doc --all-features --document-private-items --no-deps
+
+      - run: cargo clippy --tests --all-features

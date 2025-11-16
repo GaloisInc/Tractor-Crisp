@@ -7,7 +7,7 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 from types import NoneType
 from weakref import WeakValueDictionary
 
@@ -425,8 +425,6 @@ class MVIR:
 
 
 class Node:
-    kind: str
-
     def __init__(self, mvir, node_id, metadata, body_offset):
         self.__class__._check_metadata(metadata)
         self._mvir = mvir
@@ -588,7 +586,9 @@ class Node:
         with open(path, "rb") as f:
             return cbor.load(f)
 
-    kind = property(lambda self: self.metadata()["kind"])
+    @property
+    def kind(self) -> str:
+        return self.metadata()["kind"]
 
     def body(self):
         if self._body is None:
@@ -610,7 +610,6 @@ class FileNode(Node):
 
 class TreeNode(Node):
     KIND = "tree"
-    files: dict[str, NodeId]
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -629,57 +628,76 @@ class TreeNode(Node):
                     "`files` values must be NodeId, but got %r (%r)" % (v, type(v))
                 )
 
-    files = property(lambda self: self._metadata["files"])
+    @property
+    def files(self) -> dict[str, NodeId]:
+        return self._metadata["files"]
 
 
 class CompileCommandsOpNode(Node):
     KIND = "compile_commands_op"
-    c_code: NodeId
-    cmd: list[str]
-    exit_code: int
-    compile_commands: Optional[NodeId]
 
-    c_code = property(lambda self: self._metadata["c_code"])
-    cmd = property(lambda self: self._metadata["cmd"])
-    exit_code = property(lambda self: self._metadata["exit_code"])
-    compile_commands = property(lambda self: self._metadata["compile_commands"])
+    @property
+    def c_code(self) -> NodeId:
+        return self._metadata["c_code"]
+
+    @property
+    def cmd(self) -> list[str]:
+        return self._metadata["cmd"]
+
+    @property
+    def exit_code(self) -> int:
+        return self._metadata["exit_code"]
+
+    @property
+    def compile_commands(self) -> NodeId | None:
+        return self._metadata["compile_commands"]
 
 
 class TranspileOpNode(Node):
     KIND = "transpile_op"
-    compile_commands: NodeId
-    c_code: NodeId
-    cmd: list[str]
-    exit_code: int
-    rust_code: Optional[NodeId]
 
-    compile_commands = property(lambda self: self._metadata["compile_commands"])
-    c_code = property(lambda self: self._metadata["c_code"])
-    cmd = property(lambda self: self._metadata["cmd"])
-    exit_code = property(lambda self: self._metadata["exit_code"])
-    rust_code = property(lambda self: self._metadata["rust_code"])
+    @property
+    def compile_commands(self) -> NodeId:
+        return self._metadata["compile_commands"]
+
+    @property
+    def c_code(self) -> NodeId:
+        return self._metadata["c_code"]
+
+    @property
+    def cmd(self) -> list[str]:
+        return self._metadata["cmd"]
+
+    @property
+    def exit_code(self) -> int:
+        return self._metadata["exit_code"]
+
+    @property
+    def rust_code(self) -> NodeId | None:
+        return self._metadata["rust_code"]
 
 
 class SplitFfiOpNode(Node):
     KIND = "split_ffi_op"
-    old_code: NodeId
-    new_code: NodeId
-    # Commit hash of the `split_ffi_entry_points` version that was used
-    commit: str
-    # `body` stores the log output
 
-    old_code = property(lambda self: self._metadata["old_code"])
-    new_code = property(lambda self: self._metadata["new_code"])
-    commit = property(lambda self: self._metadata["commit"])
+    @property
+    def old_code(self) -> NodeId:
+        return self._metadata["old_code"]
+
+    @property
+    def new_code(self) -> NodeId:
+        return self._metadata["new_code"]
+
+    @property
+    def commit(self) -> str:
+        """Commit hash of the `split_ffi_entry_points` version that was used."""
+        return self._metadata["commit"]
+
+    # `body` stores the log output
 
 
 class LlmOpNode(Node):
     KIND = "llm_op"
-    old_code: NodeId
-    new_code: NodeId
-    raw_prompt: NodeId
-    request: NodeId
-    response: NodeId
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -689,27 +707,51 @@ class LlmOpNode(Node):
             if not isinstance(metadata[k], NodeId):
                 raise TypeError("metadata entry `%s` must be a NodeId" % k)
 
-    old_code = property(lambda self: self._metadata["old_code"])
-    new_code = property(lambda self: self._metadata["new_code"])
-    raw_prompt = property(lambda self: self._metadata["raw_prompt"])
-    request = property(lambda self: self._metadata["request"])
-    response = property(lambda self: self._metadata["response"])
+    @property
+    def old_code(self) -> NodeId:
+        return self._metadata["old_code"]
+
+    @property
+    def new_code(self) -> NodeId:
+        return self._metadata["new_code"]
+
+    @property
+    def raw_prompt(self) -> NodeId:
+        return self._metadata["raw_prompt"]
+
+    @property
+    def request(self) -> NodeId:
+        return self._metadata["request"]
+
+    @property
+    def response(self) -> NodeId:
+        return self._metadata["response"]
 
 
 class TestResultNode(Node):
     KIND = "test_result_node"
-    code: NodeId
-    # `test_code` is a `TreeNode` containing additional code used only for
-    # testing (e.g. the code for the test driver).
-    test_code: NodeId
-    cmd: str
-    exit_code: int
-    # `body` stores the test output
 
-    code = property(lambda self: self._metadata["code"])
-    test_code = property(lambda self: self._metadata["test_code"])
-    cmd = property(lambda self: self._metadata["cmd"])
-    exit_code = property(lambda self: self._metadata["exit_code"])
+    @property
+    def code(self) -> NodeId:
+        return self._metadata["code"]
+
+    @property
+    def test_code(self) -> NodeId:
+        """
+        `test_code` is a `TreeNode` containing additional code used only for testing
+        (e.g. the code for the test driver).
+        """
+        return self._metadata["test_code"]
+
+    @property
+    def cmd(self) -> str:
+        return self._metadata["cmd"]
+
+    @property
+    def exit_code(self) -> int:
+        return self._metadata["exit_code"]
+
+    # `body` stores the test output
 
     @property
     def passed(self):
@@ -718,15 +760,21 @@ class TestResultNode(Node):
 
 class FindUnsafeAnalysisNode(Node):
     KIND = "find_unsafe_analysis"
-    code: NodeId
-    # Commit hash of the `find_unsafe` version that was used
-    commit: str
-    stderr: str
-    # `body` stores the JSON output
 
-    code = property(lambda self: self._metadata["code"])
-    commit = property(lambda self: self._metadata["commit"])
-    stderr = property(lambda self: self._metadata["stderr"])
+    @property
+    def code(self) -> NodeId:
+        return self._metadata["code"]
+
+    @property
+    def commit(self) -> str:
+        """Commit hash of the `find_unsafe` version that was used."""
+        return self._metadata["commit"]
+
+    @property
+    def stderr(self) -> str:
+        return self._metadata["stderr"]
+
+    # `body` stores the JSON output
 
 
 NODE_CLASSES = [

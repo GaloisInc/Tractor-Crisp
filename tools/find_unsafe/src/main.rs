@@ -1,4 +1,3 @@
-use ciborium;
 use clap::Parser;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -15,7 +14,7 @@ fn is_link_attr_meta(meta: &Meta) -> bool {
     match *meta {
         Meta::Path(ref p) => is_link_attr_path(p),
         Meta::List(ref ml) => {
-            if ml.path.get_ident().map_or(false, |i| i == "unsafe") {
+            if ml.path.get_ident().is_some_and(|i| i == "unsafe") {
                 let sub_meta = match syn::parse2::<Meta>(ml.tokens.clone()) {
                     Ok(x) => x,
                     Err(_) => return false,

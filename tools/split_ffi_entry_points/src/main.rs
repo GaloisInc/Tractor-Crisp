@@ -12,7 +12,6 @@ use std::iter;
 use std::mem;
 use std::path::Path;
 use std::str::FromStr;
-use syn;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
 
@@ -120,7 +119,7 @@ impl<'a> TokenIndex<'a> {
         TokenIndex { tokens, index }
     }
 
-    pub fn find<'b>(&'b self, t: &Token) -> Option<usize> {
+    pub fn find(&self, t: &Token) -> Option<usize> {
         let (start, end) = t.span;
         let lo = ((start, end), 0);
         let hi = ((start, end), usize::MAX);
@@ -164,16 +163,14 @@ impl OutputBuffer {
         let cur_line = &self.s[self.prev_bol..];
         if self.prev_was_joint {
             // No whitespace is allowed between a `Joint` token and the subsequent token.
+        } else if cur_line.contains("//") {
+            // Note this can throw false positives, such as if `//` appears inside a string
+            // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
+            // if needed.
+            self.s.push('\n');
+            self.prev_bol = self.s.len();
         } else {
-            if cur_line.contains("//") {
-                // Note this can throw false positives, such as if `//` appears inside a string
-                // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
-                // if needed.
-                self.s.push('\n');
-                self.prev_bol = self.s.len();
-            } else {
-                self.s.push(' ');
-            }
+            self.s.push(' ');
         }
 
         // If `chunk` contains a newline, update the beginning-of-line position.
@@ -197,7 +194,7 @@ fn render_output(
     ts: TokenStream,
     buf: &mut OutputBuffer,
 ) {
-    if let Some(t) = orig_tokens.get(0) {
+    if let Some(t) = orig_tokens.first() {
         let (start_pos, _) = t.span;
         buf.emit(&orig[0..start_pos], Spacing::Joint);
     }
@@ -487,7 +484,7 @@ impl ParsedMeta {
                     _ => return Err(syn::Error::new(mnv.value.span(), "expected Lit")),
                 };
                 let syn::ExprLit { ref attrs, ref lit } = *expr_lit;
-                if attrs.len() > 0 {
+                if !attrs.is_empty() {
                     return Err(syn::Error::new(expr_lit.span(), "name must not have attrs"));
                 }
                 let name = match *lit {

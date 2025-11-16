@@ -1,0 +1,16 @@
+[project]
+name = "crisp"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "cbor>=1.0.0",
+    "docker>=7.1.0",
+    "requests>=2.32.5",
+    "toml>=0.10.2",
+]
+
+[project.scripts]
+crisp = "crisp.__main__:main"
+
+[tool.uv]
+package = true

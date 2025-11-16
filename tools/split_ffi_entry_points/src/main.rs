@@ -418,6 +418,7 @@ fn span_to_text_range(span: Span) -> TextRange {
 
 // Helpers for dealing with nested meta items in attrs, like `#[unsafe(no_mangle)]`
 
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum ParsedMeta {
     Meta(syn::Meta),

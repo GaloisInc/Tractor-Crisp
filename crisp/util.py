@@ -1,6 +1,7 @@
 import sys
 import time
 
+
 class ChunkPrinter:
     """
     Helper for printing text that arrives in chunks, with a prefix at the start
@@ -10,7 +11,7 @@ class ChunkPrinter:
 
     ```
     [00:00:00     0] Hello,
-    [00:00:00     0] 
+    [00:00:00     0]
     [00:00:00     0] World!
     ```
 
@@ -44,8 +45,8 @@ class ChunkPrinter:
         self.at_bol = True
 
     def _emit_tag(self):
-        time_str = time.strftime('%H:%M:%S')
-        sys.stdout.write('[%s %*d] ' % (time_str, self.count_width, self.count))
+        time_str = time.strftime("%H:%M:%S")
+        sys.stdout.write("[%s %*d] " % (time_str, self.count_width, self.count))
         self.at_bol = False
 
     def _emit_chunk(self, s):
@@ -58,7 +59,7 @@ class ChunkPrinter:
         sys.stdout.write(s)
 
     def write(self, s):
-        parts = s.split('\n')
+        parts = s.split("\n")
         for part in parts[:-1]:
             self._emit_chunk(part)
             self._emit_eol()
@@ -73,7 +74,7 @@ class ChunkPrinter:
         sys.stdout.buffer.write(b)
 
     def write_bytes(self, b):
-        parts = b.split(b'\n')
+        parts = b.split(b"\n")
         for part in parts[:-1]:
             self._emit_chunk_bytes(part)
             self._emit_eol()

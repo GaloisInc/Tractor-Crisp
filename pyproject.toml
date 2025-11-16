@@ -15,3 +15,8 @@ crisp = "crisp.__main__:main"
 
 [tool.uv]
 package = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.5",
+]

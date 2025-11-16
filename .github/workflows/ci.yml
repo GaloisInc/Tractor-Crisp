@@ -22,3 +22,12 @@ jobs:
 
       - name: Build tractor-crisp-user
         run: docker build . -f Dockerfile.work -t tractor-crisp-user
+
+  build-crisp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync

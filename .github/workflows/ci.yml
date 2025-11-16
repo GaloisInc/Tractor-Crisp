@@ -64,6 +64,8 @@ jobs:
         with:
           workspaces: tools/${{ matrix.crate }}
 
+      - run: cargo fmt --check
+
       - run: cargo check --release
 
       - run: cargo build --release

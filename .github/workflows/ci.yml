@@ -47,6 +47,7 @@ jobs:
 
     env:
       RUSTFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings"
 
     defaults:
       run:
@@ -68,3 +69,5 @@ jobs:
       - run: cargo build --release
 
       - run: cargo test --release --all-features
+
+      - run: cargo doc --all-features --document-private-items --no-deps

@@ -66,3 +66,5 @@ jobs:
       - run: cargo check --release
 
       - run: cargo build --release
+
+      - run: cargo test --release --all-features

@@ -1,12 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::io::{self, Read};
-use std::path;
 use ciborium;
 use clap::Parser;
 use serde::Serialize;
-use syn::{self, Attribute, Meta, Path, ItemFn, ExprUnsafe};
+use std::collections::{HashMap, HashSet};
+use std::io::{self, Read};
+use std::path;
 use syn::visit::{self, Visit};
-
+use syn::{self, Attribute, ExprUnsafe, ItemFn, Meta, Path};
 
 fn is_link_attr(attr: &Attribute) -> bool {
     is_link_attr_meta(&attr.meta)
@@ -25,16 +24,14 @@ fn is_link_attr_meta(meta: &Meta) -> bool {
             } else {
                 is_link_attr_path(&ml.path)
             }
-        },
+        }
         Meta::NameValue(ref mnv) => is_link_attr_path(&mnv.path),
     }
 }
 
 fn is_link_attr_path(path: &Path) -> bool {
     match path.get_ident() {
-        Some(i) => {
-            i == "no_mangle" || i == "link_name"
-        },
+        Some(i) => i == "no_mangle" || i == "link_name",
         None => false,
     }
 }
@@ -45,9 +42,7 @@ fn fn_is_exported(f: &ItemFn) -> bool {
     f.attrs.iter().any(is_link_attr)
 }
 
-
-#[derive(Clone, Debug, Default)]
-#[derive(Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 struct Output {
     /// Functions that are not accessible from other compilation units and are also unsafe.
     internal_unsafe_fns: Vec<String>,
@@ -81,7 +76,6 @@ impl<'ast> Visit<'ast> for Visitor {
     }
 }
 
-
 #[derive(Parser, Debug)]
 struct Args {
     /// Expect the raw contents of a single file on stdin, instead of a CBOR dictionary mapping
@@ -97,9 +91,7 @@ fn read_files_cbor() -> HashMap<path::PathBuf, String> {
 fn read_files_single() -> HashMap<path::PathBuf, String> {
     let mut src = String::new();
     io::stdin().read_to_string(&mut src).unwrap();
-    HashMap::from([
-        (path::PathBuf::from("input.rs"), src),
-    ])
+    HashMap::from([(path::PathBuf::from("input.rs"), src)])
 }
 
 fn main() {
@@ -124,7 +116,6 @@ fn main() {
     serde_json::to_writer(io::stdout(), &outputs).unwrap();
     println!();
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -4,6 +4,7 @@ import io
 import os
 import sys
 import tarfile
+from docker.models.containers import Container
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -20,6 +21,8 @@ class WorkContainer:
     `commit` methods.
     """
 
+    container: Container
+
     def __init__(self, mvir):
         self.mvir = mvir
         self.client = docker.from_env()
@@ -30,7 +33,7 @@ class WorkContainer:
                 "error getting image `tractor-crisp-user` - you may need to build it first"
             )
             raise
-        self.container = None
+        # `self.container` is only initialized in `self.start`.
 
     def start(self):
         self.container = self.client.containers.run(

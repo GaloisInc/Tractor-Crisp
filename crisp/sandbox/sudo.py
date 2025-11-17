@@ -5,6 +5,7 @@ import pwd
 import shlex
 import subprocess
 import tarfile
+from subprocess import CompletedProcess
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -28,7 +29,7 @@ class SudoSandbox:
     def _sudo_cmd(self, cmd):
         return ("sudo", "-u", self.user, *cmd)
 
-    def _run_sudo(self, cmd, check=True, **kwargs):
+    def _run_sudo(self, cmd, check=True, **kwargs) -> CompletedProcess[str]:
         sudo_cmd = self._sudo_cmd(cmd)
         p = subprocess.run(sudo_cmd, check=check, **kwargs)
         return p

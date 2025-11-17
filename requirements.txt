@@ -1,4 +1,0 @@
-cbor
-docker
-requests
-toml

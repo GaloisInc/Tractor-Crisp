@@ -38,27 +38,19 @@ RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
-# System packages needed for CRISP
-RUN apt-get install -y python3-virtualenv
+# CRISP dependencies
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 
-COPY requirements.txt ./
-RUN virtualenv venv
-RUN venv/bin/pip3 install -r requirements.txt
-
+COPY pyproject.toml ./
+COPY uv.lock ./
 COPY crisp/ ./crisp/
-RUN find crisp/ -name __pycache__ | xargs --no-run-if-empty rm -r
-# TODO: use `pip3 install -e .` after setting up python project files
-ENV PYTHONPATH=/opt/tractor-crisp
+RUN uv sync
 
 COPY tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/Cargo.toml ./tools/find_unsafe/
 COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
 RUN cd tools/find_unsafe && cargo build --release
-
-# Add `/usr/local/bin/crisp` wrapper script
-RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
-    echo 'exec /opt/tractor-crisp/venv/bin/python3 -m crisp "$@"' >>/usr/local/bin/crisp && \
-    chmod +x /usr/local/bin/crisp

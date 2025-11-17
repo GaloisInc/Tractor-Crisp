@@ -6,11 +6,12 @@ import sys
 import tarfile
 from docker.models.containers import Container
 
+from ..sandbox import Sandbox
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
-class WorkContainer:
+class WorkContainer(Sandbox):
     """
     Helper for managing a Docker/Podman container for building and running user
     code.

@@ -7,11 +7,12 @@ import subprocess
 import tarfile
 from subprocess import CompletedProcess
 
+from ..sandbox import Sandbox
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
-class SudoSandbox:
+class SudoSandbox(Sandbox):
     """
     Helper for managing a `sudo`-based sandbox.  This uses `sudo` to run
     commands as an unprivileged user.

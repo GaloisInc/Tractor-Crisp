@@ -40,7 +40,7 @@ class SudoSandbox:
 
     def start(self):
         # This command will error if the directory already exists.
-        _p = self._run_sudo(("mkdir", self.dir_path))
+        self._run_sudo(("mkdir", self.dir_path))
 
     def stop(self):
         if not KEEP_TEMP_DIR:

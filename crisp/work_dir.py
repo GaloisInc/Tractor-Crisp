@@ -6,6 +6,7 @@ from typing import Union, Sequence
 
 from .mvir import FileNode, TreeNode
 
+
 class WorkDir:
     """
     Helper for manipulating the contents of a work directory.
@@ -21,6 +22,7 @@ class WorkDir:
     more inputs from MVIR using `checkout` methods, run some command on the
     inputs, and store the outputs back into MVIR using the `commit` methods.
     """
+
     def __init__(self, mvir, path):
         self.mvir = mvir
         self.path = path
@@ -35,18 +37,22 @@ class WorkDir:
         assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
         path = os.path.join(self.path, rel_path)
-        assert not os.path.exists(path), \
-            'path %r already exists in work dir %r' % (rel_path, self.path)
+        assert not os.path.exists(path), "path %r already exists in work dir %r" % (
+            rel_path,
+            self.path,
+        )
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'wb') as f:
+        with open(path, "wb") as f:
             f.write(n_file.body())
 
     def commit(self, globs: Union[str, Sequence[str]]):
         if isinstance(globs, str):
             globs = (globs,)
-        all_rel_paths = set(os.path.normpath(rel_path)
+        all_rel_paths = set(
+            os.path.normpath(rel_path)
             for g in globs
-            for rel_path in glob.glob(g, root_dir=self.path, recursive=True))
+            for rel_path in glob.glob(g, root_dir=self.path, recursive=True)
+        )
         dct = {}
         for rel_path in all_rel_paths:
             assert rel_path not in dct
@@ -57,13 +63,15 @@ class WorkDir:
         assert not os.path.isabs(rel_path)
         path = os.path.join(self.path, rel_path)
         assert os.path.exists(path)
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             return FileNode.new(self.mvir, f.read())
 
     def join(self, *args, **kwargs):
         return os.path.join(self.path, *args, **kwargs)
 
+
 KEEP_WORK_DIR = False
+
 
 @contextmanager
 def lock_work_dir(cfg, mvir):
@@ -74,7 +82,7 @@ def lock_work_dir(cfg, mvir):
     process can be inside the context manager at a time, so there's no risk of
     one process overwriting another process's files.
     """
-    work_dir = os.path.join(cfg.mvir_storage_dir, 'work')
+    work_dir = os.path.join(cfg.mvir_storage_dir, "work")
     # If the directory already exists, some other process holds the lock.
     os.makedirs(work_dir, exist_ok=False)
     try:
@@ -82,6 +90,7 @@ def lock_work_dir(cfg, mvir):
     finally:
         if not KEEP_WORK_DIR:
             shutil.rmtree(work_dir)
+
 
 def set_keep_work_dir(keep):
     global KEEP_WORK_DIR

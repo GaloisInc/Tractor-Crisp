@@ -7,14 +7,23 @@ from typing import Any
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
-        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode
+from .mvir import (
+    MVIR,
+    Node,
+    FileNode,
+    TreeNode,
+    CompileCommandsOpNode,
+    TranspileOpNode,
+    LlmOpNode,
+    TestResultNode,
+    FindUnsafeAnalysisNode,
+    SplitFfiOpNode,
+)
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
 
-LLM_SAFETY_PROMPT = '''
+LLM_SAFETY_PROMPT = """
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
 HOWEVER, any function marked #[no_mangle] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature and contains nontrivial logic, you should handle it as follows:
@@ -26,9 +35,9 @@ You can then make `foo_impl` safe like any other function, leaving `foo` as a si
 After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 
 {input_files}
-'''
+"""
 
-LLM_REPAIR_PROMPT = '''
+LLM_REPAIR_PROMPT = """
 I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
 
 Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
@@ -40,7 +49,7 @@ Build/test logs:
 ```
 {test_output}
 ```
-'''
+"""
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -49,14 +58,15 @@ _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 def _print_step_value(prefix: str, x: Any):
     if isinstance(x, (tuple, list)):
         for i, y in enumerate(x):
-            _print_step_value('%s[%d]' % (prefix, i), y)
+            _print_step_value("%s[%d]" % (prefix, i), y)
     elif isinstance(x, dict):
         for k, v in x.items():
-            _print_step_value('%s[%r]' % (prefix, k), y)
+            _print_step_value("%s[%r]" % (prefix, k), y)
     else:
         if isinstance(x, Node):
             x = x.node_id()
-        print('%s = %s' % (prefix, x))
+        print("%s = %s" % (prefix, x))
+
 
 def step(f):
     name = f.__name__
@@ -65,7 +75,7 @@ def step(f):
     @functools.wraps(f)
     def g(self, *args, **kwargs):
         if self._step_depth == 0:
-            print(' ** ' + name)
+            print(" ** " + name)
             bound = sig.bind(self, *args, **kwargs)
             for arg_name, val in bound.arguments.items():
                 if isinstance(val, Workflow):
@@ -79,7 +89,7 @@ def step(f):
             self._step_depth -= 1
 
         if result is not None:
-            _print_step_value(name + ' result', result)
+            _print_step_value(name + " result", result)
         return result
 
     return g
@@ -91,8 +101,8 @@ class Workflow:
         self.mvir = mvir
         self._step_depth = 0
 
-    def accept(self, code: TreeNode, reason = None):
-        self.mvir.set_tag('current', code.node_id(), reason)
+    def accept(self, code: TreeNode, reason=None):
+        self.mvir.set_tag("current", code.node_id(), reason)
 
     @step
     def cc_cmake(self, c_code: TreeNode) -> FileNode:
@@ -111,7 +121,7 @@ class Workflow:
         code = self.mvir.node(n_op_transpile.rust_code)
 
         if not self.test(code, c_code):
-            print('error: tests failed after transpile')
+            print("error: tests failed after transpile")
             return None
         return code
 
@@ -126,15 +136,19 @@ class Workflow:
 
             # Run c2rust-transpile
             c2rust_cmd = [
-                    'c2rust-transpile',
-                    sb.join(COMPILE_COMMANDS_PATH),
-                    '--output-dir', sb.join(output_path),
-                    '--emit-build-files',
-                    ]
+                "c2rust-transpile",
+                sb.join(COMPILE_COMMANDS_PATH),
+                "--output-dir",
+                sb.join(output_path),
+                "--emit-build-files",
+            ]
             if cfg.transpile.bin_main is not None:
-                c2rust_cmd.extend((
-                    '--binary', cfg.transpile.bin_main,
-                    ))
+                c2rust_cmd.extend(
+                    (
+                        "--binary",
+                        cfg.transpile.bin_main,
+                    )
+                )
             exit_code, logs = sb.run(c2rust_cmd)
 
             if exit_code == 0:
@@ -145,20 +159,26 @@ class Workflow:
 
         n_op = TranspileOpNode.new(
             mvir,
-            body = logs,
-            compile_commands = n_cc.node_id(),
-            c_code = n_c_code.node_id(),
-            cmd = c2rust_cmd,
-            exit_code = exit_code,
-            rust_code = n_rust_code_id,
-            )
-        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+            body=logs,
+            compile_commands=n_cc.node_id(),
+            c_code=n_c_code.node_id(),
+            cmd=c2rust_cmd,
+            exit_code=exit_code,
+            rust_code=n_rust_code_id,
+        )
+        mvir.set_tag("op_history", n_op.node_id(), n_op.kind)
 
         if exit_code != 0:
             # TODO: proper log parsing
             print(repr(logs))
-        print('c2rust process %s with code %d:\n%s' % (
-            'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+        print(
+            "c2rust process %s with code %d:\n%s"
+            % (
+                "succeeded" if n_op.exit_code == 0 else "failed",
+                n_op.exit_code,
+                n_op.cmd,
+            )
+        )
 
         return n_op
 
@@ -177,9 +197,11 @@ class Workflow:
         n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()
         unsafe_count = sum(
-            len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
-            for file_info in j_unsafe.values())
-        print('%d unsafe functions remaining' % unsafe_count)
+            len(file_info["internal_unsafe_fns"])
+            + len(file_info["fns_containing_unsafe"])
+            for file_info in j_unsafe.values()
+        )
+        print("%d unsafe functions remaining" % unsafe_count)
         return unsafe_count
 
     @step
@@ -194,8 +216,12 @@ class Workflow:
     @step
     def llm_safety_op(self, n_code: TreeNode) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
-                glob_filter = self.cfg.src_globs)
+            self.cfg,
+            self.mvir,
+            LLM_SAFETY_PROMPT,
+            n_code,
+            glob_filter=self.cfg.src_globs,
+        )
 
     @step
     def llm_repair(self, n_code: TreeNode, n_op_test: TestResultNode) -> TreeNode:
@@ -203,13 +229,18 @@ class Workflow:
         return n_new_code
 
     @step
-    def llm_repair_op(self, n_code: TreeNode,
-            n_op_test: TestResultNode) -> tuple[TreeNode, LlmOpNode]:
+    def llm_repair_op(
+        self, n_code: TreeNode, n_op_test: TestResultNode
+    ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
-                glob_filter = self.cfg.src_globs,
-                format_kwargs = {'test_output': n_op_test.body_str()},
-                think = True)
+            self.cfg,
+            self.mvir,
+            LLM_REPAIR_PROMPT,
+            n_code,
+            glob_filter=self.cfg.src_globs,
+            format_kwargs={"test_output": n_op_test.body_str()},
+            think=True,
+        )
 
     @step
     def split_ffi(self, n_tree: TreeNode) -> TreeNode:
@@ -224,11 +255,10 @@ class Workflow:
         """
         cfg, mvir = self.cfg, self.mvir
 
-        split_ffi_dir = os.path.join(_CRISP_DIR, 'tools/split_ffi_entry_points')
-        subprocess.run(('cargo', 'build', '--release'),
-            cwd=split_ffi_dir, check=True)
+        split_ffi_dir = os.path.join(_CRISP_DIR, "tools/split_ffi_entry_points")
+        subprocess.run(("cargo", "build", "--release"), cwd=split_ffi_dir, check=True)
 
-        commit = analysis.crisp_git_state('tools/split_ffi_entry_points')
+        commit = analysis.crisp_git_state("tools/split_ffi_entry_points")
 
         # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
         # tricks like `base_dir = ".."` used by the testing scripts.
@@ -243,19 +273,35 @@ class Workflow:
 
             wd_rust_path = os.path.abspath(os.path.join(wd.path, rust_path_rel))
             p = subprocess.run(
-                ('cargo', 'run', '--release',
-                    '--manifest-path', os.path.join(split_ffi_dir, 'Cargo.toml'),
-                    '--', wd_rust_path),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                (
+                    "cargo",
+                    "run",
+                    "--release",
+                    "--manifest-path",
+                    os.path.join(split_ffi_dir, "Cargo.toml"),
+                    "--",
+                    wd_rust_path,
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
 
             if p.returncode != 0:
-                print('command failed with exit code %d' % p.returncode)
-                print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
-                print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
+                print("command failed with exit code %d" % p.returncode)
+                print(
+                    " --- stdout ---\n%s\n" % p.stdout.decode("utf-8", errors="replace")
+                )
+                print(
+                    " --- stderr ---\n%s\n" % p.stderr.decode("utf-8", errors="replace")
+                )
                 p.check_returncode()
 
-            p2 = subprocess.run(('cargo', 'fmt'), cwd=wd_rust_path,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            p2 = subprocess.run(
+                ("cargo", "fmt"),
+                cwd=wd_rust_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
 
             new_files = n_tree.files.copy()
             for k in new_files:
@@ -263,11 +309,11 @@ class Workflow:
             n_new_tree = TreeNode.new(mvir, files=new_files)
 
         n_op = SplitFfiOpNode.new(
-                mvir,
-                old_code = n_tree.node_id(),
-                new_code = n_new_tree.node_id(),
-                commit = commit,
-                body = p.stdout + b'\n\n' + p2.stdout,
-                )
+            mvir,
+            old_code=n_tree.node_id(),
+            new_code=n_new_tree.node_id(),
+            commit=commit,
+            body=p.stdout + b"\n\n" + p2.stdout,
+        )
 
         return n_op

@@ -7,7 +7,7 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 from types import NoneType
 from weakref import WeakValueDictionary
 
@@ -472,7 +472,7 @@ class Node:
                 raise
 
     @classmethod
-    def new(cls, mvir, body=b"", **metadata):
+    def new(cls, mvir, body=b"", **metadata) -> Self:
         assert "kind" not in metadata
         metadata["kind"] = cls.KIND
         cls._check_metadata(metadata)

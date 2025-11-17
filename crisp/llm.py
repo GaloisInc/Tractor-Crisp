@@ -43,7 +43,7 @@ def emit_files(
     n: TreeNode,
     glob_filter: str = None,
     file_type_map: dict[str, str] = DEFAULT_FILE_TYPE_MAP,
-) -> (str, dict[str, str]):
+) -> tuple[str, dict[str, str]]:
     """
     Generate markdown-formatted text giving the contents of files in `n`, along
     with a dict mapping short path names used in the output to full paths as

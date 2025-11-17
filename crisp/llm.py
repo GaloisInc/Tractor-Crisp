@@ -325,7 +325,7 @@ def run_rewrite(
     file_type_map=DEFAULT_FILE_TYPE_MAP,
     format_kwargs: dict = {},
     think: bool = False,
-) -> TreeNode:
+) -> tuple[TreeNode, LlmOpNode]:
     model = API_MODEL or cfg.model
     if model is None:
         model = get_default_model()

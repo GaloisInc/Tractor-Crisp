@@ -428,6 +428,8 @@ class MVIR:
 
 
 class Node:
+    KIND: ClassVar[str]
+
     def __init__(self, mvir, node_id, metadata, body_offset):
         self.__class__._check_metadata(metadata)
         self._mvir = mvir

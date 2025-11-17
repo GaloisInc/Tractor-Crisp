@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import re
+from typing import Iterable
 import requests
 
 from .config import Config, ModelConfig
@@ -41,7 +42,7 @@ DEFAULT_FILE_TYPE_MAP = {
 def emit_files(
     mvir: MVIR,
     n: TreeNode,
-    glob_filter: str = None,
+    glob_filter: Iterable[str] | str | None = None,
     file_type_map: dict[str, str] = DEFAULT_FILE_TYPE_MAP,
 ) -> tuple[str, dict[str, str]]:
     """
@@ -53,8 +54,13 @@ def emit_files(
     """
     assert isinstance(n, TreeNode)
 
-    if isinstance(glob_filter, str):
-        glob_filter = (glob_filter,)
+    glob_filters: Iterable[str] | None
+    if glob_filter is None:
+        glob_filters = None
+    elif isinstance(glob_filter, str):
+        glob_filters = (glob_filter,)
+    else:
+        glob_filters = glob_filter
 
     if len(n.files) == 0:
         common_prefix = ""
@@ -66,9 +72,9 @@ def emit_files(
     parts = []
     short_path_map = {}
     for path, child_id in n.files.items():
-        if glob_filter is not None:
+        if glob_filters is not None:
             path_obj = pathlib.Path(path)
-            glob_match = any(path_obj.match(g) for g in glob_filter)
+            glob_match = any(path_obj.match(g) for g in glob_filters)
             if not glob_match:
                 continue
 

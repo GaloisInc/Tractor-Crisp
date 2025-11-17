@@ -161,16 +161,22 @@ impl OutputBuffer {
     /// comment) and that the end of `chunk` is the end of a token.
     pub fn emit(&mut self, chunk: &str, spacing: Spacing) {
         let cur_line = &self.s[self.prev_bol..];
+        #[expect(
+            clippy::collapsible_else_if,
+            reason = "We mean to separate the joint/disjoint cases"
+        )]
         if self.prev_was_joint {
             // No whitespace is allowed between a `Joint` token and the subsequent token.
-        } else if cur_line.contains("//") {
-            // Note this can throw false positives, such as if `//` appears inside a string
-            // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
-            // if needed.
-            self.s.push('\n');
-            self.prev_bol = self.s.len();
         } else {
-            self.s.push(' ');
+            if cur_line.contains("//") {
+                // Note this can throw false positives, such as if `//` appears inside a string
+                // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
+                // if needed.
+                self.s.push('\n');
+                self.prev_bol = self.s.len();
+            } else {
+                self.s.push(' ');
+            }
         }
 
         // If `chunk` contains a newline, update the beginning-of-line position.

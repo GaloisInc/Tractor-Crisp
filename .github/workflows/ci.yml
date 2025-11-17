@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  docker-build-crisp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tractor-crisp
+        run: docker build . -t tractor-crisp
+
+  docker-build-crisp-user:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tractor-crisp-user
+        run: docker build . -f Dockerfile.work -t tractor-crisp-user

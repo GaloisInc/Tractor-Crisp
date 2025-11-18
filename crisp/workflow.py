@@ -52,7 +52,7 @@ def _print_step_value(prefix: str, x: Any):
             _print_step_value('%s[%d]' % (prefix, i), y)
     elif isinstance(x, dict):
         for k, v in x.items():
-            _print_step_value('%s[%r]' % (prefix, k), y)
+            _print_step_value('%s[%r]' % (prefix, k), v)
     else:
         if isinstance(x, Node):
             x = x.node_id()

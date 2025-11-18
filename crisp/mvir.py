@@ -678,6 +678,16 @@ class CargoCheckJsonAnalysisNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class InlineErrorsOpNode(Node):
+    KIND = 'inline_errors_op_node'
+    old_code: NodeId
+    new_code: NodeId
+    check_json: NodeId
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    check_json = property(lambda self: self._metadata['check_json'])
+
 class FindUnsafeAnalysisNode(Node):
     KIND = 'find_unsafe_analysis'
     code: NodeId
@@ -699,6 +709,7 @@ NODE_CLASSES = [
     LlmOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
+    InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
 ]
 

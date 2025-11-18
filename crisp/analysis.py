@@ -6,9 +6,11 @@ import os
 import subprocess
 import typing
 
+from . import inline_errors as inline_errors_module
 from .config import Config
 from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
-        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode
+        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode, \
+        InlineErrorsOpNode
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -167,6 +169,50 @@ def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonA
             exit_code = exit_code,
             json = n_json.node_id(),
             body = logs,
+            )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def inline_errors(
+    cfg: Config,
+    mvir: MVIR,
+    old_code: TreeNode,
+    check_json: FileNode,
+) -> InlineErrorsOpNode:
+    """
+    Take error messages from `check_json` and inline them into `old_code` as
+    comments.
+    """
+    json_errors = check_json.body_json()
+
+    errors_by_file, stderr_text = inline_errors_module.extract_diagnostics(json_errors)
+
+    # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
+    # tricks like `base_dir = ".."` used by the testing scripts.
+    # TODO: clean up config path handling and get rid of this
+    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+    base_path = os.path.abspath(cfg.base_dir)
+    rust_path = os.path.join(config_path, cfg.transpile.output_dir)
+    rust_path_rel = os.path.relpath(rust_path, base_path)
+
+    new_files = old_code.files.copy()
+    for name, src_node_id in new_files.items():
+        rel_name = os.path.relpath(name, rust_path_rel)
+        if rel_name not in errors_by_file:
+            continue
+        errors = errors_by_file[rel_name]
+        old_src = mvir.node(src_node_id).body_str()
+        new_src = inline_errors_module.insert_inline_error_comments(
+                old_src, errors, stderr_text)
+        new_files[name] = FileNode.new(mvir, new_src).node_id()
+
+    new_code = TreeNode.new(mvir, files = new_files)
+    n_op = InlineErrorsOpNode.new(
+            mvir,
+            old_code = old_code.node_id(),
+            new_code = new_code.node_id(),
+            check_json = check_json.node_id(),
             )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     return n_op

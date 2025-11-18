@@ -184,6 +184,18 @@ class Workflow:
         return n
 
     @step
+    def inline_errors(self, code: TreeNode) -> TreeNode:
+        n = self.inline_errors_op(code)
+        return self.mvir.node(n.new_code)
+
+    @step
+    def inline_errors_op(self, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+        n_check_op = self.cargo_check_json_op(code)
+        n_check_json = self.mvir.node(n_check_op.json)
+        n = analysis.inline_errors(self.cfg, self.mvir, code, n_check_json)
+        return n
+
+    @step
     def count_unsafe(self, n_code: TreeNode) -> int:
         n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()

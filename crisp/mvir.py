@@ -135,8 +135,20 @@ def check_type(ty, x):
         return ty.check_type(x)
 
 
-def _all_field_types(cls):
-    return typing.get_type_hints(cls)
+def _all_field_types(cls: type):
+    """
+    Get all of the field types of a class, including `@property`s.
+    """
+    type_hints = typing.get_type_hints(cls)
+    field_types = {}
+    for name, type in type_hints.items():
+        field_types[name] = type
+    for name, attr in cls.__dict__.items():
+        if isinstance(attr, property) and attr.fget:
+            type_hints = typing.get_type_hints(attr.fget)
+            if "return" in type_hints:
+                field_types[name] = type_hints["return"]
+    return field_types
 
 
 def _dataclass_to_cbor(x):

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import analysis, llm, sandbox
+from . import analysis, inline_errors, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
@@ -80,6 +80,9 @@ def parse_args():
     test.add_argument('--c-code', default='c_code')
 
     test = sub.add_parser('cargo-check-json')
+    test.add_argument('node', nargs='?', default='current')
+
+    test = sub.add_parser('inline-errors')
     test.add_argument('node', nargs='?', default='current')
 
     find_unsafe = sub.add_parser('find_unsafe')
@@ -251,6 +254,40 @@ def do_cargo_check_json(args, cfg):
         'passed' if n.passed else 'failed', n.exit_code))
     print('operation: %s' % n.node_id())
     print('json: %s' % n_json.node_id())
+
+def do_inline_errors(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n_json = w.cargo_check_json(n_code)
+
+    errors_by_file, stderr_text = inline_errors.extract_diagnostics(n_json)
+
+    # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
+    # tricks like `base_dir = ".."` used by the testing scripts.
+    # TODO: clean up config path handling and get rid of this
+    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+    base_path = os.path.abspath(cfg.base_dir)
+    rust_path = os.path.join(config_path, cfg.transpile.output_dir)
+    rust_path_rel = os.path.relpath(rust_path, base_path)
+
+    new_files = n_code.files.copy()
+    for name, src_node_id in new_files.items():
+        rel_name = os.path.relpath(name, rust_path_rel)
+        if rel_name not in errors_by_file:
+            continue
+        errors = errors_by_file[rel_name]
+        n_src = mvir.node(src_node_id)
+        new_src = inline_errors.insert_inline_error_comments(
+                n_src.body_str(), errors, stderr_text)
+        n_new_src = FileNode.new(mvir, new_src)
+        new_files[name] = n_new_src.node_id()
+
+    n_new_code = TreeNode.new(mvir, files = new_files)
+    print(n_new_code.node_id())
 
 def do_find_unsafe(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -454,6 +491,8 @@ def main():
         do_test(args, cfg)
     elif args.cmd == 'cargo-check-json':
         do_cargo_check_json(args, cfg)
+    elif args.cmd == 'inline-errors':
+        do_inline_errors(args, cfg)
     elif args.cmd == 'find_unsafe':
         do_find_unsafe(args, cfg)
     elif args.cmd == 'git':

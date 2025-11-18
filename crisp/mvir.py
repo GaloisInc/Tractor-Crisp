@@ -138,10 +138,13 @@ def check_type(ty, x):
 def _all_field_types(cls: type):
     """
     Get all of the field types of a class, including `@property`s.
+    `ClassVar[T]`s are stripped and treated as `T`s.
     """
     type_hints = typing.get_type_hints(cls)
     field_types = {}
     for name, type in type_hints.items():
+        if typing.get_origin(type) is ClassVar:
+            type = typing.get_args(type)[0]
         field_types[name] = type
     for name, attr in cls.__dict__.items():
         if isinstance(attr, property) and attr.fget:

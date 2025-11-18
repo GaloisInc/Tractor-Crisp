@@ -1,6 +1,6 @@
 import os
 import pygit2
-from typing import Optional
+from typing import Optional, TypeAlias
 
 from . import mvir as mvir_module
 from .mvir import MVIR, TreeNode, FileNode
@@ -15,15 +15,15 @@ def get_repo(mvir: MVIR) -> pygit2.Repository:
 
     try:
         return pygit2.Repository(
-            path,
-            pygit2.GIT_REPOSITORY_OPEN_NO_SEARCH
+            path=path,
+            flags=pygit2.GIT_REPOSITORY_OPEN_NO_SEARCH
             | pygit2.GIT_REPOSITORY_OPEN_BARE
             | pygit2.GIT_REPOSITORY_OPEN_NO_DOTGIT,
         )
     except pygit2.GitError:
         return pygit2.init_repository(
-            path,
-            pygit2.GIT_REPOSITORY_INIT_BARE
+            path=path,
+            flags=pygit2.GIT_REPOSITORY_INIT_BARE
             | pygit2.GIT_REPOSITORY_INIT_NO_REINIT
             | pygit2.GIT_REPOSITORY_INIT_NO_DOTGIT_DIR,
         )
@@ -76,6 +76,9 @@ def render(mvir: MVIR, target: TreeNode) -> pygit2.Oid:
     return commit
 
 
+Tree: TypeAlias = dict[str, "Tree" | FileNode]
+
+
 def commit_tree(
     mvir: MVIR,
     repo: pygit2.Repository,
@@ -86,7 +89,7 @@ def commit_tree(
     # Convert the `TreeNode`'s flat path->ID mapping to a nested structure like
     # the one used by git tree objects.  At each level, each entry is either a
     # `FileNode` or a dict representing a directory.
-    tree_files = {}
+    tree_files: Tree = {}
 
     def get_parent_and_name(path):
         head, tail = os.path.split(path)

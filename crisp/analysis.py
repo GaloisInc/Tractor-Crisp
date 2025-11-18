@@ -214,9 +214,9 @@ def crisp_git_state(subdir=None) -> str:
         return "unknown"
     rev = p.stdout.decode("utf-8").strip()
 
-    status_cmd = ("git", "status", "--porcelain=v1", "-z")
+    status_cmd = ["git", "status", "--porcelain=v1", "-z"]
     if subdir is not None:
-        status_cmd = status_cmd + (subdir,)
+        status_cmd.append(subdir)
     p = subprocess.run(status_cmd, cwd=_CRISP_DIR, check=True, stdout=subprocess.PIPE)
 
     parts = p.stdout.split(b"\0")
@@ -297,6 +297,6 @@ def _find_unsafe_impl(
     return n
 
 
-def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
+def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> FindUnsafeAnalysisNode:
     commit = crisp_git_state("tools/find_unsafe")
     return _find_unsafe_impl(cfg, mvir, code, commit)

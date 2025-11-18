@@ -61,7 +61,7 @@ def _print_step_value(prefix: str, x: Any):
             _print_step_value("%s[%d]" % (prefix, i), y)
     elif isinstance(x, dict):
         for k, v in x.items():
-            _print_step_value("%s[%r]" % (prefix, k), y)
+            _print_step_value("%s[%r]" % (prefix, k), v)
     else:
         if isinstance(x, Node):
             x = x.node_id()
@@ -115,7 +115,7 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode) -> TreeNode:
+    def transpile(self, c_code: TreeNode) -> TreeNode | None:
         compile_commands = self.cc_cmake(c_code)
         n_op_transpile = self.transpile_cc_op(c_code, compile_commands)
         code = self.mvir.node(n_op_transpile.rust_code)

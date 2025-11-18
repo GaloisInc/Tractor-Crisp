@@ -4,12 +4,14 @@ import io
 import os
 import sys
 import tarfile
+from docker.models.containers import Container
 
+from ..sandbox import Sandbox
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
-class WorkContainer:
+class WorkContainer(Sandbox):
     """
     Helper for managing a Docker/Podman container for building and running user
     code.
@@ -19,6 +21,8 @@ class WorkContainer:
     inputs by calling `run`, and store the outputs back into MVIR using the
     `commit` methods.
     """
+
+    container: Container
 
     def __init__(self, mvir):
         self.mvir = mvir
@@ -30,7 +34,7 @@ class WorkContainer:
                 "error getting image `tractor-crisp-user` - you may need to build it first"
             )
             raise
-        self.container = None
+        # `self.container` is only initialized in `self.start`.
 
     def start(self):
         self.container = self.client.containers.run(

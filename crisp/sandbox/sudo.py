@@ -5,12 +5,14 @@ import pwd
 import shlex
 import subprocess
 import tarfile
+from subprocess import CompletedProcess
 
+from ..sandbox import Sandbox
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
-class SudoSandbox:
+class SudoSandbox(Sandbox):
     """
     Helper for managing a `sudo`-based sandbox.  This uses `sudo` to run
     commands as an unprivileged user.
@@ -28,7 +30,7 @@ class SudoSandbox:
     def _sudo_cmd(self, cmd):
         return ("sudo", "-u", self.user, *cmd)
 
-    def _run_sudo(self, cmd, check=True, **kwargs):
+    def _run_sudo(self, cmd, check=True, **kwargs) -> CompletedProcess[str]:
         sudo_cmd = self._sudo_cmd(cmd)
         p = subprocess.run(sudo_cmd, check=check, **kwargs)
         return p

@@ -19,6 +19,22 @@ def code_has_compile_error(w: Workflow, n_code: TreeNode) -> bool:
             return True
     return False
 
+REPAIR_NO_ERRORS_PROMPT = '''
+I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles. Try to avoid introducing any more unsafe code beyond what's already there.
+
+Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+
+{input_files}
+'''
+
+def do_repair_no_errors(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
+    w = Workflow(cfg, mvir)
+    n_new_code, _n_op = llm.run_rewrite(
+            cfg, mvir, REPAIR_NO_ERRORS_PROMPT, n_code,
+            glob_filter = cfg.src_globs,
+            think = True)
+    return n_new_code
+
 REPAIR_BASIC_PROMPT = '''
 I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles. Try to avoid introducing any more unsafe code beyond what's already there.
 
@@ -66,10 +82,6 @@ You are an expert at resolving Rust errors.
 Your task is to resolve the errors in the code. Each error block is marked by the //ERROR comment above it
 You are provided with the following code that contains errors in an in-lined format:
 
-I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles. I've added the error messages inline as comments for your reference. Try to avoid introducing any more unsafe code beyond what's already there.
-
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
-
 {input_files}
 
 The error messages associated with each line have been annotated and associated error messages have been provided after the relevant line of code.     
@@ -80,7 +92,7 @@ def do_repair_inline2(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
     w = Workflow(cfg, mvir)
     n_code_inline = w.inline_errors(n_code)
     n_new_code, _n_op = llm.run_rewrite(
-            cfg, mvir, REPAIR_INLINE_PROMPT, n_code_inline,
+            cfg, mvir, REPAIR_INLINE2_PROMPT, n_code_inline,
             glob_filter = cfg.src_globs,
             think = True)
     return n_new_code
@@ -120,8 +132,9 @@ def main():
     n_code = n_code_with_errors
 
     candidates = [
-            do_repair_basic,
-            do_repair_inline,
+            do_repair_no_errors,
+            #do_repair_basic,
+            #do_repair_inline,
             do_repair_inline2,
             ]
     N = 5

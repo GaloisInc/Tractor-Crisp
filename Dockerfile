@@ -19,8 +19,12 @@ RUN cargo install \
     c2rust
 
 # Install hayroll
-RUN git clone https://github.com/UW-HARVEST/Hayroll \
+# TODO: we should pin hayroll's git dependencies too
+RUN mkdir -p /opt/hayroll \
+    && cd /opt/hayroll \
+    && git clone https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
+    && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
     && ./prerequisites.bash --no-sudo --llvm-version 18 \
     && ./build.bash
 
@@ -41,6 +45,7 @@ RUN mkdir /tmp/empty_project \
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
 RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers
+RUN sed -i -e 's,secure_path=",&/opt/hayroll/Hayroll/build:,' /etc/sudoers
 RUN echo 'Defaults env_keep+="RUSTUP_HOME"' >>/etc/sudoers
 
 # CRISP sudo-based sandbox configuration

@@ -299,6 +299,17 @@ def do_main(args, cfg):
         n_new_code = w.llm_safety(n_code)
 
         for repair_try in range(3):
+            n_op_check = w.cargo_check_json_op(n_new_code)
+            if not n_op_check.passed:
+                n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
+
+                n_op_check = w.cargo_check_json_op(n_new_code)
+                if not n_op_check.passed:
+                    # If we failed to fix the compile errors, don't bother
+                    # trying to run tests.  This still counts as a repair
+                    # attempt.
+                    continue
+
             n_op_test = w.test_op(n_new_code, n_c_code)
             if n_op_test.exit_code == 0:
                 w.accept(n_new_code, ('main', 'safety', safety_try))

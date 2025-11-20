@@ -42,6 +42,22 @@ Build/test logs:
 ```
 '''
 
+LLM_REPAIR_COMPILE_PROMPT = '''
+I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles.
+
+Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
+
+Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+
+{input_files}
+
+Compiler logs:
+
+```
+{stderr}
+```
+'''
+
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -232,6 +248,31 @@ class Workflow:
                 self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
+                think = True)
+
+    @step
+    def llm_repair_compile(
+        self,
+        n_code: TreeNode,
+        n_op_check: CargoCheckJsonAnalysisNode,
+    ) -> TreeNode:
+        n_new_code, n_op_llm = self.llm_repair_compile_op(n_code, n_op_check)
+        return n_new_code
+
+    @step
+    def llm_repair_compile_op(
+        self,
+        n_code: TreeNode,
+        n_op_check: CargoCheckJsonAnalysisNode,
+    ) -> tuple[TreeNode, LlmOpNode]:
+        n_json = self.mvir.node(n_op_check.json)
+        json_errors = n_json.body_json()
+        stderr = ''.join(j['message']['rendered']
+            for j in json_errors if j.get('reason') == 'compiler-message')
+        return llm.run_rewrite(
+                self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
+                glob_filter = self.cfg.src_globs,
+                format_kwargs = {'stderr': stderr},
                 think = True)
 
     @step

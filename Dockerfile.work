@@ -18,25 +18,6 @@ RUN apt-get install -y \
     build-essential llvm llvm-dev clang libclang-dev cmake \
     libssl-dev pkg-config python3 git
 
-# Install c2rust
-RUN cargo install \
-    --locked \
-    c2rust
-
-# Install hayroll
-#
-# Note that Hayroll's `prerequisites.bash` pins its git dependencies to
-# specific tags, so we don't have to worry (much) about ensuring we get the
-# right version.
-RUN mkdir -p /opt/hayroll \
-    && cd /opt/hayroll \
-    && git clone https://github.com/UW-HARVEST/Hayroll \
-    && cd Hayroll \
-    && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
-    && ./prerequisites.bash --no-sudo --llvm-version 18 \
-    && ./build.bash
-RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
-
 # Install the default toolchain for c2rust transpiled projects
 RUN rustup toolchain add \
     -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
@@ -55,3 +36,30 @@ RUN mkdir /tmp/empty_project \
     && cargo +nightly-2022-08-08 init \
     && cargo +nightly-2022-08-08 add serde \
     && rm -rf /tmp/empty_project
+
+# `uv` is required for building c2rust-refactor
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Install c2rust
+RUN cd ~ \
+    && git clone https://github.com/immunant/c2rust --depth 1 \
+    && cd c2rust \
+    && git fetch --depth 1 origin ec3e109dbd1c39002eedb7c9106b6b9a7a19b77f \
+    && git checkout FETCH_HEAD
+RUN cargo +nightly-2022-08-08 install --locked --path ~/c2rust/c2rust
+RUN cargo +nightly-2022-08-08 install --locked --path ~/c2rust/c2rust-refactor
+
+# Install hayroll
+#
+# Note that Hayroll's `prerequisites.bash` pins its git dependencies to
+# specific tags, so we don't have to worry (much) about ensuring we get the
+# right version.
+RUN mkdir -p /opt/hayroll \
+    && cd /opt/hayroll \
+    && git clone https://github.com/UW-HARVEST/Hayroll \
+    && cd Hayroll \
+    && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
+    && ./prerequisites.bash --no-sudo --llvm-version 18 \
+    && ./build.bash
+RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll

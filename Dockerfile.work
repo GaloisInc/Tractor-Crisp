@@ -32,6 +32,7 @@ RUN mkdir -p /opt/hayroll \
     && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
     && ./prerequisites.bash --no-sudo --llvm-version 18 \
     && ./build.bash
+RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install the default toolchain for c2rust transpiled projects
 RUN rustup toolchain add \

@@ -121,9 +121,12 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode) -> TreeNode:
+    def transpile(self, c_code: TreeNode, hayroll: bool = False) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(c_code, compile_commands)
+        n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
+        if n_op_transpile.rust_code is None:
+            print('error: transpile failed')
+            return None
         code = self.mvir.node(n_op_transpile.rust_code)
 
         if not self.test(code, c_code):
@@ -132,7 +135,21 @@ class Workflow:
         return code
 
     @step
-    def transpile_cc_op(self, n_c_code: TreeNode, n_cc: FileNode) -> TranspileOpNode:
+    def transpile_cc_op(
+        self,
+        n_c_code: TreeNode,
+        n_cc: FileNode,
+        hayroll: bool = False,
+    ) -> TranspileOpNode:
+        if hayroll:
+            # Hack: edit compile_commands.json to include `arguments` field
+            import json, shlex
+            j = n_cc.body_json()
+            for x in j:
+                if 'command' in x and 'arguments' not in x:
+                    x['arguments'] = shlex.split(x['command'])
+            n_cc = FileNode.new(self.mvir, json.dumps(j))
+
         cfg, mvir = self.cfg, self.mvir
         with run_sandbox(cfg, mvir) as sb:
             output_path = cfg.relative_path(cfg.transpile.output_dir)
@@ -141,17 +158,38 @@ class Workflow:
             sb.checkout(n_c_code)
 
             # Run c2rust-transpile
-            c2rust_cmd = [
-                    'hayroll', 'transpile',
-                    sb.join(COMPILE_COMMANDS_PATH),
-                    '--output-dir', sb.join(output_path),
-                    #'--emit-build-files',
-                    ]
-            if cfg.transpile.bin_main is not None:
-                c2rust_cmd.extend((
-                    '--binary', cfg.transpile.bin_main,
-                    ))
-            exit_code, logs = sb.run(c2rust_cmd)
+            if not hayroll:
+                c2rust_cmd = [
+                        'c2rust', 'transpile',
+                        sb.join(COMPILE_COMMANDS_PATH),
+                        '--output-dir', sb.join(output_path),
+                        '--emit-build-files',
+                        ]
+                if cfg.transpile.bin_main is not None:
+                    c2rust_cmd.extend((
+                        '--binary', cfg.transpile.bin_main,
+                        ))
+                exit_code, logs = sb.run(c2rust_cmd)
+            else:
+                # Hacks to get the C path relative to `n_tree`.  This handles
+                # tricks like `base_dir = ".."` used by the testing scripts.
+                # TODO: clean up config path handling and get rid of this
+                config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+                base_path = os.path.abspath(cfg.base_dir)
+                c_path = os.path.join(config_path, cfg.transpile.cmake_src_dir)
+                c_path_rel = os.path.relpath(c_path, base_path)
+
+                c2rust_cmd = [
+                        'hayroll',
+                        sb.join(COMPILE_COMMANDS_PATH),
+                        sb.join(output_path),
+                        '--project-dir', os.path.join(c_path_rel, 'src'),
+                        ]
+                if cfg.transpile.bin_main is not None:
+                    c2rust_cmd.extend((
+                        '--binary', cfg.transpile.bin_main,
+                        ))
+                exit_code, logs = sb.run(c2rust_cmd)
 
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)

@@ -9,7 +9,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
         TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode
+        SplitFfiOpNode, CargoCheckJsonAnalysisNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -42,6 +42,22 @@ Build/test logs:
 ```
 '''
 
+LLM_REPAIR_COMPILE_PROMPT = '''
+I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles.
+
+Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
+
+Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+
+{input_files}
+
+Compiler logs:
+
+```
+{stderr}
+```
+'''
+
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -52,7 +68,7 @@ def _print_step_value(prefix: str, x: Any):
             _print_step_value('%s[%d]' % (prefix, i), y)
     elif isinstance(x, dict):
         for k, v in x.items():
-            _print_step_value('%s[%r]' % (prefix, k), y)
+            _print_step_value('%s[%r]' % (prefix, k), v)
     else:
         if isinstance(x, Node):
             x = x.node_id()
@@ -173,6 +189,29 @@ class Workflow:
         return n
 
     @step
+    def cargo_check_json(self, code: TreeNode) -> list[dict]:
+        n = self.cargo_check_json_op(code)
+        n_json = self.mvir.node(n.json)
+        return n_json.body_json()
+
+    @step
+    def cargo_check_json_op(self, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+        n = analysis.cargo_check_json(self.cfg, self.mvir, code)
+        return n
+
+    @step
+    def inline_errors(self, code: TreeNode) -> TreeNode:
+        n = self.inline_errors_op(code)
+        return self.mvir.node(n.new_code)
+
+    @step
+    def inline_errors_op(self, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+        n_check_op = self.cargo_check_json_op(code)
+        n_check_json = self.mvir.node(n_check_op.json)
+        n = analysis.inline_errors(self.cfg, self.mvir, code, n_check_json)
+        return n
+
+    @step
     def count_unsafe(self, n_code: TreeNode) -> int:
         n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()
@@ -209,6 +248,31 @@ class Workflow:
                 self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
+                think = True)
+
+    @step
+    def llm_repair_compile(
+        self,
+        n_code: TreeNode,
+        n_op_check: CargoCheckJsonAnalysisNode,
+    ) -> TreeNode:
+        n_new_code, n_op_llm = self.llm_repair_compile_op(n_code, n_op_check)
+        return n_new_code
+
+    @step
+    def llm_repair_compile_op(
+        self,
+        n_code: TreeNode,
+        n_op_check: CargoCheckJsonAnalysisNode,
+    ) -> tuple[TreeNode, LlmOpNode]:
+        n_json = self.mvir.node(n_op_check.json)
+        json_errors = n_json.body_json()
+        stderr = ''.join(j['message']['rendered']
+            for j in json_errors if j.get('reason') == 'compiler-message')
+        return llm.run_rewrite(
+                self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
+                glob_filter = self.cfg.src_globs,
+                format_kwargs = {'stderr': stderr},
                 think = True)
 
     @step

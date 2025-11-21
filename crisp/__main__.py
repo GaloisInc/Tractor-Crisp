@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import analysis, llm, sandbox
+from . import analysis, inline_errors, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
@@ -78,6 +78,12 @@ def parse_args():
     test = sub.add_parser('test')
     test.add_argument('node', nargs='?', default='current')
     test.add_argument('--c-code', default='c_code')
+
+    test = sub.add_parser('cargo-check-json')
+    test.add_argument('node', nargs='?', default='current')
+
+    test = sub.add_parser('inline-errors')
+    test.add_argument('node', nargs='?', default='current')
 
     find_unsafe = sub.add_parser('find_unsafe')
     find_unsafe.add_argument('node', nargs='?', default='current')
@@ -233,6 +239,33 @@ def do_test(args, cfg):
         'passed' if n.passed else 'failed', n.exit_code, n.cmd))
     print('result: %s' % n.node_id())
 
+def do_cargo_check_json(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n = w.cargo_check_json_op(n_code)
+    n_json = mvir.node(n.json)
+    print(n_json.body_str())
+
+    print('\ncargo check process %s with code %d' % (
+        'passed' if n.passed else 'failed', n.exit_code))
+    print('operation: %s' % n.node_id())
+    print('json: %s' % n_json.node_id())
+
+def do_inline_errors(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n_op = w.inline_errors_op(n_code)
+    print('operation: %s' % n_op.node_id())
+    print('new state: %s' % n_op.new_code)
+
 def do_find_unsafe(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
@@ -266,6 +299,17 @@ def do_main(args, cfg):
         n_new_code = w.llm_safety(n_code)
 
         for repair_try in range(3):
+            n_op_check = w.cargo_check_json_op(n_new_code)
+            if not n_op_check.passed:
+                n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
+
+                n_op_check = w.cargo_check_json_op(n_new_code)
+                if not n_op_check.passed:
+                    # If we failed to fix the compile errors, don't bother
+                    # trying to run tests.  This still counts as a repair
+                    # attempt.
+                    continue
+
             n_op_test = w.test_op(n_new_code, n_c_code)
             if n_op_test.exit_code == 0:
                 w.accept(n_new_code, ('main', 'safety', safety_try))
@@ -433,6 +477,10 @@ def main():
         do_llm_repair(args, cfg)
     elif args.cmd == 'test':
         do_test(args, cfg)
+    elif args.cmd == 'cargo-check-json':
+        do_cargo_check_json(args, cfg)
+    elif args.cmd == 'inline-errors':
+        do_inline_errors(args, cfg)
     elif args.cmd == 'find_unsafe':
         do_find_unsafe(args, cfg)
     elif args.cmd == 'git':

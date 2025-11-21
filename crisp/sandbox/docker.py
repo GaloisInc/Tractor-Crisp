@@ -35,7 +35,7 @@ class WorkContainer:
 
     def stop(self):
         if self.container is not None:
-            self.container.stop(timeout=5)
+            self.container.stop(timeout=1)
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):

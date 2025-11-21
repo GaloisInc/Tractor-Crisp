@@ -1,3 +1,10 @@
+use proc_macro2::{Delimiter, Spacing, Span, TokenStream, TokenTree};
+use quote::ToTokens;
+use ra_ap_hir::Semantics;
+use ra_ap_ide_db::RootDatabase;
+use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
+use ra_ap_project_model::CargoConfig;
+use ra_ap_syntax::SyntaxNode;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -5,17 +12,8 @@ use std::iter;
 use std::mem;
 use std::path::Path;
 use std::str::FromStr;
-use proc_macro2::{TokenStream, TokenTree, Delimiter, Spacing, Span};
-use quote::ToTokens;
-use ra_ap_hir::Semantics;
-use ra_ap_ide_db::RootDatabase;
-use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
-use ra_ap_project_model::CargoConfig;
-use ra_ap_syntax::SyntaxNode;
-use syn;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
-
 
 struct FlatTokens {
     stack: Vec<(proc_macro2::token_stream::IntoIter, Delimiter, Span)>,
@@ -36,7 +34,8 @@ impl Iterator for FlatTokens {
             match it.next() {
                 Some(TokenTree::Group(g)) => {
                     // Return the open delimiter and continue with the contents of the group.
-                    self.stack.push((g.stream().into_iter(), g.delimiter(), g.span_close()));
+                    self.stack
+                        .push((g.stream().into_iter(), g.delimiter(), g.span_close()));
                     let open_ch = match g.delimiter() {
                         Delimiter::Parenthesis => '(',
                         Delimiter::Bracket => '[',
@@ -51,10 +50,10 @@ impl Iterator for FlatTokens {
                         spacing: Spacing::Alone,
                         span: (range.start, range.end),
                     });
-                },
-                Some(tt@TokenTree::Ident(_)) |
-                Some(tt@TokenTree::Punct(_)) |
-                Some(tt@TokenTree::Literal(_)) => return Some(Token::from_token_tree(tt)),
+                }
+                Some(tt @ TokenTree::Ident(_))
+                | Some(tt @ TokenTree::Punct(_))
+                | Some(tt @ TokenTree::Literal(_)) => return Some(Token::from_token_tree(tt)),
                 None => {
                     // Pop the now-empty group and return the close delimiter.
                     self.stack.pop();
@@ -72,13 +71,12 @@ impl Iterator for FlatTokens {
                         spacing: Spacing::Alone,
                         span: (range.start, range.end),
                     });
-                },
+                }
             }
         }
         None
     }
 }
-
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Token {
@@ -98,10 +96,13 @@ impl Token {
         let range = tt.span().byte_range();
         let start = range.start;
         let end = range.end;
-        Token { text, spacing, span: (start, end) }
+        Token {
+            text,
+            spacing,
+            span: (start, end),
+        }
     }
 }
-
 
 struct TokenIndex<'a> {
     tokens: &'a [Token],
@@ -118,12 +119,12 @@ impl<'a> TokenIndex<'a> {
         TokenIndex { tokens, index }
     }
 
-    pub fn find<'b>(&'b self, t: &Token) -> Option<usize> {
+    pub fn find(&self, t: &Token) -> Option<usize> {
         let (start, end) = t.span;
         let lo = ((start, end), 0);
         let hi = ((start, end), usize::MAX);
         let mut found = None;
-        for &(_, i) in self.index.range(lo ..= hi) {
+        for &(_, i) in self.index.range(lo..=hi) {
             if self.tokens[i] == *t {
                 if found.is_none() {
                     found = Some(i);
@@ -136,7 +137,6 @@ impl<'a> TokenIndex<'a> {
         found
     }
 }
-
 
 struct OutputBuffer {
     s: String,
@@ -161,6 +161,10 @@ impl OutputBuffer {
     /// comment) and that the end of `chunk` is the end of a token.
     pub fn emit(&mut self, chunk: &str, spacing: Spacing) {
         let cur_line = &self.s[self.prev_bol..];
+        #[expect(
+            clippy::collapsible_else_if,
+            reason = "We mean to separate the joint/disjoint cases"
+        )]
         if self.prev_was_joint {
             // No whitespace is allowed between a `Joint` token and the subsequent token.
         } else {
@@ -196,9 +200,9 @@ fn render_output(
     ts: TokenStream,
     buf: &mut OutputBuffer,
 ) {
-    if let Some(t) = orig_tokens.get(0) {
+    if let Some(t) = orig_tokens.first() {
         let (start_pos, _) = t.span;
-        buf.emit(&orig[0 .. start_pos], Spacing::Joint);
+        buf.emit(&orig[0..start_pos], Spacing::Joint);
     }
 
     struct Run {
@@ -219,7 +223,7 @@ fn render_output(
                 let end_token = &orig_tokens[run.end_idx];
                 let start_pos = run.start_pos;
                 let (_, end_pos) = end_token.span;
-                buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
+                buf.emit(&orig[start_pos..end_pos], end_token.spacing);
                 current_run = None;
             }
         }
@@ -228,7 +232,10 @@ fn render_output(
         debug_assert!(current_run.is_none());
         if let Some(idx) = ti.find(&t) {
             let (start_pos, _) = t.span;
-            current_run = Some(Run { start_pos, end_idx: idx });
+            current_run = Some(Run {
+                start_pos,
+                end_idx: idx,
+            });
             continue;
         }
 
@@ -240,15 +247,14 @@ fn render_output(
         let end_token = &orig_tokens[run.end_idx];
         let start_pos = run.start_pos;
         let (_, end_pos) = end_token.span;
-        buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
+        buf.emit(&orig[start_pos..end_pos], end_token.spacing);
     }
 
     if let Some(t) = orig_tokens.last() {
         let (_, end_pos) = t.span;
-        buf.emit(&orig[end_pos .. orig.len()], Spacing::Joint);
+        buf.emit(&orig[end_pos..orig.len()], Spacing::Joint);
     }
 }
-
 
 struct AddDerivedItemVisitor<F>(F);
 
@@ -321,21 +327,19 @@ fn add_ffi_wrapper(
         let mut pm = ParsedMeta::from(attr.meta);
 
         let mut move_to_wrapper = false;
-        pm.with_innermost_mut(&mut |pm| {
-            match pm {
-                ParsedMeta::NoMangle(..) => {
-                    move_to_wrapper = true;
-                    *pm = ParsedMeta::ExportName(ParsedMetaExportName {
-                        ident: syn::Ident::new("export_name", Span::call_site()),
-                        eq: syn::Token![=](Span::call_site()),
-                        name: syn::LitStr::new(&fn_name, Span::call_site()),
-                    });
-                },
-                ParsedMeta::ExportName(..) => {
-                    move_to_wrapper = true;
-                },
-                _ => {},
+        pm.with_innermost_mut(&mut |pm| match pm {
+            ParsedMeta::NoMangle(..) => {
+                move_to_wrapper = true;
+                *pm = ParsedMeta::ExportName(ParsedMetaExportName {
+                    ident: syn::Ident::new("export_name", Span::call_site()),
+                    eq: syn::Token![=](Span::call_site()),
+                    name: syn::LitStr::new(&fn_name, Span::call_site()),
+                });
             }
+            ParsedMeta::ExportName(..) => {
+                move_to_wrapper = true;
+            }
+            _ => {}
         });
 
         attr.meta = pm.into();
@@ -370,20 +374,18 @@ fn add_ffi_wrapper(
     for (i, arg) in fn_wrapper.sig.inputs.iter_mut().enumerate() {
         let ident = match *arg {
             syn::FnArg::Receiver(_) => syn::Ident::new("self", Span::call_site()),
-            syn::FnArg::Typed(ref mut pt) => {
-                match *pt.pat {
-                    syn::Pat::Ident(ref pi) => pi.ident.clone(),
-                    _ => {
-                        let ident = syn::Ident::new(&format!("arg{i}"), Span::call_site());
-                        *pt.pat = syn::Pat::Ident(syn::PatIdent {
-                            attrs: Vec::new(),
-                            by_ref: None,
-                            mutability: None,
-                            ident: ident.clone(),
-                            subpat: None,
-                        });
-                        ident
-                    },
+            syn::FnArg::Typed(ref mut pt) => match *pt.pat {
+                syn::Pat::Ident(ref pi) => pi.ident.clone(),
+                _ => {
+                    let ident = syn::Ident::new(&format!("arg{i}"), Span::call_site());
+                    *pt.pat = syn::Pat::Ident(syn::PatIdent {
+                        attrs: Vec::new(),
+                        by_ref: None,
+                        mutability: None,
+                        ident: ident.clone(),
+                        subpat: None,
+                    });
+                    ident
                 }
             },
         };
@@ -420,9 +422,9 @@ fn span_to_text_range(span: Span) -> TextRange {
 }
 */
 
-
 // Helpers for dealing with nested meta items in attrs, like `#[unsafe(no_mangle)]`
 
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum ParsedMeta {
     Meta(syn::Meta),
@@ -460,18 +462,26 @@ impl ParsedMeta {
                 let ident = ml.path.require_ident()?.clone();
                 let paren = match ml.delimiter {
                     syn::MacroDelimiter::Paren(p) => p,
-                    _ => return Err(
-                        syn::Error::new(ml.delimiter.span().open(), "expected parens")),
+                    _ => {
+                        return Err(syn::Error::new(
+                            ml.delimiter.span().open(),
+                            "expected parens",
+                        ));
+                    }
                 };
                 let meta: syn::Meta = syn::parse2(ml.tokens.clone())?;
                 let inner = ParsedMeta::from(meta);
-                Ok(ParsedMeta::Unsafe(Box::new(ParsedMetaUnsafe { ident, paren, inner })))
-            },
+                Ok(ParsedMeta::Unsafe(Box::new(ParsedMetaUnsafe {
+                    ident,
+                    paren,
+                    inner,
+                })))
+            }
             "no_mangle" => {
                 let _ = meta.require_path_only()?;
                 let ident = ident.clone();
                 Ok(ParsedMeta::NoMangle(ParsedMetaNoMangle { ident }))
-            },
+            }
             "export_name" => {
                 let mnv = meta.require_name_value()?;
                 let ident = mnv.path.require_ident()?.clone();
@@ -481,24 +491,26 @@ impl ParsedMeta {
                     _ => return Err(syn::Error::new(mnv.value.span(), "expected Lit")),
                 };
                 let syn::ExprLit { ref attrs, ref lit } = *expr_lit;
-                if attrs.len() > 0 {
+                if !attrs.is_empty() {
                     return Err(syn::Error::new(expr_lit.span(), "name must not have attrs"));
                 }
                 let name = match *lit {
                     syn::Lit::Str(ref ls) => ls.clone(),
                     _ => return Err(syn::Error::new(lit.span(), "expected Str")),
                 };
-                Ok(ParsedMeta::ExportName(ParsedMetaExportName { ident, eq, name }))
-            },
+                Ok(ParsedMeta::ExportName(ParsedMetaExportName {
+                    ident,
+                    eq,
+                    name,
+                }))
+            }
             _ => Ok(ParsedMeta::Meta(meta.clone())),
         }
     }
 
     pub fn with_innermost_mut(&mut self, f: &mut impl FnMut(&mut ParsedMeta)) {
         match *self {
-            ParsedMeta::Meta(..) |
-            ParsedMeta::NoMangle(..) |
-            ParsedMeta::ExportName(..) => f(self),
+            ParsedMeta::Meta(..) | ParsedMeta::NoMangle(..) | ParsedMeta::ExportName(..) => f(self),
             ParsedMeta::Unsafe(ref mut pmu) => pmu.inner.with_innermost_mut(f),
         }
     }
@@ -511,7 +523,7 @@ impl From<syn::Meta> for ParsedMeta {
             Err(e) => {
                 eprintln!("warning: failed to parse `{}`: {e}", meta.to_token_stream());
                 ParsedMeta::Meta(meta)
-            },
+            }
         }
     }
 }
@@ -556,7 +568,6 @@ impl ToTokens for ParsedMetaExportName {
     }
 }
 
-
 fn main() {
     let cargo_dir_path = env::args().nth(1).unwrap();
     let cargo_dir_path = Path::new(&cargo_dir_path);
@@ -574,7 +585,8 @@ fn main() {
         &cargo_config,
         &load_cargo_config,
         &|_msg| {},
-    ).unwrap();
+    )
+    .unwrap();
 
     // Assume the first file in `vfs` is the crate root.
     let (first_file_id, _) = vfs.iter().next().unwrap();

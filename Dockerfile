@@ -34,6 +34,11 @@ RUN rustup toolchain add \
     -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2022-08-08
 
+# Install the default toolchain for hayroll transpiled projects
+RUN rustup toolchain add \
+    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
+    nightly-2023-03-28
+
 # Update crates.io index for future use.  There's no dedicated command to force
 # an update, but adding a dependency will do it.
 # https://stackoverflow.com/a/74708239

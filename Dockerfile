@@ -65,6 +65,11 @@ COPY uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
 
+# Add `/usr/local/bin/crisp` wrapper script
+RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
+    echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
+    chmod +x /usr/local/bin/crisp
+
 COPY tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/Cargo.toml ./tools/find_unsafe/
 COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/

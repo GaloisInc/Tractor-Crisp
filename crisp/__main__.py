@@ -286,10 +286,34 @@ def do_main(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
+    # Hacks to get the C path relative to `n_tree`.  This handles
+    # tricks like `base_dir = ".."` used by the testing scripts.
+    # TODO: clean up config path handling and get rid of this
+    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
+    base_path = os.path.abspath(cfg.base_dir)
+    c_path = os.path.join(config_path, cfg.transpile.cmake_src_dir)
+    c_path_rel = os.path.relpath(c_path, base_path)
+
+    # Count number of C source files.  This affects our choice of transpiler
+    # mode in some cases.
+    num_c_files = 0
+    c_src_dir = pathlib.Path(c_path_rel)
+    for path in n_c_code.files.keys():
+        path = pathlib.Path(path)
+        if path.suffix != '.c':
+            continue
+        if not path.is_relative_to(c_path_rel):
+            continue
+        num_c_files += 1
+
     # Try transpiling with Hayroll first, then fall back to plain C2Rust.  Note
     # that `w.transpile` also checks that the tests pass, so a successful
     # transpile with failing tests counts as a failure here.
-    n_code = w.transpile(n_c_code, hayroll = True)
+    n_code = None
+    if n_code is None and num_c_files > 1:
+        n_code = w.transpile(n_c_code, reorganize_definitions = True)
+    if n_code is None:
+        n_code = w.transpile(n_c_code, hayroll = True)
     if n_code is None:
         n_code = w.transpile(n_c_code)
     if n_code is None:

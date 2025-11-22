@@ -95,6 +95,7 @@ export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 sed -i -e 's/staticlib/cdylib/' translated_rust/Cargo.toml
 sed -i -e 's/name = "translated_rust"/name = "{example_name}"/' translated_rust/Cargo.toml
+sed -i -e 's/name = "hayroll_out"/name = "{example_name}"/' translated_rust/Cargo.toml
 python3 -m runtests -s . --rust --verbose
 """
 

@@ -3,24 +3,49 @@
 # that any bugs that might be introduced can't damage the user's development
 # environment.
 
-FROM ubuntu:24.04
+# Need gcc-13 for hayroll.
+# Debian bookworm (12) only has gcc-12.
+# Debian trixie (13) has gcc-13.
+FROM docker.io/rust:trixie
 
-RUN apt-get clean
+# rust-analyzer (required by hayroll)'s deps require Rust 1.89
+RUN rustup default 1.90.0
+
 RUN apt-get update
-RUN apt-get upgrade -y
-RUN apt-get install -y build-essential
-RUN apt-get install -y git curl cmake
-RUN apt-get install -y llvm clang libclang-dev python3 libssl-dev pkg-config
 
-# Install rustup & pin to C2Rust's nightly
-WORKDIR /tmp
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup.rs \
-  && sh ./rustup.rs -y --default-toolchain 1.88.0
-ENV PATH="/root/.cargo/bin:$PATH"
-RUN rustup toolchain add nightly-2022-08-08
+# c2rust deps
+RUN apt-get install -y \
+    build-essential llvm llvm-dev clang libclang-dev cmake \
+    libssl-dev pkg-config python3 git
 
-# Build and install C2Rust
-RUN cargo install --locked c2rust
+# Install c2rust
+RUN cargo install \
+    --locked \
+    c2rust
+
+# Install hayroll
+#
+# Note that Hayroll's `prerequisites.bash` pins its git dependencies to
+# specific tags, so we don't have to worry (much) about ensuring we get the
+# right version.
+RUN mkdir -p /opt/hayroll \
+    && cd /opt/hayroll \
+    && git clone https://github.com/UW-HARVEST/Hayroll \
+    && cd Hayroll \
+    && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
+    && ./prerequisites.bash --no-sudo --llvm-version 18 \
+    && ./build.bash
+RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
+
+# Install the default toolchain for c2rust transpiled projects
+RUN rustup toolchain add \
+    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
+    nightly-2022-08-08
+
+# Install the default toolchain for hayroll transpiled projects
+RUN rustup toolchain add \
+    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
+    nightly-2023-03-28
 
 # Update crates.io index for future use.  There's no dedicated command to force
 # an update, but adding a dependency will do it.

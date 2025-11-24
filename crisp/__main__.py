@@ -286,7 +286,12 @@ def do_main(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    n_code = w.transpile(n_c_code)
+    # Try transpiling with Hayroll first, then fall back to plain C2Rust.  Note
+    # that `w.transpile` also checks that the tests pass, so a successful
+    # transpile with failing tests counts as a failure here.
+    n_code = w.transpile(n_c_code, hayroll = True)
+    if n_code is None:
+        n_code = w.transpile(n_c_code)
     if n_code is None:
         return
     w.accept(n_code, ('main', 'transpile'))

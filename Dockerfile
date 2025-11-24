@@ -45,7 +45,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN cd /opt \
     && git clone https://github.com/immunant/c2rust --depth 1 \
     && cd c2rust \
-    && git fetch --depth 1 origin ec3e109dbd1c39002eedb7c9106b6b9a7a19b77f \
+    && git fetch --depth 1 origin 5d5295e5253db46c3124f264622673b307d2d04e \
     && git checkout FETCH_HEAD
 RUN cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust
 RUN cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust-refactor

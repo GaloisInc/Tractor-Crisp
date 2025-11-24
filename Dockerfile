@@ -73,6 +73,7 @@ WORKDIR /opt/tractor-crisp
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
+RUN uv tool install .
 
 # Add `/usr/local/bin/crisp` wrapper script
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \

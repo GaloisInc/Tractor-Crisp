@@ -125,7 +125,7 @@ class Workflow:
         compile_commands = self.cc_cmake(c_code)
         n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
         if n_op_transpile.rust_code is None:
-            print('error: transpile failed')
+            print('error: transpile failed', file=sys.stderr)
             return None
         code = self.mvir.node(n_op_transpile.rust_code)
 

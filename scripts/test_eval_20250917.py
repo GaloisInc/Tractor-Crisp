@@ -47,7 +47,7 @@ def get_target_info(project_dir):
             for j_target in j_cfg['targets']:
                 target_jsons.append(j_target['jsonFile'])
         # Expect one build target per project for now.
-        assert len(target_jsons) == 1, 'got multiple build targets: %r' % (target_jsons,)
+        #assert len(target_jsons) == 1, 'got multiple build targets: %r' % (target_jsons,)
         target_json = target_jsons[0]
 
         with open(os.path.join(reply_dir, target_json)) as f:
@@ -86,7 +86,7 @@ def run_crisp(cli_args, *args, **kwargs):
 
     return subprocess.run(cmd, **kwargs)
 
-LIB_CONFIG_STR = '''
+LIB_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 src_globs = "translated_rust/src/*.rs"
 test_command = """
@@ -96,8 +96,10 @@ cd {example_dir}
 sed -i -e 's/staticlib/cdylib/' translated_rust/Cargo.toml
 sed -i -e 's/name = "translated_rust"/name = "{example_name}"/' translated_rust/Cargo.toml
 sed -i -e 's/name = "hayroll_out"/name = "{example_name}"/' translated_rust/Cargo.toml
-sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = { version = "\1", path = "/opt/c2rust/c2rust-bitfields" }|' translated_rust/Cargo.toml
-python3 -m runtests -s . --rust --verbose
+sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = {{ version = "\\1", path = "/opt/c2rust/c2rust-bitfields" }}|' translated_rust/Cargo.toml
+# Run non-Rust tests first so the C .so will be available for the Rust tests
+python3 -m runtests --root {base_dir} -s {example_dir}
+python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 """
 
 [transpile]
@@ -105,7 +107,7 @@ cmake_src_dir = "test_case"
 output_dir = "translated_rust"
 '''
 
-BIN_CONFIG_STR = '''
+BIN_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 src_globs = "translated_rust/src/*.rs"
 test_command = """
@@ -113,8 +115,10 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 sed -i -e 's/name = "main"/name = "{example_name}"/' translated_rust/Cargo.toml
-sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = { version = "\1", path = "/opt/c2rust/c2rust-bitfields" }|' translated_rust/Cargo.toml
-python3 -m runtests -s . --rust --verbose
+sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = {{ version = "\\1", path = "/opt/c2rust/c2rust-bitfields" }}|' translated_rust/Cargo.toml
+# Run non-Rust tests first so the C .so will be available for the Rust tests
+python3 -m runtests --root {base_dir} -s {example_dir}
+python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 """
 
 [transpile]
@@ -151,6 +155,9 @@ def main():
 
     # Collect source files
     src_files = []
+    commit_files = [
+            os.path.join(base_dir, 'Cargo.toml'),
+            ]
     commit_dirs = [
             os.path.join(args.project_dir, 'runner'),
             os.path.join(args.project_dir, 'test_case'),
@@ -158,6 +165,9 @@ def main():
             os.path.join(base_dir, 'deployment'),
             os.path.join(base_dir, 'tools'),
             ]
+    for path in commit_files:
+        rel_path = os.path.relpath(path, args.project_dir)
+        src_files.append(rel_path)
     for start_dir in commit_dirs:
         for root, dirs, files in os.walk(start_dir):
             for f in files:

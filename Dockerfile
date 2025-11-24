@@ -65,6 +65,7 @@ ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 # CRISP dependencies
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
+RUN uv python install
 
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp

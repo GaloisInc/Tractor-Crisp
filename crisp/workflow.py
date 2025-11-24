@@ -179,6 +179,11 @@ class Workflow:
                 c_path = os.path.join(config_path, cfg.transpile.cmake_src_dir)
                 c_path_rel = os.path.relpath(c_path, base_path)
 
+                # Setting `--project-dir` explicitly prevents Hayroll from
+                # including various ancestor directories as intermediate
+                # modules.  We want it to translate `src/lib.c` to `src/lib.rs`
+                # rather than `foo/bar/baz/src/lib.rs` because overly long file
+                # paths sometimes confuse weaker LLMs.
                 c2rust_cmd = [
                         'hayroll',
                         sb.join(COMPILE_COMMANDS_PATH),

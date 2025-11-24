@@ -96,6 +96,7 @@ cd {example_dir}
 sed -i -e 's/staticlib/cdylib/' translated_rust/Cargo.toml
 sed -i -e 's/name = "translated_rust"/name = "{example_name}"/' translated_rust/Cargo.toml
 sed -i -e 's/name = "hayroll_out"/name = "{example_name}"/' translated_rust/Cargo.toml
+sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = { version = "\1", path = "/opt/c2rust/c2rust-bitfields" }|' translated_rust/Cargo.toml
 python3 -m runtests -s . --rust --verbose
 """
 
@@ -112,6 +113,7 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 sed -i -e 's/name = "main"/name = "{example_name}"/' translated_rust/Cargo.toml
+sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = { version = "\1", path = "/opt/c2rust/c2rust-bitfields" }|' translated_rust/Cargo.toml
 python3 -m runtests -s . --rust --verbose
 """
 

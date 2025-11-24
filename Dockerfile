@@ -45,8 +45,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 
-COPY pyproject.toml ./
-COPY uv.lock ./
+COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
 

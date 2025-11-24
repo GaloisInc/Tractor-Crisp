@@ -13,10 +13,15 @@ RUN apt-get install -y \
     build-essential llvm llvm-dev clang libclang-dev cmake \
     libssl-dev pkg-config python3 git
 
-# Install the default toolchain for c2rust transpiled projects
+# Install the toolchain used to build c2rust
 RUN rustup toolchain add \
     -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2022-08-08
+
+# Install the default toolchain for c2rust transpiled projects
+RUN rustup toolchain add \
+    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
+    nightly-2023-04-15
 
 # Install the default toolchain for hayroll transpiled projects
 RUN rustup toolchain add \

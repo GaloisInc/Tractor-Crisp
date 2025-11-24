@@ -49,6 +49,7 @@ WORKDIR /opt/tractor-crisp
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
+RUN uv tool install .
 
 COPY tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/Cargo.toml ./tools/find_unsafe/

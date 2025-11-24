@@ -24,7 +24,10 @@ RUN cargo install \
     c2rust
 
 # Install hayroll
-# TODO: we should pin hayroll's git dependencies too
+#
+# Note that Hayroll's `prerequisites.bash` pins its git dependencies to
+# specific tags, so we don't have to worry (much) about ensuring we get the
+# right version.
 RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
     && git clone https://github.com/UW-HARVEST/Hayroll \

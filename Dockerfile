@@ -93,7 +93,12 @@ WORKDIR /opt/tractor-crisp
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
-RUN uv tool install .
+# FIXME: currently disabled in favor of the wrapper script below.  Some parts
+# of CRISP use `os.path.dirname(__file__)` to find related files, but `uv`
+# installs CRISP into a different path, so it can no longer find those files.
+# We should either fix CRISP to find its files by a more robust method, or else
+# commit to using the wrapper script instead of `uv tool install`.
+#RUN uv tool install .
 
 # Add `/usr/local/bin/crisp` wrapper script
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \

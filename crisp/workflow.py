@@ -272,9 +272,12 @@ class Workflow:
             t['lib']['crate-type'] = ['cdylib']
 
         bitfields_ver = t.get('dependencies', {}).get('c2rust-bitfields')
-        if isinstance(bitfields_ver, str):
+        if bitfields_ver is not None:
+            assert isinstance(bitfields_ver, str), (
+                f'expected version string for c2rust-bitfields, but got {repr(bitfields_ver)}')
             # `c2rust-bitfields` is present and is a plain version dependency
-            # like `c2rust-bitfields = "1.2.3"`.
+            # like `c2rust-bitfields = "1.2.3"`.  Replace it with a path dependency
+            # with the same version number.
             t['dependencies']['c2rust-bitfields'] = {
                 'version': bitfields_ver,
                 'path': '/opt/c2rust/c2rust-bitfields',

@@ -19,11 +19,7 @@ from .work_dir import lock_work_dir
 LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
-HOWEVER, any function marked #[no_mangle] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature and contains nontrivial logic, you should handle it as follows:
-1. For a #[no_mangle] entry point named `foo`, make a new function `foo_impl` without the #[no_mangle] attribute.
-2. Move all the logic from `foo` into `foo_impl`, and have `foo` simply be a wrapper that calls `foo_impl`.
-3. If there are any calls to `foo` in the Rust code, change them to call `foo_impl` instead.
-You can then make `foo_impl` safe like any other function, leaving `foo` as a simple unsafe wrapper for FFI callers.
+HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
 After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
 

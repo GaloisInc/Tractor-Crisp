@@ -296,6 +296,12 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'transpile'))
 
+    n_code = w.split_ffi(n_code)
+    if not w.test(n_code, n_c_code):
+        print('error: tests failed after split_ffi')
+        return None
+    w.accept(n_code, ('main', 'split_ffi'))
+
     for safety_try in range(3):
         unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:

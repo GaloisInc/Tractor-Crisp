@@ -158,6 +158,17 @@ class Workflow:
             sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
 
+            # Hack: ensure all directories mentioned in compile_commands.json
+            # exist by placing an empty file in each one.
+            j = n_cc.body_json()
+            n_empty = FileNode.new(mvir, '')
+            sb_dir = sb.join()
+            for x in j:
+                if 'directory' in x:
+                    d = x['directory']
+                    rel_d = os.path.relpath(d, sb_dir)
+                    sb.checkout_file(os.path.join(rel_d, '.empty'), n_empty)
+
             # Run c2rust-transpile
             if not hayroll:
                 c2rust_cmd = [

@@ -700,6 +700,15 @@ class FindUnsafeAnalysisNode(Node):
     commit = property(lambda self: self._metadata['commit'])
     stderr = property(lambda self: self._metadata['stderr'])
 
+class EditOpNode(Node):
+    KIND = 'edit_op'
+    old_code: NodeId
+    new_code: NodeId
+    # `body` stores some kind of description of the edit.
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+
 NODE_CLASSES = [
     FileNode,
     TreeNode,
@@ -711,6 +720,7 @@ NODE_CLASSES = [
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
+    EditOpNode,
 ]
 
 def _build_node_kind_map(classes):

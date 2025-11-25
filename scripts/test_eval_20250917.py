@@ -88,15 +88,12 @@ def run_crisp(cli_args, *args, **kwargs):
 
 LIB_CONFIG_STR = r'''
 base_dir = "{base_dir}"
+project_name = "{example_name}"
 src_globs = "translated_rust/src/*.rs"
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
-sed -i -e 's/staticlib/cdylib/' translated_rust/Cargo.toml
-sed -i -e 's/name = "translated_rust"/name = "{example_name}"/' translated_rust/Cargo.toml
-sed -i -e 's/name = "hayroll_out"/name = "{example_name}"/' translated_rust/Cargo.toml
-sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = {{ version = "\\1", path = "/opt/c2rust/c2rust-bitfields" }}|' translated_rust/Cargo.toml
 # Run non-Rust tests first so the C .so will be available for the Rust tests
 python3 -m runtests --root {base_dir} -s {example_dir}
 python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
@@ -109,13 +106,12 @@ output_dir = "translated_rust"
 
 BIN_CONFIG_STR = r'''
 base_dir = "{base_dir}"
+project_name = "{example_name}"
 src_globs = "translated_rust/src/*.rs"
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
-sed -i -e 's/name = "main"/name = "{example_name}"/' translated_rust/Cargo.toml
-sed -i --regexp-extended -e 's|c2rust-bitfields = "([0-9.]+)"|c2rust-bitfields = {{ version = "\\1", path = "/opt/c2rust/c2rust-bitfields" }}|' translated_rust/Cargo.toml
 # Run non-Rust tests first so the C .so will be available for the Rust tests
 python3 -m runtests --root {base_dir} -s {example_dir}
 python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose

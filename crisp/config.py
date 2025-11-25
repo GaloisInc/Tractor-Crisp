@@ -41,6 +41,7 @@ class Config(ConfigBase):
 
     transpile: 'TranspileConfig'
 
+    project_name: str
     src_globs: list[str]
     test_command: str
     base_dir: str = '.'

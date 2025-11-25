@@ -3,6 +3,7 @@ import inspect
 import os
 import subprocess
 import sys
+import toml
 from typing import Any
 
 from . import analysis, llm
@@ -10,7 +11,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
         TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode, CargoCheckJsonAnalysisNode
+        SplitFfiOpNode, CargoCheckJsonAnalysisNode, EditOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -130,6 +131,12 @@ class Workflow:
             return None
         code = self.mvir.node(n_op_transpile.rust_code)
 
+        # Patch Cargo.toml before building and testing.  This makes sure we
+        # test the code that will actually be used, and also gives
+        # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
+        # needed.
+        code = self.patch_cargo_toml(code)
+
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
             return None
@@ -231,6 +238,61 @@ class Workflow:
         print('c2rust process %s with code %d:\n%s' % (
             'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
 
+        return n_op
+
+    @step
+    def patch_cargo_toml(self, code: TreeNode) -> TreeNode:
+        n_op = self.patch_cargo_toml_op(code)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_cargo_toml_op(self, code: TreeNode) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        cargo_toml_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+        assert len(cargo_toml_paths) == 1, (
+                f'expected only 1 Cargo.toml in transpiler output, but got {cargo_toml_paths}')
+        cargo_toml_path, = cargo_toml_paths
+        cargo_toml = mvir.node(code.files[cargo_toml_path])
+
+        t = toml.loads(cargo_toml.body_str())
+
+        if 'bin' in t:
+            kind = 'bin'
+            assert isinstance(t['bin'], list)
+            assert len(t['bin']) == 1
+            t['bin'][0]['name'] = cfg.project_name
+        else:
+            kind = 'lib'
+            t['package']['name'] = cfg.project_name
+            t['lib']['name'] = cfg.project_name
+            t['lib']['crate-type'] = ['cdylib']
+
+        bitfields_ver = t.get('dependencies', {}).get('c2rust-bitfields')
+        if bitfields_ver is not None:
+            assert isinstance(bitfields_ver, str), (
+                f'expected version string for c2rust-bitfields, but got {repr(bitfields_ver)}')
+            # `c2rust-bitfields` is present and is a plain version dependency
+            # like `c2rust-bitfields = "1.2.3"`.  Replace it with a path dependency
+            # with the same version number.
+            t['dependencies']['c2rust-bitfields'] = {
+                'version': bitfields_ver,
+                'path': '/opt/c2rust/c2rust-bitfields',
+            }
+
+        new_files = code.files.copy()
+        new_files[cargo_toml_path] = FileNode.new(mvir, toml.dumps(t)).node_id()
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch Cargo.toml (kind = {kind})',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
         return n_op
 
     @step

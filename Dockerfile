@@ -5,6 +5,7 @@ FROM docker.io/rust:trixie
 
 # rust-analyzer (required by hayroll)'s deps require Rust 1.89
 RUN rustup default 1.90.0
+RUN rustup +1.90.0 component add rustfmt
 
 RUN apt-get update
 
@@ -70,6 +71,10 @@ RUN mkdir -p /opt/hayroll \
     && ./build.bash
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
+# Install CRISP tool binaries
+COPY tools/split_ffi_entry_points /opt/crisp-tools/split_ffi_entry_points
+RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -88,7 +93,12 @@ WORKDIR /opt/tractor-crisp
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
 RUN uv sync
-RUN uv tool install .
+# FIXME: currently disabled in favor of the wrapper script below.  Some parts
+# of CRISP use `os.path.dirname(__file__)` to find related files, but `uv`
+# installs CRISP into a different path, so it can no longer find those files.
+# We should either fix CRISP to find its files by a more robust method, or else
+# commit to using the wrapper script instead of `uv tool install`.
+#RUN uv tool install .
 
 # Add `/usr/local/bin/crisp` wrapper script
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \

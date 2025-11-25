@@ -615,6 +615,8 @@ class SplitFfiOpNode(Node):
     old_code: NodeId
     new_code: NodeId
     # Commit hash of the `split_ffi_entry_points` version that was used
+    # TODO: remove - no longer used.  Figure out a way to remove fields without
+    # breaking the ability to read old MVIR storage
     commit: str
     # `body` stores the log output
 

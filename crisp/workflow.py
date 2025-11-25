@@ -395,17 +395,7 @@ class Workflow:
 
     @step
     def split_ffi_op(self, n_tree: TreeNode) -> SplitFfiOpNode:
-        """
-        Note: the `split_ffi` tool may expand proc macros, so it should only be
-        used on trusted code (i.e. not LLM output).
-        """
         cfg, mvir = self.cfg, self.mvir
-
-        split_ffi_dir = os.path.join(_CRISP_DIR, 'tools/split_ffi_entry_points')
-        subprocess.run(('cargo', 'build', '--release'),
-            cwd=split_ffi_dir, check=True)
-
-        commit = analysis.crisp_git_state('tools/split_ffi_entry_points')
 
         # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
         # tricks like `base_dir = ".."` used by the testing scripts.
@@ -415,36 +405,36 @@ class Workflow:
         rust_path = os.path.join(config_path, cfg.transpile.output_dir)
         rust_path_rel = os.path.relpath(rust_path, base_path)
 
-        with lock_work_dir(cfg, mvir) as wd:
-            wd.checkout(n_tree)
+        with run_sandbox(cfg, mvir) as sb:
+            sb.checkout(n_tree)
 
-            wd_rust_path = os.path.abspath(os.path.join(wd.path, rust_path_rel))
-            p = subprocess.run(
-                ('cargo', 'run', '--release',
-                    '--manifest-path', os.path.join(split_ffi_dir, 'Cargo.toml'),
-                    '--', wd_rust_path),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            exit_code, logs = sb.run(['split_ffi_entry_points', sb.join(rust_path_rel)])
 
-            if p.returncode != 0:
-                print('command failed with exit code %d' % p.returncode)
-                print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
-                print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
-                p.check_returncode()
+            if exit_code == 0:
+                exit_code, logs2 = sb.run([
+                    'cargo', 'fmt', '--manifest-path',
+                    sb.join(rust_path_rel, 'Cargo.toml')])
+                logs = b'\n\n'.join((logs, logs2))
 
-            p2 = subprocess.run(('cargo', 'fmt'), cwd=wd_rust_path,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if exit_code == 0:
+                exit_code, logs2 = sb.run(['rm', '-rfv', sb.join(rust_path_rel, 'target')])
+                logs = b'\n\n'.join((logs, logs2))
 
-            new_files = n_tree.files.copy()
-            for k in new_files:
-                new_files[k] = wd.commit_file(k).node_id()
-            n_new_tree = TreeNode.new(mvir, files=new_files)
+            if exit_code == 0:
+                n_new_tree = sb.commit_dir(rust_path_rel)
+            else:
+                # TODO: record failure without throwing an exception, like
+                # `transpile_cc_op` does
+                raise ValueError(
+                    f'split_ffi_entry_points failed (exit code = {exit_code})\n'
+                    f'logs:\n{logs.decode("utf-8", errors="replace")}')
 
         n_op = SplitFfiOpNode.new(
                 mvir,
                 old_code = n_tree.node_id(),
                 new_code = n_new_tree.node_id(),
-                commit = commit,
-                body = p.stdout + b'\n\n' + p2.stdout,
+                commit = '',
+                body = logs,
                 )
 
         return n_op

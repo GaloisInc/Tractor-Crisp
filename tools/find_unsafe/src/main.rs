@@ -33,7 +33,7 @@ fn is_link_attr_meta(meta: &Meta) -> bool {
 fn is_link_attr_path(path: &Path) -> bool {
     match path.get_ident() {
         Some(i) => {
-            i == "no_mangle" || i == "link_name"
+            i == "no_mangle" || i == "export_name"
         },
         None => false,
     }
@@ -138,14 +138,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_link_attr_link_name() {
-        let attr: Attribute = parse_quote!(#[link_name = "some_name"]);
+    fn test_is_link_attr_export_name() {
+        let attr: Attribute = parse_quote!(#[export_name = "some_name"]);
         assert!(is_link_attr(&attr));
     }
 
     #[test]
     fn test_is_link_attr_unsafe() {
-        let attr: Attribute = parse_quote!(#[unsafe(link_name = "some_name")]);
+        let attr: Attribute = parse_quote!(#[unsafe(export_name = "some_name")]);
         assert!(is_link_attr(&attr));
     }
 

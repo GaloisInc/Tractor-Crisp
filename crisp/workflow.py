@@ -253,8 +253,7 @@ class Workflow:
         cargo_toml_paths = [k for k in code.files.keys()
                 if os.path.basename(k) == 'Cargo.toml']
         assert len(cargo_toml_paths) == 1, (
-                'expected only 1 Cargo.toml in transpiler output, but got %r' %
-                    (cargo_toml_paths,))
+                f'expected only 1 Cargo.toml in transpiler output, but got {cargo_toml_paths}')
         cargo_toml_path, = cargo_toml_paths
         cargo_toml = mvir.node(code.files[cargo_toml_path])
 
@@ -291,7 +290,7 @@ class Workflow:
             mvir,
             old_code = code.node_id(),
             new_code = new_code.node_id(),
-            body = 'patch Cargo.toml (kind = %s)' % kind,
+            body = f'patch Cargo.toml (kind = {kind})',
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
         return n_op

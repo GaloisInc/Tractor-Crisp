@@ -211,6 +211,12 @@ class Workflow:
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
+                if exit_code == 0:
+                    exit_code, logs2 = sb.run([
+                        'find', sb.join(output_path), '-name', '*.*.*', '-delete',
+                    ])
+                    logs = b'\n\n'.join((logs, logs2))
+
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)
             else:

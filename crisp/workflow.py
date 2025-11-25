@@ -2,6 +2,7 @@ import functools
 import inspect
 import os
 import subprocess
+import sys
 from typing import Any
 
 from . import analysis, llm

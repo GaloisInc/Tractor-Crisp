@@ -428,7 +428,7 @@ class Workflow:
             if p.returncode != 0:
                 print('command failed with exit code %d' % p.returncode)
                 print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
-                print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
+                # No need to print stderr; it's included in stdout
                 p.check_returncode()
 
             p2 = subprocess.run(('cargo', 'fmt'), cwd=wd_rust_path,

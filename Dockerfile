@@ -40,6 +40,7 @@ RUN mkdir /tmp/empty_project \
 # `uv` is required for building c2rust-refactor
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
+RUN uv python install
 
 # Install c2rust
 RUN cd /opt \
@@ -47,8 +48,13 @@ RUN cd /opt \
     && cd c2rust \
     && git fetch --depth 1 origin 5d5295e5253db46c3124f264622673b307d2d04e \
     && git checkout FETCH_HEAD
-RUN cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust
-RUN cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust-refactor
+RUN cd /opt/c2rust \
+    && uv venv \
+    && uv pip install -r scripts/requirements.txt
+RUN cd /opt/c2rust \
+    && cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust
+RUN cd /opt/c2rust \
+    && cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust-refactor
 
 # Install hayroll
 #
@@ -75,9 +81,6 @@ RUN echo 'Defaults env_keep+="RUSTUP_HOME"' >>/etc/sudoers
 RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
-
-# CRISP dependencies
-RUN uv python install
 
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp

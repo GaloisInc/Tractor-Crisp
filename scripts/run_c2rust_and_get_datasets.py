@@ -149,14 +149,19 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_synthetic'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
 
-    with open(rust_projects_parent_folder / 'log.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
 
         for c_project_folder in tqdm(c_project_folders):
             rust_project_folder = rust_projects_parent_folder / c_project_folder.parent.name[4:] # [4:] is to remove the leading 0NN_ since Rust project names cannot start with digits
             c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
-            logger.writerow([c_project_folder, c_build_status, rust_project_folder, rust_transpile_status])
+            logger.writerow([
+                c_project_folder.relative_to(test_corpus_repo_path),
+                c_build_status,
+                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_transpile_status
+            ])
 
 
 def run_on_test_corpus_organic(test_corpus_repo_path: Path):
@@ -164,14 +169,19 @@ def run_on_test_corpus_organic(test_corpus_repo_path: Path):
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
 
-    with open(rust_projects_parent_folder / 'log.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
 
         for c_project_folder in tqdm(c_project_folders):
             rust_project_folder = rust_projects_parent_folder / c_project_folder.parent.name
             c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
-            logger.writerow([c_project_folder, c_build_status, rust_project_folder, rust_transpile_status])
+            logger.writerow([
+                c_project_folder.relative_to(test_corpus_repo_path),
+                c_build_status,
+                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_transpile_status
+            ])
 
 
 def run_on_crust_bench(crust_bench_repo_path: Path):
@@ -179,7 +189,7 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-Bench'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
 
-    with open(rust_projects_parent_folder / 'log.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
     
@@ -190,13 +200,15 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
                 else c_project_folder.name
             )
             c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
-            if c_build_status == CBuilder.C_BUILD_STATUS_OK:
-                logger.writerow([c_project_folder, c_build_status, rust_project_folder, rust_transpile_status])
-            else:
-                logger.writerow([c_project_folder, c_build_status, None, rust_transpile_status])
+            logger.writerow([
+                c_project_folder.relative_to(crust_bench_repo_path),
+                c_build_status,
+                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_transpile_status
+            ])
 
 
 if __name__ == "__main__":
-    # run_on_test_corpus_synthetic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
-    # run_on_test_corpus_organic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
+    run_on_test_corpus_synthetic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
+    run_on_test_corpus_organic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
     run_on_crust_bench(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'CRUST-bench')

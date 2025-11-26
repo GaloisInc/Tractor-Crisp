@@ -26,8 +26,8 @@ class CBuilder:
         self.c_build_folder = c_project_folder / 'build'
 
 
-    def build(self):
-        self.clean()
+    def build_project(self):
+        self.clean_build()
         self.c_build_folder.mkdir()
 
         files = [f.stem.lower() for f in self.c_project_folder.glob('*')]
@@ -53,7 +53,7 @@ class CBuilder:
             raise CBuilder.CBuilderError(f"Build failed, 'compile_commands.json' not created in {self.c_build_folder}/")
 
 
-    def clean(self):
+    def clean_build(self):
         run_subprocess_nodisp_check(
             ['make', 'clean'],
             cwd = self.c_project_folder,
@@ -106,7 +106,7 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
     # Build C
     c_builder = CBuilder(c_project_folder)
     try:
-        c_builder.build()
+        c_builder.build_project()
         c_build_status = CBuilder.C_BUILD_STATUS_OK
     except (CBuilder.CBuilderError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         c_build_status = str(e)
@@ -123,7 +123,7 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
         return (c_build_status, rust_transpile_status)
 
     # Clean C build
-    c_builder.clean()
+    c_builder.clean_build()
 
     return (c_build_status, rust_transpile_status)
 

@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 from tqdm import tqdm
 
 
@@ -99,6 +100,18 @@ class RustTranspiler:
         )
 
 
+    def organize_rust_project(self):
+        src = self.rust_project_folder / 'src'
+        if (src / 'src').is_dir():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                for path in src.rglob('*'):
+                    path.rename(tmpdir_path / path.relative_to(src))
+                shutil.rmtree(src)
+                for path in tmpdir_path.rglob('*'):
+                    path.rename(self.rust_project_folder / path.relative_to(tmpdir_path))
+
+
 def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
     c_build_status = ''
     rust_transpile_status = ''
@@ -124,6 +137,9 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
 
     # Clean C build
     c_builder.clean_build()
+
+    # Organize Rust project
+    rust_transpiler.organize_rust_project()
 
     return (c_build_status, rust_transpile_status)
 

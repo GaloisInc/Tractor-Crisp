@@ -232,7 +232,7 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
             logger.writerow([
                 c_project_folder.relative_to(test_corpus_repo_path),
                 c_build_status,
-                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_project_folder.name if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
                 rust_transpile_status
             ])
 
@@ -256,7 +256,7 @@ def run_on_test_corpus_organic(test_corpus_repo_path: Path):
             logger.writerow([
                 c_project_folder.relative_to(test_corpus_repo_path),
                 c_build_status,
-                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_project_folder.name if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
                 rust_transpile_status
             ])
 
@@ -284,7 +284,7 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
             logger.writerow([
                 c_project_folder.relative_to(crust_bench_repo_path),
                 c_build_status,
-                rust_project_folder if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
+                rust_project_folder.name if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
                 rust_transpile_status
             ])
 

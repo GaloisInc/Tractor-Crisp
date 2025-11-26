@@ -1,3 +1,15 @@
+"""
+Run C2Rust on entire C datasets to get entire Rust datasets.
+
+Pre-requisites:
+- Install C2Rust. (https://github.com/immunant/c2rust)
+- Clone the Test-Corpus repo as a sibling to this repo. (https://github.com/DARPA-TRACTOR-Program/Test-Corpus)
+- Clone the CRUST-Bench repo as a sibling to this repo. (https://github.com/anirudhkhatry/CRUST-bench)
+    - Inside it, unzip `datasets/CRUST_bench.zip` to get `datasets/CBench/`.
+- Install cargo.
+- `pip install tqdm`
+"""
+
 import csv
 import os
 from pathlib import Path

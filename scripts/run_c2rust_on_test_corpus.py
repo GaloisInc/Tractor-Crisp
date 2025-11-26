@@ -6,13 +6,6 @@ import subprocess
 from tqdm import tqdm
 
 
-class CBuilderError(Exception):
-    """Exceptions raised in CBuilder."""
-
-class RustTranspilerError(Exception):
-    """Exceptions raised in RustTranspiler."""
-
-
 def run_subprocess_nodisp_check(*args, **kwargs):
     kwargs.setdefault("check", True)
     kwargs.setdefault("stdout", subprocess.DEVNULL)
@@ -22,6 +15,11 @@ def run_subprocess_nodisp_check(*args, **kwargs):
 
 class CBuilder:
     """Class to build C projects."""
+
+    C_BUILD_STATUS_OK = 'OK'
+
+    class CBuilderError(Exception):
+        """Exceptions raised in CBuilder."""
 
     def __init__(self, c_project_folder: Path):
         self.c_project_folder = c_project_folder
@@ -49,10 +47,10 @@ class CBuilder:
             )
 
         else:
-            raise CBuilderError('Invalid C build system')
+            raise CBuilder.CBuilderError('Invalid C build system')
 
         if not (self.c_build_folder / 'compile_commands.json').exists():
-            raise CBuilderError(f"Build failed, 'compile_commands.json' not created in {self.c_build_folder}/")
+            raise CBuilder.CBuilderError(f"Build failed, 'compile_commands.json' not created in {self.c_build_folder}/")
 
 
     def clean(self):
@@ -70,6 +68,11 @@ class CBuilder:
 class RustTranspiler:
     """Class to handle a new Rust project and populate it with C2Rust transpiled code."""
 
+    RUST_TRANSPILE_STATUS_OK = 'OK'
+
+    class RustTranspilerError(Exception):
+        """Exceptions raised in RustTranspiler."""
+
     def __init__(self, rust_project_folder: Path):
         self.rust_project_folder = rust_project_folder
 
@@ -79,7 +82,7 @@ class RustTranspiler:
             shutil.rmtree(self.rust_project_folder)
 
         if self.rust_project_folder.name[0].isdigit():
-            raise RustTranspilerError(f'Rust project name cannot start with digit, but found {self.rust_project_folder.name}')
+            raise RustTranspiler.RustTranspilerError(f'Rust project name cannot start with digit, but found {self.rust_project_folder.name}')
 
         self.rust_project_folder.mkdir()
         run_subprocess_nodisp_check(
@@ -104,8 +107,8 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
     c_builder = CBuilder(c_project_folder)
     try:
         c_builder.build()
-        c_build_status = 'OK'
-    except (CBuilderError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        c_build_status = CBuilder.C_BUILD_STATUS_OK
+    except (CBuilder.CBuilderError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         c_build_status = str(e)
         return (c_build_status, rust_transpile_status)
 
@@ -114,8 +117,8 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
     try:
         rust_transpiler.create_empty_project()
         rust_transpiler.run_c2rust_transpile(compile_commands_json_path = c_builder.c_build_folder / 'compile_commands.json')
-        rust_transpile_status = 'OK'
-    except (RustTranspilerError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        rust_transpile_status = RustTranspiler.RUST_TRANSPILE_STATUS_OK
+    except (RustTranspiler.RustTranspilerError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         rust_transpile_status = str(e)
         return (c_build_status, rust_transpile_status)
 
@@ -171,7 +174,10 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
                 else c_project_folder.name
             )
             c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
-            logger.writerow([c_project_folder, c_build_status, rust_project_folder, rust_transpile_status])
+            if c_build_status == CBuilder.C_BUILD_STATUS_OK:
+                logger.writerow([c_project_folder, c_build_status, rust_project_folder, rust_transpile_status])
+            else:
+                logger.writerow([c_project_folder, c_build_status, None, rust_transpile_status])
 
 
 if __name__ == "__main__":

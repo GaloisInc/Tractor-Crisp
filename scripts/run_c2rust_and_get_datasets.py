@@ -7,7 +7,10 @@ import tempfile
 from tqdm import tqdm
 
 
-def run_subprocess_nodisp_check(*args, **kwargs):
+def run_subprocess_nodisp_check(*args, **kwargs) -> subprocess.CompletedProcess:
+    """
+    Run subprocess.run() with the defaults `check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL`
+    """
     kwargs.setdefault("check", True)
     kwargs.setdefault("stdout", subprocess.DEVNULL)
     kwargs.setdefault("stderr", subprocess.DEVNULL)
@@ -23,11 +26,21 @@ class CBuilder:
         """Exceptions raised in CBuilder."""
 
     def __init__(self, c_project_folder: Path):
+        """
+        Inputs:
+        - c_project_folder: Root folder of a C project.
+
+        Other attributes:
+        - c_build_folder: The build folder of a C project.
+        """
         self.c_project_folder = c_project_folder
         self.c_build_folder = c_project_folder / 'build'
 
 
     def build_project(self):
+        """
+        Build the C project using either CMake or Make as applicable, and produce the compile_commands.json file.
+        """
         self.clean_build()
         self.c_build_folder.mkdir()
 
@@ -55,6 +68,9 @@ class CBuilder:
 
 
     def clean_build(self):
+        """
+        Clean the built C project.
+        """
         run_subprocess_nodisp_check(
             ['make', 'clean'],
             cwd = self.c_project_folder,
@@ -75,10 +91,18 @@ class RustTranspiler:
         """Exceptions raised in RustTranspiler."""
 
     def __init__(self, rust_project_folder: Path):
+        """
+        Inputs:
+        - rust_project_folder: Root folder of a Rust project that will be created.
+        """
         self.rust_project_folder = rust_project_folder
 
 
     def create_empty_project(self):
+        """
+        Create the empty Rust project (overwriting existing).
+        Cargo initialize it, and delete the default main.rs.
+        """
         if self.rust_project_folder.is_dir():
             shutil.rmtree(self.rust_project_folder)
 
@@ -94,6 +118,10 @@ class RustTranspiler:
 
 
     def run_c2rust_transpile(self, compile_commands_json_path: Path):
+        """
+        Transpile C to Rust using the given `compile_commands_json_path`.
+        Place transpiled artifacts in the Rust project.
+        """
         run_subprocess_nodisp_check(
             ['c2rust', 'transpile', '-o', self.rust_project_folder, '--overwrite-existing', compile_commands_json_path],
             timeout = 60
@@ -101,6 +129,23 @@ class RustTranspiler:
 
 
     def organize_rust_project(self):
+        """
+        After transpilation, some Rust projects contain src/src/, i.e.:
+        ```
+        project/
+        |-- src/
+            |-- src/
+                |-- <src_files>
+            |-- <other_files>
+        ```
+        Un-nest this to get:
+        ```
+        project/
+        |-- src/
+            |-- <src_files>
+        |-- <other_files>
+        ```
+        """
         src = self.rust_project_folder / 'src'
         if (src / 'src').is_dir():
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -113,6 +158,18 @@ class RustTranspiler:
 
 
 def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
+    """
+    Run the complete workflow for C2Rust transpilation on an individual C project -> Rust project.
+
+    Inputs:
+    - c_project_folder: Path to the C project which will be transpiled.
+    - rust_project_folder: Path to the Rust project which is created from transpilation.
+        - *Not created if C building fails.*
+
+    Returns:
+    - C build status flag, containing either 'OK' or some error message.
+    - Rust transpile status flag, containing either 'OK' or some error message.
+    """
     c_build_status = ''
     rust_transpile_status = ''
 
@@ -145,6 +202,10 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
 
 
 def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
+    """
+    Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_synthetic' in the test corpus repo.
+    Create a results.csv file documenting successes and failures.
+    """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_synthetic').iterdir() if f.is_dir()])
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_synthetic'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
@@ -165,6 +226,10 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
 
 
 def run_on_test_corpus_organic(test_corpus_repo_path: Path):
+    """
+    Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_organic' in the test corpus repo.
+    Create a results.csv file documenting successes and failures.
+    """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_organic').iterdir() if f.is_dir()])
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
@@ -185,6 +250,10 @@ def run_on_test_corpus_organic(test_corpus_repo_path: Path):
 
 
 def run_on_crust_bench(crust_bench_repo_path: Path):
+    """
+    Run the complete workflow for C2Rust transpilation on all projects inside 'datasets/CBench' in the CRUST-Bench repo.
+    Create a results.csv file documenting successes and failures.
+    """
     c_project_folders = sorted([f for f in (crust_bench_repo_path / 'datasets/CBench').iterdir() if f.is_dir()])
     rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-Bench'
     rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)

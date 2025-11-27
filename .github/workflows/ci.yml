@@ -35,3 +35,39 @@ jobs:
       - run: |
           uv tool install .
           which crisp
+  
+  build-tools:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        crate:
+          - find_unsafe
+          - split_ffi_entry_points
+
+    env:
+      RUSTFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings"
+
+    defaults:
+      run:
+        working-directory: tools/${{ matrix.crate }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/${{ matrix.crate }}
+
+      - run: cargo check --release
+
+      - run: cargo build --release
+
+      - run: cargo test --release --all-features
+
+      - run: cargo doc --all-features --document-private-items --no-deps

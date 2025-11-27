@@ -1,3 +1,5 @@
+#!/usr/bin/env -S uv run
+
 import argparse
 import json
 import os

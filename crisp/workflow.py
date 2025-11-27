@@ -119,9 +119,15 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode, hayroll: bool = False) -> TreeNode:
+    def transpile(
+        self,
+        c_code: TreeNode,
+        hayroll: bool = False,
+        reorganize_definitions: bool = False,
+    ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
+        n_op_transpile = self.transpile_cc_op(c_code, compile_commands,
+                hayroll = hayroll, reorganize_definitions = reorganize_definitions)
         if n_op_transpile.rust_code is None:
             print('error: transpile failed', file=sys.stderr)
             return None
@@ -144,6 +150,7 @@ class Workflow:
         n_c_code: TreeNode,
         n_cc: FileNode,
         hayroll: bool = False,
+        reorganize_definitions: bool = False,
     ) -> TranspileOpNode:
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
@@ -180,12 +187,17 @@ class Workflow:
                         '--output-dir', sb.join(output_path),
                         '--emit-build-files',
                         ]
+                if reorganize_definitions:
+                    c2rust_cmd.append('--reorganize-definitions')
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
             else:
+                assert not reorganize_definitions, \
+                        'reorganize_definitions is currently unsupported with hayroll'
+
                 # Hacks to get the C path relative to `n_tree`.  This handles
                 # tricks like `base_dir = ".."` used by the testing scripts.
                 # TODO: clean up config path handling and get rid of this

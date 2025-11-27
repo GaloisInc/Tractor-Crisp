@@ -43,6 +43,18 @@ jobs:
             --push \
             .
 
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync
+
+      - name: Checkout Test-Corpus
+        uses: actions/checkout@v4
+        with:
+          repository: DARPA-TRACTOR-Program/Test-Corpus
+          path: Test-Corpus
+
+      - run: LLM_SAFETY_TRIES=0 ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+
   build-crisp:
     runs-on: ubuntu-latest
     steps:

@@ -302,7 +302,8 @@ def do_main(args, cfg):
         return None
     w.accept(n_code, ('main', 'split_ffi'))
 
-    for safety_try in range(3):
+    llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
+    for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:
             break

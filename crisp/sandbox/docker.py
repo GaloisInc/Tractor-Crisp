@@ -39,6 +39,7 @@ class WorkContainer:
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
+        self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
     def checkout(self, n_tree):

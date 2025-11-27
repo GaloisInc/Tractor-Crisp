@@ -83,7 +83,7 @@ def run_crisp(cli_args, *args, **kwargs):
     else:
         env['PYTHONPATH'] += ':' + crisp_dir
 
-    python3_bin = os.path.join(crisp_dir, 'venv', 'bin', 'python3')
+    python3_bin = os.path.join(crisp_dir, '.venv', 'bin', 'python3')
     cmd = (python3_bin, '-m', 'crisp') + args
 
     return subprocess.run(cmd, **kwargs)

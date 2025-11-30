@@ -52,13 +52,15 @@ RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-# Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
     && git clone https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
-    && git checkout fed1474939fe0dd161ad30413d5225252a8fe471 \
-    && ./prerequisites.bash --no-sudo --llvm-version 19 \
+    && git checkout fed1474939fe0dd161ad30413d5225252a8fe471
+# Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
+RUN cd /opt/hayroll/Hayroll \
+    && ./prerequisites.bash --no-sudo --llvm-version 19
+RUN cd /opt/hayroll/Hayroll \
     && ./build.bash
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 

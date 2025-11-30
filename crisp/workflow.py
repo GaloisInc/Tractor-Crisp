@@ -119,9 +119,16 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode, hayroll: bool = False) -> TreeNode:
+    def transpile(
+        self, c_code: TreeNode, src_loc_annotations: bool = True, hayroll: bool = False
+    ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
+        n_op_transpile = self.transpile_cc_op(
+            c_code,
+            compile_commands,
+            src_loc_annotations=src_loc_annotations,
+            hayroll=hayroll,
+        )
         if n_op_transpile.rust_code is None:
             print('error: transpile failed', file=sys.stderr)
             return None
@@ -146,7 +153,8 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
-        hayroll: bool = False,
+        src_loc_annotations: bool,
+        hayroll: bool,
     ) -> TranspileOpNode:
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
@@ -187,6 +195,11 @@ class Workflow:
                     "--c2rust-dir",
                     "/opt/c2rust/",
                 ]
+                if src_loc_annotations:
+                    c2rust_cmd += [
+                        "--reorganize-definitions",
+                        "--disable-refactoring",
+                    ]
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
@@ -206,6 +219,7 @@ class Workflow:
                         sb.join(output_path),
                         '--project-dir', os.path.join(c_path_rel, 'src'),
                         ]
+                # hayroll already has c2rust-transpile emit src loc annotations.
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,

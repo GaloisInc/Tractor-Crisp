@@ -53,12 +53,13 @@ RUN cd /opt/c2rust \
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
+# Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
     && git clone https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
     && git checkout a35b1028c16d5784f45cdbcedff81960d8be8899 \
-    && ./prerequisites.bash --no-sudo --llvm-version 18 \
+    && ./prerequisites.bash --no-sudo --llvm-version 19 \
     && ./build.bash
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 

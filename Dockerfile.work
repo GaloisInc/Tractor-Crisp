@@ -67,5 +67,6 @@ RUN mkdir -p /opt/hayroll \
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
-COPY tools/split_ffi_entry_points /opt/crisp-tools/split_ffi_entry_points
+COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
+COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
 RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points

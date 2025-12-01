@@ -44,9 +44,11 @@ RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
 RUN cd /opt/c2rust \
-    && cargo install --locked --path c2rust
+    && cargo install --locked --path c2rust \
+    && rm -rf target/
 RUN cd /opt/c2rust \
-    && cargo +nightly-2022-08-08 install --locked --path c2rust-refactor
+    && cargo +nightly-2022-08-08 install --locked --path c2rust-refactor \
+    && rm -rf target/
 
 # Install hayroll
 #
@@ -68,7 +70,9 @@ RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 # Install CRISP tool binaries
 COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
 COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
-RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+RUN cd /opt/crisp-tools/split_ffi_entry_points \
+    && cargo install --locked --path . \
+    && rm -rf target/
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -101,4 +105,6 @@ RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
 
 COPY tools/find_unsafe/Cargo.toml tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
-RUN cargo install --locked --path ./tools/find_unsafe
+RUN cd ./tools/find_unsafe \
+    && cargo install --locked --path . \
+    && rm -rf target/

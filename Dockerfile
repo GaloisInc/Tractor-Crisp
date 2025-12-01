@@ -70,7 +70,13 @@ RUN cd /opt/hayroll/hayroll \
 RUN cd /opt/hayroll/hayroll \
     && ./build.bash --release \
     && rm -rf $CARGO_TARGET_DIR \
-    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git \
+    && ln -f build/hayroll . \
+    && ln -f build/release/reaper . \
+    && ln -f build/release/merger . \
+    && ln -f build/release/inliner . \
+    && ln -f build/release/cleaner . \
+    && rm -rf build/
 RUN ln -s /opt/hayroll/hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries

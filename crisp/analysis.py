@@ -223,21 +223,18 @@ COMPILE_COMMANDS_PATH = "compile_commands.json"
 
 @analysis
 def _cc_cmake_impl(
-    cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode
+    cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode, cmds: list[list[str]]
 ) -> CompileCommandsOpNode:
-    src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-    build_dir = sb.join("build")
-    setup_cmd = ["cmake", "-B", build_dir, src_dir]
-    build_cmd = ["bear", "--", "cmake", "--build", build_dir]
-
     sb.checkout(c_code)
 
-    exit_code, logs = sb.run(setup_cmd)
-    if exit_code == 0:
-        new_exit_code, new_logs = sb.run(build_cmd)
-        exit_code = new_exit_code
-        logs += new_logs
-    
+    exit_code = 0
+    logs = b''
+    for cmd in cmds:
+        if exit_code != 0:
+            break
+        exit_code, new_logs = sb.run(cmd)
+        logs = b'\n\n'.join((logs, new_logs))
+
     if exit_code == 0:
         n_cc = sb.commit_file(COMPILE_COMMANDS_PATH)
     else:
@@ -248,7 +245,7 @@ def _cc_cmake_impl(
         mvir,
         body=logs,
         c_code=c_code.node_id(),
-        cmds=[setup_cmd, build_cmd],
+        cmds=cmds,
         exit_code=exit_code,
         compile_commands=n_cc_id,
     )
@@ -256,7 +253,13 @@ def _cc_cmake_impl(
 
 def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
     with run_sandbox(cfg, mvir) as sb:
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code)
+        src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
+        build_dir = sb.join("build")
+        cmds = [
+            ["cmake", "-B", build_dir, src_dir],
+            ["bear", "--", "cmake", "--build", build_dir],
+        ]
+        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:

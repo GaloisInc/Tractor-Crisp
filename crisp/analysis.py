@@ -256,10 +256,11 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
     with run_sandbox(cfg, mvir) as sb:
         src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
         build_dir = sb.join("build")
-        cmds = [
-            ["cmake", "-B", build_dir, src_dir],
-            ["bear", "--", "cmake", "--build", build_dir],
-        ]
+        config_cmd = ["cmake", "-B", build_dir, src_dir]
+        build_cmd = ["bear", "--", "cmake", "--build", build_dir, "--"]
+        if cfg.transpile.single_target is not None:
+            build_cmd.append(cfg.transpile.single_target)
+        cmds = [config_cmd, build_cmd]
         n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

@@ -102,6 +102,7 @@ python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 [transpile]
 cmake_src_dir = "test_case"
 output_dir = "translated_rust"
+single_target = "{target_filename}"
 '''
 
 BIN_CONFIG_STR = r'''
@@ -121,6 +122,7 @@ python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 cmake_src_dir = "test_case"
 output_dir = "translated_rust"
 bin_main = "main"
+single_target = "{target_filename}"
 '''
 
 def main():
@@ -145,6 +147,7 @@ def main():
             base_dir = os.path.relpath(base_dir, args.project_dir),
             example_dir = example_dir_rel,
             example_name = target_info['name'],
+            target_filename = target_info['nameOnDisk'],
             )
     with open(os.path.join(args.project_dir, 'crisp.toml'), 'w') as f:
         f.write(cfg_str)

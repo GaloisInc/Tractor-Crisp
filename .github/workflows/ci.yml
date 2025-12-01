@@ -33,7 +33,8 @@ jobs:
           repository: DARPA-TRACTOR-Program/Test-Corpus
           path: Test-Corpus
 
-      - run: LLM_SAFETY_TRIES=0 ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+      - name: Test B01_organic/colourblind_lib
+        run: LLM_SAFETY_TRIES=0 ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
 
   build-crisp:
     runs-on: ubuntu-latest

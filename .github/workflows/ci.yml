@@ -36,6 +36,9 @@ jobs:
       - name: Test B01_organic/colourblind_lib
         run: LLM_SAFETY_TRIES=0 ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
 
+      - name: Test B01_synthetic/001_helloworld_with_header
+        run: LLM_SAFETY_TRIES=0 ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
+
   build-crisp:
     runs-on: ubuntu-latest
     steps:

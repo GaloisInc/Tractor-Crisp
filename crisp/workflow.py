@@ -120,13 +120,21 @@ class Workflow:
 
     @step
     def transpile(
-        self, c_code: TreeNode, src_loc_annotations: bool = True, hayroll: bool = False
+        self,
+        c_code: TreeNode,
+        src_loc_annotations: bool = True,
+        refactor_transforms: tuple[str, ...] = (
+            "rename_unnamed",
+            "reorganize_definitions",
+        ),
+        hayroll: bool = False,
     ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
         n_op_transpile = self.transpile_cc_op(
             c_code,
             compile_commands,
             src_loc_annotations=src_loc_annotations,
+            refactor_transforms=refactor_transforms,
             hayroll=hayroll,
         )
         if n_op_transpile.rust_code is None:
@@ -154,8 +162,13 @@ class Workflow:
         n_c_code: TreeNode,
         n_cc: FileNode,
         src_loc_annotations: bool,
+        refactor_transforms: tuple[str, ...],
         hayroll: bool,
     ) -> TranspileOpNode:
+        if "reorganize_definitions" in refactor_transforms:
+            assert src_loc_annotations, (
+                "reorganize_definitions requires src loc annotations"
+            )
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
             import json, shlex
@@ -205,6 +218,28 @@ class Workflow:
                         '--binary', cfg.transpile.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
+
+                for transform in refactor_transforms:
+                    if exit_code == 0:
+                        c2rust_refactor_cmd = [
+                            "c2rust",
+                            "refactor",
+                            "--cargo",
+                            "--rewrite-mode",
+                            "inplace",
+                            transform,
+                        ]
+                        new_exit_code, new_logs = sb.run(
+                            c2rust_refactor_cmd, cwd=output_path
+                        )
+                        exit_code = new_exit_code
+                        logs += new_logs
+
+                if exit_code == 0:
+                    new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
+                    exit_code = new_exit_code
+                    logs += new_logs
+
             else:
                 c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 

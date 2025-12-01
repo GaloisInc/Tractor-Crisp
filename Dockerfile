@@ -19,15 +19,10 @@ RUN rustup toolchain add \
     -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2022-08-08
 
-# Install the default toolchain for c2rust transpiled projects
+# Install the default toolchain for c2rust and hayroll transpiled projects
 RUN rustup toolchain add \
     -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
     nightly-2023-04-15
-
-# Install the default toolchain for hayroll transpiled projects
-RUN rustup toolchain add \
-    -c rustfmt,rustc-dev,rust-src,miri,rust-analyzer \
-    nightly-2023-03-28
 
 # Update crates.io index for future use.  There's no dedicated command to force
 # an update, but adding a dependency will do it.
@@ -66,7 +61,7 @@ RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
     && git clone https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
-    && git checkout a64517c0a62818f5f4f5f0dee13ed421426da3bf \
+    && git checkout b714cdaa7a5a79d620842708dd87588d9086f1b5 \
     && ./prerequisites.bash --no-sudo --llvm-version 18 \
     && ./build.bash
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll

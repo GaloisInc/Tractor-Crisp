@@ -78,6 +78,10 @@ class TranspileConfig(ConfigBase):
     # `main` entry point, if the project produces a binary.  For example, if
     # `main` is defined in `driver.c`, this should be set to `driver`.
     bin_main: Optional[str] = None
+    # If set, only this target will be built (via `make foo`) when generating
+    # `compile_commands.json`.  This means only files used in this target will
+    # be included in the generated Rust.
+    single_target: Optional[str] = None
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

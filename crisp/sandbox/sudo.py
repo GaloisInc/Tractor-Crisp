@@ -105,13 +105,13 @@ class SudoSandbox:
     def join(self, *args, **kwargs):
         return os.path.join(self.dir_path, *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False) -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
 
         cmd = 'cd {dir_path} && {cmd}'.format(
-            dir_path=shlex.quote(self.dir_path),
+            dir_path=shlex.quote(self.join(cwd)),
             cmd=shlex.join(cmd),
         )
         cmd = ('sh', '-c', cmd)

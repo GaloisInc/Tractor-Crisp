@@ -49,9 +49,9 @@ RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
 RUN cd /opt/c2rust \
-    && cargo install --locked --path /opt/c2rust/c2rust
+    && cargo install --locked --path c2rust
 RUN cd /opt/c2rust \
-    && cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust-refactor
+    && cargo +nightly-2022-08-08 install --locked --path c2rust-refactor
 
 # Install hayroll
 #

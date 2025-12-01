@@ -87,7 +87,7 @@ class SudoSandbox:
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError('expected REGTYPE or DIRTYPE, but got %r' % (t,))
+                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))

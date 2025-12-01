@@ -63,7 +63,8 @@ RUN mkdir -p /opt/hayroll \
     && git checkout FETCH_HEAD
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll/Hayroll \
-    && ./prerequisites.bash --no-sudo --llvm-version 19
+    && ./prerequisites.bash --no-sudo --llvm-version 19 \
+    && rm -rf ../z3/build/src/
 RUN cd /opt/hayroll/Hayroll \
     && ./build.bash --release \
     && ln -f build/hayroll . \

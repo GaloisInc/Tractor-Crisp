@@ -83,7 +83,7 @@ class WorkContainer:
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError('expected REGTYPE or DIRTYPE, but got %r' % (t,))
+                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path

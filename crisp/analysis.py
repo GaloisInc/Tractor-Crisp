@@ -219,14 +219,26 @@ def inline_errors(
 
 # We always check out the compile_commands.json at a consistent path, in case
 # it contains relative paths.
-COMPILE_COMMANDS_PATH = 'build/compile_commands.json'
+COMPILE_COMMANDS_PATH = "compile_commands.json"
 
 @analysis
-def _cc_cmake_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
-        c_code: TreeNode, cmd: list[str]) -> CompileCommandsOpNode:
-    sb.checkout(c_code)
-    exit_code, logs = sb.run(cmd)
+def _cc_cmake_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode
+) -> CompileCommandsOpNode:
+    src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
+    build_dir = sb.join("build")
+    setup_cmd = ["cmake", "-B", build_dir, src_dir]
+    build_cmd = ["bear", "--", "cmake", "--build", build_dir]
+    cmd = [*setup_cmd, "&&", *build_cmd]
 
+    sb.checkout(c_code)
+
+    exit_code, logs = sb.run(setup_cmd)
+    if exit_code == 0:
+        new_exit_code, new_logs = sb.run(build_cmd)
+        exit_code = new_exit_code
+        logs += new_logs
+    
     if exit_code == 0:
         n_cc = sb.commit_file(COMPILE_COMMANDS_PATH)
     else:
@@ -235,20 +247,17 @@ def _cc_cmake_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
 
     n_op = CompileCommandsOpNode.new(
         mvir,
-        body = logs,
-        c_code = c_code.node_id(),
-        cmd = cmd,
-        exit_code = exit_code,
-        compile_commands = n_cc_id,
-        )
+        body=logs,
+        c_code=c_code.node_id(),
+        cmd=cmd,
+        exit_code=exit_code,
+        compile_commands=n_cc_id,
+    )
     return n_op
 
 def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
     with run_sandbox(cfg, mvir) as sb:
-        src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = sb.join(os.path.dirname(COMPILE_COMMANDS_PATH))
-        cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmd)
+        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:

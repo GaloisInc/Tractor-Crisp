@@ -69,7 +69,14 @@ RUN mkdir -p /opt/hayroll \
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll/Hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19 \
-    && rm -rf ../z3/build/src/
+    && rm -rf ../z3/build/src/ \
+    && mv ../Maki/build/lib/libcpp2c.so . \
+    && mv ../Maki/build/bin/cpp2c . \
+    && rm -rf ../Maki/build/ \
+    && mkdir -p ../Maki/build/lib \
+    && mkdir -p ../Maki/build/bin \
+    && mv libcpp2c.so ../Maki/build/lib/ \
+    && mv cpp2c ../Maki/build/bin/
 RUN cd /opt/hayroll/Hayroll \
     && ./build.bash --release \
     && ln -f build/hayroll . \

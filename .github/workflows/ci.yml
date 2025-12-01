@@ -7,21 +7,22 @@ on:
   pull_request:
 
 jobs:
-  docker-build-crisp:
+  docker-build:
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            image: tractor-crisp
+          - dockerfile: Dockerfile.work
+            image: tractor-crisp-user
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build tractor-crisp
-        run: docker build . -t tractor-crisp
-
-  docker-build-crisp-user:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build tractor-crisp-user
-        run: docker build . -f Dockerfile.work -t tractor-crisp-user
+      - name: Docker Build
+        run: docker build . -f ${{ matrix.dockerfile }} -t ${{ matrix.image }}
 
   build-crisp:
     runs-on: ubuntu-latest

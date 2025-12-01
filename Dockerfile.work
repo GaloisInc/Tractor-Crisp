@@ -41,7 +41,7 @@ RUN uv python install
 
 # Install c2rust
 RUN cd /opt \
-    && git clone https://github.com/immunant/c2rust --depth 1 \
+    && git clone --depth 1 https://github.com/immunant/c2rust \
     && cd c2rust \
     && git fetch --depth 1 origin 11e9938a63096ec636b33c5bbeaed2fd6f3db23c \
     && git checkout FETCH_HEAD
@@ -62,9 +62,10 @@ RUN cd /opt/c2rust \
 # right version.
 RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
-    && git clone https://github.com/UW-HARVEST/Hayroll \
+    && git clone --depth 1 https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
-    && git checkout a35b1028c16d5784f45cdbcedff81960d8be8899
+    && git fetch --depth 1 origin a35b1028c16d5784f45cdbcedff81960d8be8899 \
+    && git checkout FETCH_HEAD
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll/Hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19

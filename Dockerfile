@@ -66,7 +66,8 @@ RUN cd /opt/c2rust \
 COPY deps/hayroll /opt/hayroll/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll/hayroll \
-    && ./prerequisites.bash --no-sudo --llvm-version 19
+    && ./prerequisites.bash --no-sudo --llvm-version 19 \
+    && rm -rf ../z3/build/src/
 RUN cd /opt/hayroll/hayroll \
     && ./build.bash --release \
     && rm -rf $CARGO_TARGET_DIR \

@@ -228,12 +228,13 @@ def _cc_cmake_impl(
     sb.checkout(c_code)
 
     exit_code = 0
-    logs = b''
+    logs = []
     for cmd in cmds:
         if exit_code != 0:
             break
         exit_code, new_logs = sb.run(cmd)
-        logs = b'\n\n'.join((logs, new_logs))
+        logs.append(new_logs)
+    logs = b"\n\n".join(logs)
 
     if exit_code == 0:
         n_cc = sb.commit_file(COMPILE_COMMANDS_PATH)

@@ -81,7 +81,7 @@ class TranspileConfig(ConfigBase):
     # If set, only this target will be built (via `make foo`) when generating
     # `compile_commands.json`.  This means only files used in this target will
     # be included in the generated Rust.
-    single_target: Optional[str] = None
+    single_target: str | None = None
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

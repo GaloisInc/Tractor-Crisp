@@ -229,7 +229,6 @@ def _cc_cmake_impl(
     build_dir = sb.join("build")
     setup_cmd = ["cmake", "-B", build_dir, src_dir]
     build_cmd = ["bear", "--", "cmake", "--build", build_dir]
-    cmd = [*setup_cmd, "&&", *build_cmd]
 
     sb.checkout(c_code)
 
@@ -249,7 +248,7 @@ def _cc_cmake_impl(
         mvir,
         body=logs,
         c_code=c_code.node_id(),
-        cmd=cmd,
+        cmds=[setup_cmd, build_cmd],
         exit_code=exit_code,
         compile_commands=n_cc_id,
     )

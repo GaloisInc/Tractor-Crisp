@@ -9,6 +9,8 @@ import toml
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('project_dir')
+    ap.add_argument('--main-compilation-unit', default='main',
+        help='name of the compilation unit that defines `main`')
     return ap.parse_args()
 
 def get_target_info(project_dir):
@@ -89,7 +91,14 @@ def run_crisp(cli_args, *args, **kwargs):
 LIB_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
-src_globs = "translated_rust/src/*.rs"
+# Hack: some tests have nested directories; just add enough separate glob
+# patterns to cover them all.
+src_globs = [
+    "translated_rust/src/*.rs",
+    "translated_rust/src/*/*.rs",
+    "translated_rust/src/*/*/*.rs",
+    "translated_rust/src/*/*/*/*.rs",
+]
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
@@ -102,13 +111,18 @@ python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 [transpile]
 cmake_src_dir = "test_case"
 output_dir = "translated_rust"
-single_target = "{target_filename}"
+single_target = "{example_name}"
 '''
 
 BIN_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
-src_globs = "translated_rust/src/*.rs"
+src_globs = [
+    "translated_rust/src/*.rs",
+    "translated_rust/src/*/*.rs",
+    "translated_rust/src/*/*/*.rs",
+    "translated_rust/src/*/*/*/*.rs",
+]
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
@@ -121,8 +135,8 @@ python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 [transpile]
 cmake_src_dir = "test_case"
 output_dir = "translated_rust"
-bin_main = "main"
-single_target = "{target_filename}"
+bin_main = "{main_compilation_unit}"
+single_target = "{example_name}"
 '''
 
 def main():
@@ -147,7 +161,7 @@ def main():
             base_dir = os.path.relpath(base_dir, args.project_dir),
             example_dir = example_dir_rel,
             example_name = target_info['name'],
-            target_filename = target_info['nameOnDisk'],
+            main_compilation_unit = args.main_compilation_unit,
             )
     with open(os.path.join(args.project_dir, 'crisp.toml'), 'w') as f:
         f.write(cfg_str)

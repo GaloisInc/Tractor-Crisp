@@ -133,6 +133,9 @@ class Workflow:
         # needed.
         code = self.patch_cargo_toml(code)
 
+        # Hack: add -lcrypto, which is required for one test case
+        code = self.patch_build_rs(code, libs = ['crypto'])
+
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
             return None
@@ -295,6 +298,42 @@ class Workflow:
             body = f'patch Cargo.toml (kind = {kind})',
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
+        return n_op
+
+    @step
+    def patch_build_rs(self, code: TreeNode, libs: list[str]) -> TreeNode:
+        n_op = self.patch_build_rs_op(code, libs)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_build_rs_op(self, code: TreeNode, libs: list[str]) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        build_rs_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'build.rs']
+        assert len(build_rs_paths) == 1, (
+                f'expected only 1 build.rs in transpiler output, but got {build_rs_paths}')
+        build_rs_path, = build_rs_paths
+        build_rs = mvir.node(code.files[build_rs_path])
+
+        new_build_rs_lines = ['fn main() {']
+        for lib in libs:
+            new_build_rs_lines.append(f'    println!("cargo:rustc-link-lib={lib}");')
+        new_build_rs_lines.append('}\n')
+        new_build_rs_src = '\n'.join(new_build_rs_lines)
+
+        new_files = code.files.copy()
+        new_files[build_rs_path] = FileNode.new(mvir, new_build_rs_src).node_id()
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch build.rs (libs = {libs})',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_build_rs')
         return n_op
 
     @step

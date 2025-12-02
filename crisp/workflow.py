@@ -122,11 +122,8 @@ class Workflow:
     def transpile(
         self,
         c_code: TreeNode,
-        src_loc_annotations: bool = True,
-        refactor_transforms: tuple[str, ...] = (
-            "rename_unnamed",
-            "reorganize_definitions",
-        ),
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
     ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
@@ -161,9 +158,9 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
-        src_loc_annotations: bool,
-        refactor_transforms: tuple[str, ...],
-        hayroll: bool,
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
+        hayroll: bool = False,
     ) -> TranspileOpNode:
         if "reorganize_definitions" in refactor_transforms:
             assert src_loc_annotations, (

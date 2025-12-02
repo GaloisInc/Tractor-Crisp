@@ -170,6 +170,11 @@ class Workflow:
                 "reorganize_definitions requires src loc annotations"
             )
         if hayroll:
+            assert len(refactor_transforms) == 0, (
+                "refactor_transforms are not supported with hayroll yet"
+            )
+
+        if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
             import json, shlex
             j = n_cc.body_json()

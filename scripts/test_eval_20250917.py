@@ -91,7 +91,14 @@ def run_crisp(cli_args, *args, **kwargs):
 LIB_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
-src_globs = "translated_rust/src/*.rs"
+# Hack: some tests have nested directories; just add enough separate glob
+# patterns to cover them all.
+src_globs = [
+    "translated_rust/src/*.rs",
+    "translated_rust/src/*/*.rs",
+    "translated_rust/src/*/*/*.rs",
+    "translated_rust/src/*/*/*/*.rs",
+]
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
@@ -110,7 +117,12 @@ single_target = "{example_name}"
 BIN_CONFIG_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
-src_globs = "translated_rust/src/*.rs"
+src_globs = [
+    "translated_rust/src/*.rs",
+    "translated_rust/src/*/*.rs",
+    "translated_rust/src/*/*/*.rs",
+    "translated_rust/src/*/*/*/*.rs",
+]
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions

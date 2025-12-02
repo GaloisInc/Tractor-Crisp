@@ -383,16 +383,11 @@ def do_main(args, cfg):
             n_c_code,
             src_loc_annotations=True,
             refactor_transforms=("rename_unnamed", "reorganize_definitions"),
-            hayroll=False,
         )
     if n_code is None:
-        n_code = w.transpile(
-            n_c_code, src_loc_annotations=True, refactor_transforms=(), hayroll=True
-        )
+        n_code = w.transpile(n_c_code, src_loc_annotations=True, hayroll=True)
     if n_code is None:
-        n_code = w.transpile(
-            n_c_code, src_loc_annotations=False, refactor_transforms=(), hayroll=False
-        )
+        n_code = w.transpile(n_c_code)
     if n_code is None:
         return
     w.accept(n_code, ('main', 'transpile'))

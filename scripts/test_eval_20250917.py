@@ -9,6 +9,8 @@ import toml
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('project_dir')
+    ap.add_argument('--main-compilation-unit', default='main',
+        help='name of the compilation unit that defines `main`')
     return ap.parse_args()
 
 def get_target_info(project_dir):
@@ -121,7 +123,7 @@ python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
 [transpile]
 cmake_src_dir = "test_case"
 output_dir = "translated_rust"
-bin_main = "main"
+bin_main = "{main_compilation_unit}"
 single_target = "{target_filename}"
 '''
 
@@ -148,6 +150,7 @@ def main():
             example_dir = example_dir_rel,
             example_name = target_info['name'],
             target_filename = target_info['nameOnDisk'],
+            main_compilation_unit = args.main_compilation_unit,
             )
     with open(os.path.join(args.project_dir, 'crisp.toml'), 'w') as f:
         f.write(cfg_str)

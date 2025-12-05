@@ -66,9 +66,13 @@ building and testing of the project (to protect against erroneous LLM outputs).
 
 ## Setting up the Python virtual environment
 
+CRISP is built and run using the [`uv` tool](https://docs.astral.sh/uv/)
+
 ```sh
-virtualenv venv
-venv/bin/pip3 install -r requirements.txt
+# Install uv, if needed:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+uv sync
 ```
 
 ## Building the sandbox container
@@ -87,7 +91,7 @@ Set up a `crisp` alias in your shell:
 
 ```
 export CRISP_DIR=/path/to/tractor-crisp
-alias crisp='PYTHONPATH=$CRISP_DIR $CRISP_DIR/venv/python3 -m crisp'
+alias crisp='uv run --project $CRISP_DIR crisp'
 ```
 
 Replace `/path/to/tractor-crisp` with the path to your `tractor-crisp`
@@ -103,12 +107,18 @@ above.
 
 The following features have been implemented in the CRISP transpiler loop:
 
-* Automatic translation of C to unsafe Rust using c2rust-transpile
+* Automatic translation of C to unsafe Rust using either c2rust-transpile or
+  [Hayroll](https://github.com/UW-HARVEST/Hayroll).  CRISP tries Hayroll first
+  and falls back to ordinary c2rust-transpile only if it fails.
 * LLM-based safety refactoring.  CRISP uses an LLM to convert unsafe Rust to
   safe Rust.  CRISP checks that the LLM-generated code builds and passes the
   tests before accepting it.
-* LLM-based repair.  When code fails to build or doesn't pass tests, CRISP
-  invokes an LLM to attempt to fix the problem.  Output is built and tested
-  again before accepting it.
+* LLM-based build and test repair.  When code fails to build or doesn't pass
+  tests, CRISP invokes an LLM to attempt to fix the problem.  Output is built
+  and tested again before accepting it.
 * Automatic detection of unsafe code.  The CRISP transpiler loop stops once
   there is no unsafe code left to make safe.
+* FFI function splitting.  To preserve ABI compatibility when translating
+  libraries, some function signatures must remain unsafe.  To minimize the
+  amount of unsafe code, CRISP splits each such function into a small unsafe
+  wrapper and a separate implementation function that can then be made safe.

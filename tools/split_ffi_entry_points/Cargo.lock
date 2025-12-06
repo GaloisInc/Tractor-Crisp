@@ -1620,6 +1620,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "ra_ap_base_db",
  "ra_ap_hir",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",

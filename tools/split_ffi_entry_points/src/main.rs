@@ -1,8 +1,9 @@
-use std::env;
 use std::fs;
 use std::iter;
 use std::mem;
+use std::path::PathBuf;
 use std::str::FromStr;
+use clap::Parser;
 use proc_macro2::{TokenStream, Span};
 use quote::ToTokens;
 use ra_ap_base_db::RootQueryDb;
@@ -323,10 +324,16 @@ impl ToTokens for ParsedMetaExportName {
     }
 }
 
+#[derive(Parser)]
+/// Split FFI entrypoints out of a freshly-transpiled Rust codebase.
+struct Args {
+    /// Directory of Rust project to modify. `Cargo.toml` should reside inside this directory.
+    cargo_dir_path: PathBuf,
+}
 
 fn main() {
-    let cargo_dir_path = env::args().nth(1).unwrap();
-    let cargo_dir_path = fs::canonicalize(&cargo_dir_path).unwrap();
+    let args = Args::parse();
+    let cargo_dir_path = fs::canonicalize(&args.cargo_dir_path).unwrap();
     let cargo_dir_path = cargo_dir_path.as_ref();
 
     let cargo_config = CargoConfig::default();

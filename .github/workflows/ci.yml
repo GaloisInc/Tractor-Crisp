@@ -7,21 +7,41 @@ on:
   pull_request:
 
 jobs:
-  docker-build-crisp:
+  docker-build:
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            image: tractor-crisp
+          - dockerfile: Dockerfile.work
+            image: tractor-crisp-user
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build tractor-crisp
-        run: docker build . -t tractor-crisp
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-  docker-build-crisp-user:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build tractor-crisp-user
-        run: docker build . -f Dockerfile.work -t tractor-crisp-user
+      - name: Docker Build
+        run: |
+          OWNER=${{ github.repository_owner }}
+          IMAGE_NAME=ghcr.io/${OWNER,,}/${{ matrix.image }}
+          DOCKERFILE=${{ matrix.dockerfile }}
+
+          docker buildx build \
+            --cache-from type=registry,ref=${IMAGE_NAME}:cache \
+            --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
+            -f ${DOCKERFILE} \
+            -t ${IMAGE_NAME}:latest \
+            --push \
+            .
 
   build-crisp:
     runs-on: ubuntu-latest

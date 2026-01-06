@@ -106,8 +106,8 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests --root {base_dir} -s {example_dir}
-python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
+python3 -m runtests.ci --root ../../.. -s {example_dir}
+python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]
@@ -130,8 +130,8 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests --root {base_dir} -s {example_dir}
-python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
+python3 -m runtests.ci --root ../../.. -s {example_dir}
+python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]

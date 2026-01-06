@@ -40,24 +40,6 @@ def convert_unsafe_rust_to_safe_rust(
     raise ValueError(f"Model did not output code in the proper format:\n{response_start}<code>{response_end}")
 
 
-def use_DEPRECATED_completions_api(client: OpenAI, model: str, code_snippet: str):
-    response = client.chat.completions.create( 
-        model=model,
-        messages=[
-            {'role':'system', 'content':'You are a talented coder.'},
-            {'role': 'user', 'content': f"What is wrong with the following program?\n{code_snippet}"}
-        ],
-        temperature=0.0,
-        max_tokens=1000,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
-        response_format={"type": "text"},
-        n=1
-    )
-    print(response.choices[0].message.content)
-
-
 if __name__ == "__main__":
     client = get_openai_client()
 

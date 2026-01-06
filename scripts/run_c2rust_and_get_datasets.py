@@ -19,6 +19,9 @@ import tempfile
 from tqdm import tqdm
 
 
+CONVERTED_RUST_PROJECTS_FOLDER = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent / 'converted_rust_projects'
+
+
 def run_subprocess_nodisp_check(*args, **kwargs) -> subprocess.CompletedProcess:
     """
     Run subprocess.run() with the defaults `check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL`
@@ -219,8 +222,8 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
     Create a results.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_synthetic').iterdir() if f.is_dir()])
-    rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_synthetic'
-    rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
+    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_synthetic'
+    rust_projects_parent_folder.mkdir(exist_ok = False)
 
     with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
@@ -243,8 +246,8 @@ def run_on_test_corpus_organic(test_corpus_repo_path: Path):
     Create a results.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_organic').iterdir() if f.is_dir()])
-    rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
-    rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
+    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_organic'
+    rust_projects_parent_folder.mkdir(exist_ok = False)
 
     with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
@@ -267,8 +270,8 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
     Create a results.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f for f in (crust_bench_repo_path / 'datasets/CBench').iterdir() if f.is_dir()])
-    rust_projects_parent_folder = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-Bench'
-    rust_projects_parent_folder.mkdir(parents = True, exist_ok = True)
+    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_CRUST-Bench'
+    rust_projects_parent_folder.mkdir(exist_ok = False)
 
     with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)

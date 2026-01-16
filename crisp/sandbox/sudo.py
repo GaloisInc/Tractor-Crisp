@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import tarfile
+from subprocess import CompletedProcess, Popen
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -29,12 +30,12 @@ class SudoSandbox:
     def _sudo_cmd(self, cmd):
         return ('sudo', '-u', self.user, *cmd)
 
-    def _run_sudo(self, cmd, check=True, **kwargs):
+    def _run_sudo(self, cmd, check=True, **kwargs) -> CompletedProcess[str]:
         sudo_cmd = self._sudo_cmd(cmd)
         p = subprocess.run(sudo_cmd, check=check, **kwargs)
         return p
 
-    def _popen_sudo(self, cmd, **kwargs):
+    def _popen_sudo(self, cmd, **kwargs) -> Popen[str]:
         sudo_cmd = self._sudo_cmd(cmd)
         p = subprocess.Popen(sudo_cmd, **kwargs)
         return p
@@ -87,7 +88,7 @@ class SudoSandbox:
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError('expected REGTYPE or DIRTYPE, but got %r' % (t,))
+                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))
@@ -104,13 +105,13 @@ class SudoSandbox:
     def join(self, *args, **kwargs):
         return os.path.join(self.dir_path, *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False):
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
 
         cmd = 'cd {dir_path} && {cmd}'.format(
-            dir_path=shlex.quote(self.dir_path),
+            dir_path=shlex.quote(self.join(cwd)),
             cmd=shlex.join(cmd),
         )
         cmd = ('sh', '-c', cmd)

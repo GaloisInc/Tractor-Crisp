@@ -136,7 +136,6 @@ def parse_node_id_expr(mvir: MVIR, node_str: str, expr_suffix: str) -> NodeId:
                 node = mvir.node(x)
                 return getattr(node, a.attr)
             case _:
-                print(a)
                 raise TypeError(f'unsupported expression kind: {a}')
     return go(expr_ast.body)
 

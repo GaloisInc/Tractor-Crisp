@@ -21,8 +21,27 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import Workflow
 
 
+ARG_PARSE_EPILOG = '''
+In subcommand arguments, a `NODE` can be:
+* A tag name, which refers to the most recent reflog entry for that tag
+* A hexadecimal ID, or any unique prefix of one
+* An expression `EXPR` that resolves to a node ID
+
+An `EXPR` can be:
+* Any `NODE`
+* `NODE.foo`, which loads `NODE` and retrieves field `foo` from its metadata
+* `EXPR[idx]`, which evaluates `EXPR` and then performs a Python indexing
+  operation using `idx` (which must be a literal)
+
+For example, if the `current` tag refers to a `TreeNode` containing a
+`Cargo.toml` file, then `current.files["Cargo.toml"]` is a valid `NODE` that
+refers to the `FileNode` for `Cargo.toml`.  `current.files` is an `EXPR` but
+not a `NODE` because it evaluates to a dict rather than a node ID.
+'''
+
 def parse_args():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(epilog=ARG_PARSE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--config', '-c', dest='config_path', default='crisp.toml')
     ap.add_argument('--mvir-storage-dir')
     ap.add_argument('--keep-work-dir', action='store_true',
@@ -118,6 +137,8 @@ def parse_node_id_expr(mvir: MVIR, node_str: str, expr_suffix: str) -> NodeId:
     - `[idx]`: Take the current value and access index `idx` on it.  `idx` can
       be any literal.  For example, `current.files["Cargo.toml"]` is a valid
       ref expression (assuming the tag `current` refers to a `TreeNode`).
+
+    The final value must be a `NodeId`.
     """
     base_node_id = parse_node_id_arg(mvir, node_str)
     # `expr_suffix` will be something like `.foo`, `[0]`, or `.foo[0]`.  Add a
@@ -137,7 +158,10 @@ def parse_node_id_expr(mvir: MVIR, node_str: str, expr_suffix: str) -> NodeId:
                 return getattr(node, a.attr)
             case _:
                 raise TypeError(f'unsupported expression kind: {a}')
-    return go(expr_ast.body)
+    final = go(expr_ast.body)
+    assert isinstance(final, NodeId), \
+            f'expected expr {node_str + expr_suffix!r} to produce a NodeId, but got {type(final)}'
+    return final
 
 def parse_node_id_arg_and_check_tag(mvir, s):
     """

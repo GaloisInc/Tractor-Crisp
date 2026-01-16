@@ -104,7 +104,7 @@ def parse_node_id_arg(mvir, s):
 HEX_DIGITS_RE = re.compile(r'[0-9a-fA-F]+')
 OPERATOR_RE = re.compile(r'\[|\.')
 
-def parse_node_id_expr(mvir, node_str, expr_suffix):
+def parse_node_id_expr(mvir: MVIR, node_str: str, expr_suffix: str) -> NodeId:
     """
     Parse a "ref expression" like `a1b2c3.foo` or `tag.bar[0]`.  `node_str`
     should be the base node, like `a1b2c3`, and `expr_suffix` should be the

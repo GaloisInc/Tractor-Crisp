@@ -1,8 +1,10 @@
 import argparse
+import ast
 import glob
 import json
 import os
 import pathlib
+import re
 import requests
 import stat
 import subprocess
@@ -19,8 +21,27 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import Workflow
 
 
+ARG_PARSE_EPILOG = '''
+In subcommand arguments, a `NODE` can be:
+* A tag name, which refers to the most recent reflog entry for that tag
+* A hexadecimal ID, or any unique prefix of one
+* An expression `EXPR` that resolves to a node ID
+
+An `EXPR` can be:
+* Any `NODE`
+* `NODE.foo`, which loads `NODE` and retrieves field `foo` from its metadata
+* `EXPR[idx]`, which evaluates `EXPR` and then performs a Python indexing
+  operation using `idx` (which must be a literal)
+
+For example, if the `current` tag refers to a `TreeNode` containing a
+`Cargo.toml` file, then `current.files["Cargo.toml"]` is a valid `NODE` that
+refers to the `FileNode` for `Cargo.toml`.  `current.files` is an `EXPR` but
+not a `NODE` because it evaluates to a dict rather than a node ID.
+'''
+
 def parse_args():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(epilog=ARG_PARSE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--config', '-c', dest='config_path', default='crisp.toml')
     ap.add_argument('--mvir-storage-dir')
     ap.add_argument('--keep-work-dir', action='store_true',
@@ -99,19 +120,72 @@ def parse_node_id_arg(mvir, s):
     node_id, _ = parse_node_id_arg_and_check_tag(mvir, s)
     return node_id
 
+HEX_DIGITS_RE = re.compile(r'[0-9a-fA-F]+')
+OPERATOR_RE = re.compile(r'\[|\.')
+
+def parse_node_id_expr(mvir: MVIR, node_str: str, expr_suffix: str) -> NodeId:
+    """
+    Parse a "ref expression" like `a1b2c3.foo` or `tag.bar[0]`.  `node_str`
+    should be the base node, like `a1b2c3`, and `expr_suffix` should be the
+    rest of the expression.
+
+    The initial value is the `NodeId` obtained by parsing `node_str`.  The
+    operations given in `expr_suffix` are then applied.  The supported
+    operations are:
+    - `.foo`: Take the current value, which must be a `NodeId`, load the
+      `Node` with that ID, and look up attribute `foo` on it.
+    - `[idx]`: Take the current value and access index `idx` on it.  `idx` can
+      be any literal.  For example, `current.files["Cargo.toml"]` is a valid
+      ref expression (assuming the tag `current` refers to a `TreeNode`).
+
+    The final value must be a `NodeId`.
+    """
+    base_node_id = parse_node_id_arg(mvir, node_str)
+    # `expr_suffix` will be something like `.foo`, `[0]`, or `.foo[0]`.  Add a
+    # variable name to the front to make a complete expression.
+    expr_ast = ast.parse('x' + expr_suffix, mode = 'eval')
+    def go(a):
+        match type(a):
+            case ast.Name:
+                return base_node_id
+            case ast.Subscript:
+                x = go(a.value)
+                idx = ast.literal_eval(a.slice)
+                return x[idx]
+            case ast.Attribute:
+                x = go(a.value)
+                node = mvir.node(x)
+                return getattr(node, a.attr)
+            case _:
+                raise TypeError(f'unsupported expression kind: {a}')
+    final = go(expr_ast.body)
+    assert isinstance(final, NodeId), \
+            f'expected expr {node_str + expr_suffix!r} to produce a NodeId, but got {type(final)}'
+    return final
+
 def parse_node_id_arg_and_check_tag(mvir, s):
     """
     Parse `s` as a node ID.  Returns `(s, is_tag)`, where `is_tag` is `True` if
     `s` is a tag name.
     """
+    # 1. Try parsing as a `NodeId`.
     if len(s) == 2 * NodeId.LENGTH:
         try:
             node_id = NodeId.from_str(s)
             return (node_id, False)
         except ValueError:
             pass
+    # 2. Try parsing as a tag name.
     if mvir.has_tag(s):
         return (mvir.tag(s), True)
+
+    # 3. Try parsing as an expression.
+    m = OPERATOR_RE.search(s)
+    if m is not None:
+        i = m.start()
+        return (parse_node_id_expr(mvir, s[:i], s[i:]), False)
+
+    # 4. Try parsing as a prefix of a `NodeId`.
     matches = mvir.node_ids_with_prefix(s)
     if len(matches) == 0:
         raise ValueError('node %r not found' % s)

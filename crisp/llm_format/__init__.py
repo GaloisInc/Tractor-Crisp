@@ -17,10 +17,29 @@ def _mode_to_module(mode: str):
 
 
 def get_output_instructions(mode: str, **kwargs) -> str:
+    '''
+    Returns output formatting instructions for inclusion in the LLM prompt.
+    This will be something like:
+
+        Output the new code in foo format with bar delimiters.  Always do X;
+        never do Y.
+    '''
     module = _mode_to_module(mode)
     return module.get_output_instructions(**kwargs)
 
 def get_output_instructions_lowercase(mode: str, **kwargs) -> str:
+    '''
+    Like `get_output_instructions`, but the first letter is lowercased, so it
+    can be prefixed with an introductory clause.  Example usage:
+
+        'After finishing the task, ' + get_output_instructions_lowercase(mode)
+
+    This produces something like:
+
+        After finishing the task, output the new code in foo format with bar
+        delimiters.  Always do X; never do Y.
+    '''
+
     s = get_output_instructions(mode, **kwargs)
     if len(s) > 0:
         s = s[0].lower() + s[1:]

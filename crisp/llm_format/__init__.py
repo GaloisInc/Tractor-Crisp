@@ -4,11 +4,14 @@ import pathlib
 from ..mvir import MVIR, FileNode, TreeNode
 
 from . import markdown
+from . import xml
 
 def _mode_to_module(mode: str):
     match mode:
         case 'markdown':
             return markdown
+        case 'xml':
+            return xml
         case _:
             raise ValueError(f'unknown mode {mode!r}')
 

@@ -1,12 +1,21 @@
 import os
-import pathlib
 from ..mvir import MVIR, FileNode, TreeNode
 
 def get_output_instructions() -> str:
     return ('Output the updated Rust code in a Markdown code block, '
         'with the file path on the preceding line, as shown in the input.')
 
-def emit_file(n: FileNode, path, file_type='Rust'):
+DEFAULT_FILE_TYPE_MAP = {
+    '.rs': 'Rust',
+    '.c': 'C',
+    '.h': 'C',
+}
+
+def emit_file(
+    n: FileNode,
+    path: str,
+    file_type_map: dict[str, str] = DEFAULT_FILE_TYPE_MAP,
+) -> str:
     """
     Generate markdown-formatted text giving the contents of file `n`.  Produces
     output of the form:
@@ -16,57 +25,9 @@ def emit_file(n: FileNode, path, file_type='Rust'):
         // File contents...
         ```
     """
-    text = n.body().decode('utf-8')
+    file_type = file_type_map[os.path.splitext(path)[1]]
+    text = n.body_str()
     return '\n'.join((path, '```' + file_type, text, '```'))
-
-DEFAULT_FILE_TYPE_MAP = {
-    '.rs': 'Rust',
-    '.c': 'C',
-    '.h': 'C',
-}
-
-def emit_files(
-    mvir: MVIR,
-    n: TreeNode,
-    glob_filter: str = None,
-    file_type_map: dict[str, str] = DEFAULT_FILE_TYPE_MAP,
-) -> (str, dict[str, str]):
-    """
-    Generate markdown-formatted text giving the contents of files in `n`, along
-    with a dict mapping short path names used in the output to full paths as
-    used in `n`.  Output is formatted like `emit_file`.  If `glob_filter` is
-    set to a string, only files whose paths match that glob pattern will be
-    included.
-    """
-    assert isinstance(n, TreeNode)
-
-    if isinstance(glob_filter, str):
-        glob_filter = (glob_filter,)
-
-    if len(n.files) == 0:
-        common_prefix = ''
-    elif len(n.files) == 1:
-        common_prefix = os.path.dirname(list(n.files.keys())[0])
-    else:
-        common_prefix = os.path.commonpath(n.files.keys())
-
-    parts = []
-    short_path_map = {}
-    for path, child_id in n.files.items():
-        if glob_filter is not None:
-            path_obj = pathlib.Path(path)
-            glob_match = any(path_obj.match(g) for g in glob_filter)
-            if not glob_match:
-                continue
-
-        short_path = os.path.relpath(path, common_prefix)
-        assert short_path not in short_path_map
-        short_path_map[short_path] = path
-
-        file_type = file_type_map[os.path.splitext(path)[1]]
-        child_node = mvir.node(child_id)
-        parts.append(emit_file(child_node, short_path, file_type=file_type))
-    return '\n\n'.join(parts), short_path_map
 
 def extract_files(s):
     """

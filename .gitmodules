@@ -1,0 +1,3 @@
+[submodule "deps/c2rust"]
+	path = deps/c2rust
+	url = https://github.com/immunant/c2rust.git

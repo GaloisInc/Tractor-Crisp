@@ -35,11 +35,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN uv python install
 
 # Install c2rust
-RUN cd /opt \
-    && git clone --depth 1 https://github.com/immunant/c2rust \
-    && cd c2rust \
-    && git fetch --depth 1 origin e8d55cdc311912889ea82db6979c3709c7c8c4b2 \
-    && git checkout FETCH_HEAD
+COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt

@@ -178,11 +178,15 @@ class Workflow:
             # Run c2rust-transpile
             if not hayroll:
                 c2rust_cmd = [
-                        'c2rust', 'transpile',
-                        sb.join(COMPILE_COMMANDS_PATH),
-                        '--output-dir', sb.join(output_path),
-                        '--emit-build-files',
-                        ]
+                    "c2rust",
+                    "transpile",
+                    sb.join(COMPILE_COMMANDS_PATH),
+                    "--output-dir",
+                    sb.join(output_path),
+                    "--emit-build-files",
+                    "--c2rust-dir",
+                    "/opt/c2rust/",
+                ]
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
@@ -274,18 +278,6 @@ class Workflow:
             t['package']['name'] = cfg.project_name
             t['lib']['name'] = cfg.project_name
             t['lib']['crate-type'] = ['cdylib']
-
-        bitfields_ver = t.get('dependencies', {}).get('c2rust-bitfields')
-        if bitfields_ver is not None:
-            assert isinstance(bitfields_ver, str), (
-                f'expected version string for c2rust-bitfields, but got {repr(bitfields_ver)}')
-            # `c2rust-bitfields` is present and is a plain version dependency
-            # like `c2rust-bitfields = "1.2.3"`.  Replace it with a path dependency
-            # with the same version number.
-            t['dependencies']['c2rust-bitfields'] = {
-                'version': bitfields_ver,
-                'path': '/opt/c2rust/c2rust-bitfields',
-            }
 
         new_files = code.files.copy()
         new_files[cargo_toml_path] = FileNode.new(mvir, toml.dumps(t)).node_id()

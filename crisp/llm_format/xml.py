@@ -5,6 +5,9 @@ from ..mvir import MVIR, FileNode, TreeNode
 from .abc import LLMFileFormat
 
 RE_OPEN_TAG = re.compile(r'^<file name="([^"]*)">$')
+# Qwen3-Coder-30B-A3B-Instruct often omits the final `>` for some reason, so we
+# accept both `</file>` and `</file` here.
+RE_CLOSE_TAG = re.compile(r'^</file>?$')
 
 class XmlFileFormat(LLMFileFormat):
     def get_output_instructions(self) -> str:
@@ -51,7 +54,7 @@ class XmlFileFormat(LLMFileFormat):
                 start_i = i
                 start_path = path
 
-            elif line == '</file>':
+            elif (m := RE_CLOSE_TAG.match(line)):
                 if start_i is not None:
                     path = start_path
                     text = '\n'.join(lines[start_i + 1 : i]) + '\n'

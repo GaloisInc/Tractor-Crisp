@@ -3,20 +3,21 @@ import pathlib
 
 from ..mvir import MVIR, FileNode, TreeNode
 
+from .abc import LLMFileFormat
 from . import markdown
 from . import xml
 
-def _mode_to_module(mode: str):
+def _mode_to_format(mode: str) -> LLMFileFormat:
     match mode:
         case 'markdown':
-            return markdown
+            return markdown.MarkdownFileFormat()
         case 'xml':
-            return xml
+            return xml.XmlFileFormat()
         case _:
             raise ValueError(f'unknown mode {mode!r}')
 
 
-def get_output_instructions(mode: str, **kwargs) -> str:
+def get_output_instructions(mode: str) -> str:
     '''
     Returns output formatting instructions for inclusion in the LLM prompt.
     This will be something like:
@@ -24,10 +25,10 @@ def get_output_instructions(mode: str, **kwargs) -> str:
         Output the new code in foo format with bar delimiters.  Always do X;
         never do Y.
     '''
-    module = _mode_to_module(mode)
-    return module.get_output_instructions(**kwargs)
+    fmt = _mode_to_format(mode)
+    return fmt.get_output_instructions()
 
-def get_output_instructions_lowercase(mode: str, **kwargs) -> str:
+def get_output_instructions_lowercase(mode: str) -> str:
     '''
     Like `get_output_instructions`, but the first letter is lowercased, so it
     can be prefixed with an introductory clause.  Example usage:
@@ -40,7 +41,7 @@ def get_output_instructions_lowercase(mode: str, **kwargs) -> str:
         delimiters.  Always do X; never do Y.
     '''
 
-    s = get_output_instructions(mode, **kwargs)
+    s = get_output_instructions(mode)
     if len(s) > 0:
         s = s[0].lower() + s[1:]
     return s
@@ -49,17 +50,15 @@ def emit_file(
     mode: str,
     n: FileNode,
     path: str,
-    **kwargs,
 ) -> (str, dict[str, str]):
-    module = _mode_to_module(mode)
-    return module.emit_file(n, path, **kwargs)
+    fmt = _mode_to_format(mode)
+    return fmt.emit_file(n, path)
 
 def emit_files(
     mvir: MVIR,
     mode: str,
     n: TreeNode,
     glob_filter: str = None,
-    **kwargs,
 ) -> (str, dict[str, str]):
     """
     Generate formatted text giving the contents of files in `n`, along with a
@@ -93,10 +92,10 @@ def emit_files(
         short_path_map[short_path] = path
 
         child_node = mvir.node(child_id)
-        part = emit_file(mode, child_node, short_path, **kwargs)
+        part = emit_file(mode, child_node, short_path)
         parts.append(part)
     return '\n\n'.join(parts), short_path_map
 
-def extract_files(s: str, mode: str, **kwargs) -> list[tuple[str, str]]:
-    module = _mode_to_module(mode)
-    return module.extract_files(s, **kwargs)
+def extract_files(s: str, mode: str) -> list[tuple[str, str]]:
+    fmt = _mode_to_format(mode)
+    return fmt.extract_files(s)

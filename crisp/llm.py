@@ -225,6 +225,9 @@ def do_request(req, stream=False):
         msg = resp_dct['choices'][0]['message']
         p.set_count(resp_dct['usage']['completion_tokens'])
         p.end_line()
+        if msg.get('reasoning_content'):
+            p.print(' === %s (reasoning) ===' % msg['role'])
+            p.write(msg['reasoning_content'])
         p.print(' === %s ===' % msg['role'])
         p.write(msg['content'])
         p.finish()

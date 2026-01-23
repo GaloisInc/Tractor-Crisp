@@ -65,7 +65,7 @@ class MarkdownFileFormat(LLMFileFormat):
                 if os.path.normpath(path) != path:
                     continue
 
-                file_type = DEFAULT_FILE_TYPE_MAP[os.path.splitext(path)[1]]
+                file_type = self.file_type_map[os.path.splitext(path)[1]]
                 if line.strip().lower() != '```' + file_type.lower():
                     continue
 

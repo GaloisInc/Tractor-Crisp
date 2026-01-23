@@ -221,6 +221,11 @@ def run_rewrite(
         **format_kwargs,
     )
     prompt_without_files = prompt_fmt.format(
+        # Substitute in the literal string `{input_files}` for `{input_files}`,
+        # producing a version of the prompt where all variables are substituted
+        # except for `input_files`.  This is the version we record in the
+        # `LlmOpNode`, since the input files are already available from the
+        # `old_code` metadata field.
         input_files='{input_files}',
         output_instructions=llm_format.get_output_instructions(file_mode),
         output_instructions_lowercase=llm_format.get_output_instructions_lowercase(file_mode),

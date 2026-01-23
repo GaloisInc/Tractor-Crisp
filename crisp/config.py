@@ -43,6 +43,11 @@ class Config(ConfigBase):
 
     project_name: str
     src_globs: list[str]
+    # Shell command to run to test generated code.  This should exit with code
+    # 0 on success (tests passed) and nonzero on failure.  Relative paths in
+    # this command are interpreted relative to `base_dir` (specifically, the
+    # command is run in a sandbox directory where a subset of the files from
+    # `base_dir` have been checked out).
     test_command: str
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
@@ -60,7 +65,16 @@ class Config(ConfigBase):
             object.__setattr__(self, 'src_globs', [self.src_globs])
 
     def relative_path(self, path):
-        """Convert `path` to a relative path based on `self.base_dir`."""
+        """
+        Convert `path` to a relative path based on `self.base_dir`.
+
+        MVIR `TreeNode`s use paths relative to `base_dir`.  So if `base_dir` is
+        `/foo`, we commit `/foo/bar/baz.txt` to build a tree, and we then check
+        out the tree into a sandbox, the path of the file within the sandbox
+        will be `bar/baz.txt`.  This method is useful for converting the
+        outside path to the MVIR/inside path, such as when building commands:
+        `self.relative_path('/foo/bar/baz.txt') == 'bar/baz.txt'`.
+        """
         base_abs = os.path.abspath(self.base_dir)
         path_abs = os.path.abspath(path)
         assert os.path.commonpath((base_abs, path_abs)) == base_abs, \

@@ -8,6 +8,7 @@ syn = { version = "2.0.108", features = ["full", "visit-mut"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 
+ra_ap_base_db = "=0.0.301"
 ra_ap_hir = "=0.0.301"
 ra_ap_ide_db = "=0.0.301"
 ra_ap_load-cargo = "=0.0.301"

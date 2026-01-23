@@ -143,13 +143,7 @@ def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonA
     Run `cargo check --message-format json` and capture the JSONL output.
     """
 
-    # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
-    # tricks like `base_dir = ".."` used by the testing scripts.
-    # TODO: clean up config path handling and get rid of this
-    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-    base_path = os.path.abspath(cfg.base_dir)
-    rust_path = os.path.join(config_path, cfg.transpile.output_dir)
-    rust_path_rel = os.path.relpath(rust_path, base_path)
+    rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(code)
@@ -188,13 +182,7 @@ def inline_errors(
 
     errors_by_file, stderr_text = inline_errors_module.extract_diagnostics(json_errors)
 
-    # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
-    # tricks like `base_dir = ".."` used by the testing scripts.
-    # TODO: clean up config path handling and get rid of this
-    config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-    base_path = os.path.abspath(cfg.base_dir)
-    rust_path = os.path.join(config_path, cfg.transpile.output_dir)
-    rust_path_rel = os.path.relpath(rust_path, base_path)
+    rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
 
     new_files = old_code.files.copy()
     for name, src_node_id in new_files.items():

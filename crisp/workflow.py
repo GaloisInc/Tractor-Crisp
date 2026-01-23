@@ -193,13 +193,7 @@ class Workflow:
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
             else:
-                # Hacks to get the C path relative to `n_tree`.  This handles
-                # tricks like `base_dir = ".."` used by the testing scripts.
-                # TODO: clean up config path handling and get rid of this
-                config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-                base_path = os.path.abspath(cfg.base_dir)
-                c_path = os.path.join(config_path, cfg.transpile.cmake_src_dir)
-                c_path_rel = os.path.relpath(c_path, base_path)
+                c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
                 # Setting `--project-dir` explicitly prevents Hayroll from
                 # including various ancestor directories as intermediate
@@ -434,13 +428,7 @@ class Workflow:
     def split_ffi_op(self, n_tree: TreeNode) -> SplitFfiOpNode:
         cfg, mvir = self.cfg, self.mvir
 
-        # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
-        # tricks like `base_dir = ".."` used by the testing scripts.
-        # TODO: clean up config path handling and get rid of this
-        config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-        base_path = os.path.abspath(cfg.base_dir)
-        rust_path = os.path.join(config_path, cfg.transpile.output_dir)
-        rust_path_rel = os.path.relpath(rust_path, base_path)
+        rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
 
         with run_sandbox(cfg, mvir) as sb:
             sb.checkout(n_tree)

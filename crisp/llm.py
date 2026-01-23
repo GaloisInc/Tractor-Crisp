@@ -164,6 +164,7 @@ class StreamingMessage:
     """
     role: str | None = None
     content: str | None = None
+    reasoning_content: str | None = None
 
     def apply_delta(self, delta):
         if (role := delta.get('role')) is not None:
@@ -174,6 +175,8 @@ class StreamingMessage:
                 self.content = content
             else:
                 self.content += content
+        if (reasoning_content := delta.get('reasoning_content')) is not None:
+            self.reasoning_content = (self.reasoning_content or "") + reasoning_content
 
 @dataclass
 class StreamingChoice:
@@ -222,6 +225,9 @@ def do_request(req, stream=False):
         msg = resp_dct['choices'][0]['message']
         p.set_count(resp_dct['usage']['completion_tokens'])
         p.end_line()
+        if msg.get('reasoning_content'):
+            p.print(' === %s (reasoning) ===' % msg['role'])
+            p.write(msg['reasoning_content'])
         p.print(' === %s ===' % msg['role'])
         p.write(msg['content'])
         p.finish()
@@ -232,6 +238,18 @@ def do_request(req, stream=False):
     req['stream'] = True
     resp = requests.post(API_BASE + '/chat/completions',
             json=req, headers=headers, stream=True)
+
+    current_role = None
+    def emit(role: str, msg: str, is_reasoning: bool = False):
+        nonlocal current_role
+        if msg == '':
+            return
+        role_ext = f'{role} (reasoning)' if is_reasoning else role
+        if role_ext != current_role:
+            p.end_line()
+            p.print(f' === {role_ext} ===')
+            current_role = role_ext
+        p.write(msg)
 
     resp_dct = {}
     resp_choices = {}
@@ -248,19 +266,24 @@ def do_request(req, stream=False):
 
             prev_role = choice.message.role
             prev_content_len = len(choice.message.content or '')
+            prev_reasoning_content_len = len(choice.message.reasoning_content or '')
 
             choice.apply_delta(choice_delta)
 
             if index == 0:
                 if choice.message.role is not None:
                     if prev_role is None:
-                        p.end_line()
-                        p.print(' === %s ===' % choice.message.role)
+                        if choice.message.reasoning_content is not None:
+                            emit(choice.message.role, choice.message.reasoning_content,
+                                is_reasoning=True)
                         if choice.message.content is not None:
-                            p.write(choice.message.content)
+                            emit(choice.message.role, choice.message.content)
                     else:
+                        reasoning_content = choice.message.reasoning_content or ''
+                        emit(choice.message.role, reasoning_content[prev_reasoning_content_len:],
+                             is_reasoning=True)
                         content = choice.message.content or ''
-                        p.write(content[prev_content_len:])
+                        emit(choice.message.role, content[prev_content_len:])
                     p.flush()
                 p.increment()
 

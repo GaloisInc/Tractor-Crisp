@@ -176,10 +176,7 @@ class StreamingMessage:
             else:
                 self.content += content
         if (reasoning_content := delta.get('reasoning_content')) is not None:
-            if self.reasoning_content is None:
-                self.reasoning_content = reasoning_content
-            else:
-                self.reasoning_content += reasoning_content
+            self.reasoning_content = (self.reasoning_content or "") + reasoning_content
 
 @dataclass
 class StreamingChoice:
@@ -240,14 +237,14 @@ def do_request(req, stream=False):
             json=req, headers=headers, stream=True)
 
     current_role = None
-    def emit(role: str, msg: str, is_reasoning=False):
+    def emit(role: str, msg: str, is_reasoning: bool = False):
         nonlocal current_role
         if msg == '':
             return
         role_ext = f'{role} (reasoning)' if is_reasoning else role
         if role_ext != current_role:
             p.end_line()
-            p.print(' === %s ===' % role_ext)
+            p.print(f' === {role_ext} ===')
             current_role = role_ext
         p.write(msg)
 

@@ -585,9 +585,8 @@ fn main() {
     for db_crate in db.all_crates().iter() {
         let file_id = db_crate.data(&db).root_file_id;
         let vfs_path = vfs.file_path(file_id);
-        let path = match vfs_path.as_path() {
-            Some(x) => x,
-            None => continue,
+        let Some(path) = vfs_path.as_path() else {
+            continue;
         };
 
         // Only consider crates whose root file is inside the provided cargo dir.
@@ -597,7 +596,7 @@ fn main() {
             continue;
         }
 
-        eprintln!("found {:?}", path);
+        eprintln!("found {path:?}");
         let hir_crate = sema.first_crate(file_id).unwrap();
         crates.push(hir_crate);
     }

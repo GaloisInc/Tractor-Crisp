@@ -73,7 +73,7 @@ class Config(ConfigBase):
         out the tree into a sandbox, the path of the file within the sandbox
         will be `bar/baz.txt`.  This method is useful for converting the
         outside path to the MVIR/inside path, such as when building commands:
-        `relative_path('/foo/bar/baz.txt') == 'bar/baz.txt'`.
+        `self.relative_path('/foo/bar/baz.txt') == 'bar/baz.txt'`.
         """
         base_abs = os.path.abspath(self.base_dir)
         path_abs = os.path.abspath(path)

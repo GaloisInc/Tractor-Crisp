@@ -60,7 +60,7 @@ def get_target_info(project_dir):
 
         return j_target
 
-def file_contains_main(path):
+def file_contains_main(path: Path) -> bool:
     p = subprocess.run(
             ('ctags', '-x', path),
             stdout=subprocess.PIPE,
@@ -72,7 +72,7 @@ def file_contains_main(path):
             return True
     return False
 
-def find_file_containing_main(project_dir, j_target):
+def find_file_containing_main(project_dir: str, j_target) -> str | None:
     for j_source in j_target['sources']:
         path = Path(j_source['path'])
         full_path = Path(project_dir).joinpath('test_case', path)

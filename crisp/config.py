@@ -108,3 +108,10 @@ class TranspileConfig(ConfigBase):
 class ModelConfig(ConfigBase):
     prefill: str = ''
     prefill_think: str = ''
+    # Which mode to use for embedding files into the LLM input/output.  The
+    # options are listed in `llm_format` for options.
+    #
+    # This can be overridden by setting `$CRISP_LLM_FILE_FORMATTER`.  If the
+    # env var is set, the `file_formatter_kwargs` will be ignored.
+    file_formatter: str = 'xml'
+    file_formatter_kwargs: dict = field(default_factory=dict)

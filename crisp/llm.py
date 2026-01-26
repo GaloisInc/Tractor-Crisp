@@ -17,6 +17,8 @@ API_KEY = os.environ.get('CRISP_API_KEY')
 # Model to request from the API.  If unset, the first available model is used.
 API_MODEL = os.environ.get('CRISP_API_MODEL')
 
+LLM_FILE_FORMATTER = os.environ.get('CRISP_LLM_FILE_FORMATTER')
+
 
 def sse_events(resp):
     """
@@ -224,7 +226,6 @@ def run_rewrite(
         prompt_fmt: str,
         input_code: TreeNode,
         *,
-        file_mode: str = 'markdown',
         glob_filter: str | list[str] | None = None,
         format_kwargs: dict = {},
         think: bool = False,
@@ -235,12 +236,18 @@ def run_rewrite(
     print('using model %r' % model)
     model_cfg = cfg.models.get(model) or ModelConfig()
 
-    input_files_str, short_path_map = llm_format.emit_files(
-        mvir, file_mode, input_code, glob_filter=glob_filter)
+    if LLM_FILE_FORMATTER is None:
+        file_formatter = llm_format.get_file_formatter(
+                model_cfg.file_formatter, **model_cfg.file_formatter_kwargs)
+    else:
+        # Passing kwargs is not supported when using the env var.
+        file_formatter = llm_format.get_file_formatter(LLM_FILE_FORMATTER)
+    input_files_str, short_path_map = file_formatter.emit_files(
+        mvir, input_code, glob_filter=glob_filter)
     prompt = prompt_fmt.format(
         input_files=input_files_str,
-        output_instructions=llm_format.get_output_instructions(file_mode),
-        output_instructions_lowercase=llm_format.get_output_instructions_lowercase(file_mode),
+        output_instructions=file_formatter.get_output_instructions(),
+        output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
         **format_kwargs,
     )
     prompt_without_files = prompt_fmt.format(
@@ -250,8 +257,8 @@ def run_rewrite(
         # `LlmOpNode`, since the input files are already available from the
         # `old_code` metadata field.
         input_files='{input_files}',
-        output_instructions=llm_format.get_output_instructions(file_mode),
-        output_instructions_lowercase=llm_format.get_output_instructions_lowercase(file_mode),
+        output_instructions=file_formatter.get_output_instructions(),
+        output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
         **format_kwargs,
     )
 
@@ -270,7 +277,7 @@ def run_rewrite(
     output = resp['choices'][0]['message']['content']
     output_files = input_code.files.copy()
     files_changed = 0
-    for out_short_path, out_text in llm_format.extract_files(output, file_mode):
+    for out_short_path, out_text in file_formatter.extract_files(output):
         assert out_short_path in short_path_map, \
             'output contained unknown file path %r' % (out_short_path,)
         out_path = short_path_map[out_short_path]

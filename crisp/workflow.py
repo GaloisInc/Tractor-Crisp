@@ -392,8 +392,7 @@ class Workflow:
     def llm_safety_op(self, n_code: TreeNode) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
                 self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
-                glob_filter = self.cfg.src_globs,
-                file_mode = 'xml')
+                glob_filter = self.cfg.src_globs)
 
     @step
     def llm_repair(self, n_code: TreeNode, n_op_test: TestResultNode) -> TreeNode:
@@ -405,7 +404,6 @@ class Workflow:
             n_op_test: TestResultNode) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
                 self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
-                file_mode = 'xml',
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
@@ -431,7 +429,6 @@ class Workflow:
             for j in json_errors if j.get('reason') == 'compiler-message')
         return llm.run_rewrite(
                 self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
-                file_mode = 'xml',
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'stderr': stderr},
                 think = True)

@@ -43,7 +43,7 @@ class LLMFileFormat(metaclass = ABCMeta):
         mvir: MVIR,
         n: TreeNode,
         glob_filter: str = None,
-    ) -> (str, dict[str, str]):
+    ) -> tuple[str, dict[str, str]]:
         """
         Generate formatted text giving the contents of files in `n`, along with
         a dict mapping short path names used in the output to full paths as

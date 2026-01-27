@@ -143,7 +143,7 @@ def _metadata_field_types(cls: type) -> dict[str, type]:
     type_hints = typing.get_type_hints(cls, include_extras=True)
     field_types: dict[str, type] = {}
     for field_name, ty in type_hints.items():
-        if typing.get_origin(ty) is not Metadata:
+        if typing.get_origin(ty) is typing.get_origin(Metadata):
             type_args = typing.get_args(ty)
             if len(type_args) != len(typing.get_args(Metadata)):
                 continue

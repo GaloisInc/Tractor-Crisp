@@ -21,7 +21,7 @@ This Rust code was auto-translated from C, so it is partly unsafe. Your task is 
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
-After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+After making the code safe, {output_instructions_lowercase}
 
 {input_files}
 '''
@@ -29,7 +29,7 @@ After making the code safe, output the updated Rust code in a Markdown code bloc
 LLM_REPAIR_PROMPT = '''
 I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
 
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+{output_instructions}
 
 {input_files}
 
@@ -45,7 +45,7 @@ I tried compiling this Rust code, but I got an error. Please fix the error so th
 
 Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
 
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+{output_instructions}
 
 {input_files}
 

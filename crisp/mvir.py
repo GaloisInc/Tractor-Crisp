@@ -158,13 +158,13 @@ def _dataclass_to_cbor(x):
     implementation for use in classes that have `dataclass`-style typed
     fields.'''
     cls = x.__class__
-    field_tys = _metadata_field_types(cls)
+    field_tys = typing.get_type_hints(cls)
     values = tuple(getattr(x, name) for name in field_tys.keys())
     return to_cbor(values)
 
 @classmethod
 def _dataclass_from_cbor(cls, raw):
-    field_tys = _metadata_field_types(cls)
+    field_tys = typing.get_type_hints(cls)
     expect_ty = tuple[*field_tys.values()]
     values = from_cbor(expect_ty, raw)
     return cls(*values)

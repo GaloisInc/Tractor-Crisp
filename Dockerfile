@@ -24,14 +24,10 @@ RUN rustup toolchain add \
     --component rustfmt \
     nightly-2023-04-15
 
-# Update crates.io index for future use.  There's no dedicated command to force
-# an update, but adding a dependency will do it.
-# https://stackoverflow.com/a/74708239
-RUN mkdir /tmp/empty_project \
-    && cd /tmp/empty_project \
-    && cargo +nightly-2022-08-08 init \
-    && cargo +nightly-2022-08-08 add serde \
-    && rm -rf /tmp/empty_project
+# Enable sparse registry
+ENV CARGO_HOME=/usr/local/cargo
+RUN mkdir -p $CARGO_HOME
+COPY .cargo/config.toml $CARGO_HOME/config.toml
 
 # `uv` is required for building c2rust-refactor
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh

@@ -7,10 +7,20 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Optional, Annotated, TypeVar
 from types import NoneType
 from weakref import WeakValueDictionary
 
+
+T = TypeVar("T")
+
+class MetadataTag:
+    pass
+
+Metadata = Annotated[T, MetadataTag]
+"""
+Mark a type as CRISP metadata.
+"""
 
 @dataclass(frozen=True)
 class NodeId:
@@ -126,21 +136,35 @@ def check_type(ty, x):
     else:
         return ty.check_type(x)
 
-def _all_field_types(cls):
-    return typing.get_type_hints(cls)
+def _metadata_field_types(cls: type) -> dict[str, type]:
+    """
+    Get all of the `Metadata[T]` field types of a type.
+    """
+    type_hints = typing.get_type_hints(cls, include_extras=True)
+    field_types: dict[str, type] = {}
+    for field_name, ty in type_hints.items():
+        if typing.get_origin(ty) is not Metadata:
+            type_args = typing.get_args(ty)
+            if len(type_args) != len(typing.get_args(Metadata)):
+                continue
+            base_ty, tag = type_args
+            if tag is not MetadataTag:
+                continue
+            field_types[field_name] = base_ty
+    return field_types
 
 def _dataclass_to_cbor(x):
     '''Convert `x` to a CBOR-serializable form.  This is a default
     implementation for use in classes that have `dataclass`-style typed
     fields.'''
     cls = x.__class__
-    field_tys = _all_field_types(cls)
+    field_tys = _metadata_field_types(cls)
     values = tuple(getattr(x, name) for name in field_tys.keys())
     return to_cbor(values)
 
 @classmethod
 def _dataclass_from_cbor(cls, raw):
-    field_tys = _all_field_types(cls)
+    field_tys = _metadata_field_types(cls)
     expect_ty = tuple[*field_tys.values()]
     values = from_cbor(expect_ty, raw)
     return cls(*values)
@@ -390,7 +414,7 @@ class MVIR:
 
 
 class Node:
-    kind: str
+    kind: Metadata[str]
 
     def __init__(self, mvir, node_id, metadata, body_offset):
         self.__class__._check_metadata(metadata)
@@ -403,7 +427,7 @@ class Node:
 
     @classmethod
     def _check_metadata(cls, metadata):
-        field_tys = _all_field_types(cls)
+        field_tys = _metadata_field_types(cls)
 
         if not isinstance(metadata, dict):
             raise TypeError('metadata should be a dict, but got %r (%r)' %
@@ -499,7 +523,7 @@ class Node:
 
     @classmethod
     def _metadata_from_cbor(cls, pairs):
-        field_tys = _all_field_types(cls)
+        field_tys = _metadata_field_types(cls)
         metadata = {}
         for name, value in pairs:
             assert name not in metadata
@@ -567,7 +591,7 @@ class FileNode(Node):
 
 class TreeNode(Node):
     KIND = 'tree'
-    files: dict[str, NodeId]
+    files: Metadata[dict[str, NodeId]]
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -586,10 +610,10 @@ class TreeNode(Node):
 
 class CompileCommandsOpNode(Node):
     KIND = 'compile_commands_op_v2'
-    c_code: NodeId
-    cmds: list[list[str]]
-    exit_code: int
-    compile_commands: Optional[NodeId]
+    c_code: Metadata[NodeId]
+    cmds: Metadata[list[list[str]]]
+    exit_code: Metadata[int]
+    compile_commands: Metadata[Optional[NodeId]]
 
     c_code = property(lambda self: self._metadata['c_code'])
     cmds = property(lambda self: self._metadata['cmds'])
@@ -598,11 +622,11 @@ class CompileCommandsOpNode(Node):
 
 class TranspileOpNode(Node):
     KIND = 'transpile_op'
-    compile_commands: NodeId
-    c_code: NodeId
-    cmd: list[str]
-    exit_code: int
-    rust_code: Optional[NodeId]
+    compile_commands: Metadata[NodeId]
+    c_code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    rust_code: Metadata[Optional[NodeId]]
 
     compile_commands = property(lambda self: self._metadata['compile_commands'])
     c_code = property(lambda self: self._metadata['c_code'])
@@ -612,12 +636,12 @@ class TranspileOpNode(Node):
 
 class SplitFfiOpNode(Node):
     KIND = 'split_ffi_op'
-    old_code: NodeId
-    new_code: NodeId
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
     # Commit hash of the `split_ffi_entry_points` version that was used
     # TODO: remove - no longer used.  Figure out a way to remove fields without
     # breaking the ability to read old MVIR storage
-    commit: str
+    commit: Metadata[str]
     # `body` stores the log output
 
     old_code = property(lambda self: self._metadata['old_code'])
@@ -626,11 +650,11 @@ class SplitFfiOpNode(Node):
 
 class LlmOpNode(Node):
     KIND = 'llm_op'
-    old_code: NodeId
-    new_code: NodeId
-    raw_prompt: NodeId
-    request: NodeId
-    response: NodeId
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    raw_prompt: Metadata[NodeId]
+    request: Metadata[NodeId]
+    response: Metadata[NodeId]
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -648,12 +672,12 @@ class LlmOpNode(Node):
 
 class TestResultNode(Node):
     KIND = 'test_result_node'
-    code: NodeId
+    code: Metadata[NodeId]
     # `test_code` is a `TreeNode` containing additional code used only for
     # testing (e.g. the code for the test driver).
-    test_code: NodeId
-    cmd: str
-    exit_code: int
+    test_code: Metadata[NodeId]
+    cmd: Metadata[str]
+    exit_code: Metadata[int]
     # `body` stores the test output
 
     code = property(lambda self: self._metadata['code'])
@@ -667,9 +691,9 @@ class TestResultNode(Node):
 
 class CargoCheckJsonAnalysisNode(Node):
     KIND = 'cargo_check_json_analysis_node'
-    code: NodeId
-    exit_code: int
-    json: NodeId
+    code: Metadata[NodeId]
+    exit_code: Metadata[int]
+    json: Metadata[NodeId]
     # `body` stores the complete stdout and stderr logs
 
     code = property(lambda self: self._metadata['code'])
@@ -682,9 +706,9 @@ class CargoCheckJsonAnalysisNode(Node):
 
 class InlineErrorsOpNode(Node):
     KIND = 'inline_errors_op_node'
-    old_code: NodeId
-    new_code: NodeId
-    check_json: NodeId
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    check_json: Metadata[NodeId]
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
@@ -692,10 +716,10 @@ class InlineErrorsOpNode(Node):
 
 class FindUnsafeAnalysisNode(Node):
     KIND = 'find_unsafe_analysis'
-    code: NodeId
+    code: Metadata[NodeId]
     # Commit hash of the `find_unsafe` version that was used
-    commit: str
-    stderr: str
+    commit: Metadata[str]
+    stderr: Metadata[str]
     # `body` stores the JSON output
 
     code = property(lambda self: self._metadata['code'])
@@ -704,8 +728,8 @@ class FindUnsafeAnalysisNode(Node):
 
 class EditOpNode(Node):
     KIND = 'edit_op'
-    old_code: NodeId
-    new_code: NodeId
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
     # `body` stores some kind of description of the edit.
 
     old_code = property(lambda self: self._metadata['old_code'])

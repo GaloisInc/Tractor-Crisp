@@ -172,18 +172,18 @@ def _dataclass_from_cbor(cls, raw):
 
 @dataclass(frozen=True)
 class ReflogEntry:
-    node_id: NodeId
-    timestamp: datetime
-    reason: Any
+    node_id: Metadata[NodeId]
+    timestamp: Metadata[datetime]
+    reason: Metadata[Any]
 
     to_cbor = _dataclass_to_cbor
     from_cbor = _dataclass_from_cbor
 
 @dataclass(frozen=True)
 class IndexEntry:
-    node_id: NodeId
-    kind: str
-    key: str
+    node_id: Metadata[NodeId]
+    kind: Metadata[str]
+    key: Metadata[str]
 
     to_cbor = _dataclass_to_cbor
     from_cbor = _dataclass_from_cbor

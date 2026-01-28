@@ -1,2 +1,5 @@
+# This is copied into the Docker container at the root user level.
+# It is also at the repo root, so it also applies to cargo usage within the repo.
+
 [unstable]
-sparse-registry = true
+sparse-registry = true # Only needed for cargo versions < 1.68.

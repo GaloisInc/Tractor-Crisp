@@ -48,10 +48,9 @@ RUN cd /opt \
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
-RUN cd /opt/c2rust \
-    && cargo install --locked --path /opt/c2rust/c2rust
-RUN cd /opt/c2rust \
-    && cargo install --locked --path /opt/c2rust/c2rust-refactor
+RUN cargo install --locked --path /opt/c2rust/c2rust
+# `cd` to resolve the `rust-toolchain.toml`.
+RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 
 # Install hayroll
 #

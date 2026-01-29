@@ -42,7 +42,7 @@ RUN uv python install
 RUN cd /opt \
     && git clone https://github.com/immunant/c2rust --depth 1 \
     && cd c2rust \
-    && git fetch --depth 1 origin 11e9938a63096ec636b33c5bbeaed2fd6f3db23c \
+    && git fetch --depth 1 origin 4b400b4aab375836a0563d2d0762e60a5fcf1c1a \
     && git checkout FETCH_HEAD
 RUN cd /opt/c2rust \
     && uv venv \

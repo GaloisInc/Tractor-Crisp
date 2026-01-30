@@ -29,9 +29,14 @@ ENV CARGO_HOME=/usr/local/cargo
 RUN mkdir -p $CARGO_HOME
 COPY .cargo/config.toml $CARGO_HOME/config.toml
 
-# `uv` is required for building c2rust-refactor
+# `uv` is required for building `c2rust-refactor` and crisp scripts.
+# Make sure things are installed not under `/root/`
+# so that they are accessible by other users with `sudo`.
+# `uv` installs binaries in `$XDG_BIN_HOME`.
+ENV XDG_BIN_HOME=/usr/local/bin
+# `uv` installs data (like libraries) in `$XDG_DATA_HOME/uv`.
+ENV XDG_DATA_HOME=/usr/local
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
 RUN uv python install
 
 # Install c2rust

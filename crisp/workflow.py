@@ -119,9 +119,21 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode, hayroll: bool = False) -> TreeNode:
+    def transpile(
+        self,
+        c_code: TreeNode,
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
+        hayroll: bool = False,
+    ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
+        n_op_transpile = self.transpile_cc_op(
+            c_code,
+            compile_commands,
+            src_loc_annotations=src_loc_annotations,
+            refactor_transforms=refactor_transforms,
+            hayroll=hayroll,
+        )
         if n_op_transpile.rust_code is None:
             print('error: transpile failed', file=sys.stderr)
             return None
@@ -146,8 +158,19 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
     ) -> TranspileOpNode:
+        if "reorganize_definitions" in refactor_transforms:
+            assert src_loc_annotations, (
+                "reorganize_definitions requires src loc annotations"
+            )
+        if hayroll:
+            assert len(refactor_transforms) == 0, (
+                "refactor_transforms are not supported with hayroll yet"
+            )
+
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
             import json, shlex
@@ -187,11 +210,38 @@ class Workflow:
                     "--c2rust-dir",
                     "/opt/c2rust/",
                 ]
+                if src_loc_annotations:
+                    c2rust_cmd += [
+                        "--reorganize-definitions",
+                        "--disable-refactoring",
+                    ]
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
+
+                for transform in refactor_transforms:
+                    if exit_code == 0:
+                        c2rust_refactor_cmd = [
+                            "c2rust",
+                            "refactor",
+                            "--cargo",
+                            "--rewrite-mode",
+                            "inplace",
+                            transform,
+                        ]
+                        new_exit_code, new_logs = sb.run(
+                            c2rust_refactor_cmd, cwd=output_path
+                        )
+                        exit_code = new_exit_code
+                        logs += new_logs
+
+                if exit_code == 0:
+                    new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
+                    exit_code = new_exit_code
+                    logs += new_logs
+
             else:
                 c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
@@ -206,6 +256,7 @@ class Workflow:
                         sb.join(output_path),
                         '--project-dir', os.path.join(c_path_rel, 'src'),
                         ]
+                # hayroll already has c2rust-transpile emit src loc annotations.
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,

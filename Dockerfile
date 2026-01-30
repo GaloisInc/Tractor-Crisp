@@ -61,7 +61,7 @@ RUN mkdir -p /opt/hayroll \
 RUN cd /opt/hayroll/Hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19
 RUN cd /opt/hayroll/Hayroll \
-    && ./build.bash
+    && ./build.bash --release
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries

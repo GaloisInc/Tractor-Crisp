@@ -61,7 +61,7 @@ RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
     && git clone https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
-    && git checkout a35b1028c16d5784f45cdbcedff81960d8be8899 \
+    && git checkout fed1474939fe0dd161ad30413d5225252a8fe471 \
     && ./prerequisites.bash --no-sudo --llvm-version 18 \
     && ./build.bash
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll

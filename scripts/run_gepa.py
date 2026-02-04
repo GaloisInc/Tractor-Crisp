@@ -1,12 +1,19 @@
 import gepa
+from openai import OpenAI
 import os
 
+from crisp.gepa_po import RustAdapter
 
+
+# Set environment variable in the way GEPA expects
 openai_api_key = os.getenv('TRACTOR_OPENAI_API_KEY')
 os.environ['OPENAI_API_KEY'] = openai_api_key
 
 
 def run_aime_example():
+    """
+    Run the example given in the GEPA README and tutorials to make sure things work as expected.
+    """
 
     # Load AIME dataset
     trainset, valset, _ = gepa.examples.aime.init_dataset()
@@ -44,8 +51,33 @@ def run_aime_example():
 
 
 def run_crisp():
-    pass
+    """
+    Run on CRISP.
+    """
+
+    # Load dataset
+    #TODO get trainset (and optionally valset) here
+    trainset = None
+    valset = None
+
+    adapter = RustAdapter(
+        model = 'openai/gpt-3.5-turbo',
+        client = OpenAI(api_key = openai_api_key)
+    )
+
+    gepa_result = gepa.optimize(
+        seed_candidate = {
+            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code within tags <code> and </code>, which you'll have to convert to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code goes here\n</code>"
+        },
+        trainset = trainset,
+        valset = valset,
+        adapter = adapter,
+        max_metric_calls = 150,
+        reflection_lm = "openai/gpt-5"
+    )
+
+    print("GEPA Optimized Prompt:", gepa_result.best_candidate['system_prompt'])
 
 
 if __name__ == "__main__":
-    run_aime_example()
+    run_crisp()

@@ -110,6 +110,9 @@ def parse_args():
     find_unsafe = sub.add_parser('find_unsafe')
     find_unsafe.add_argument('node', nargs='?', default='current')
 
+    split = sub.add_parser('split')
+    split.add_argument('node', nargs='?', default='current')
+
     git = sub.add_parser('git')
     git.add_argument('-n', '--node', default='current')
     git.add_argument('args', nargs='*')
@@ -354,6 +357,24 @@ def do_find_unsafe(args, cfg):
 
     print('\nresult: %s' % n.node_id())
 
+def do_split(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n = w.split_op(n_code)
+
+    if n.exit_code == 0:
+        n_json = mvir.node(n.json_out)
+        json.dump(n_json.body_json(), sys.stdout, indent='  ')
+    else:
+        print(f'error: code {n.exit_code}\nlogs:\n{n.body_str()}')
+
+    print('\nresult: %s' % n.node_id())
+    print('crate: %s' % n.crate_out)
+
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
@@ -591,6 +612,8 @@ def main():
         do_inline_errors(args, cfg)
     elif args.cmd == 'find_unsafe':
         do_find_unsafe(args, cfg)
+    elif args.cmd == 'split':
+        do_split(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
     else:

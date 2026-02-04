@@ -11,7 +11,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
         TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode, CargoCheckJsonAnalysisNode, EditOpNode
+        SplitFfiOpNode, CargoCheckJsonAnalysisNode, EditOpNode, SplitOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -512,3 +512,7 @@ class Workflow:
                 )
 
         return n_op
+
+    @step
+    def split_op(self, n_code: TreeNode) -> SplitOpNode:
+        return analysis.split_rust(self.cfg, self.mvir, n_code)

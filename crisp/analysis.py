@@ -10,7 +10,7 @@ from . import inline_errors as inline_errors_module
 from .config import Config
 from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
         CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode, \
-        InlineErrorsOpNode
+        InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -353,3 +353,51 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR,
 def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
     commit = crisp_git_state('tools/find_unsafe')
     return _find_unsafe_impl(cfg, mvir, code, commit)
+
+
+@analysis
+def _split_rust_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox, code_in: TreeNode, cmd: list[str]
+) -> SplitOpNode:
+    sb.checkout(code_in)
+
+    exit_code, logs = sb.run(cmd)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        json_out = sb.commit_file('out.json')
+        j = json_out.body_json()
+        assert isinstance(j, dict)
+        defs = {}
+        for def_id, def_str in j.items():
+            defs[def_id] = DefNode.new(mvir, body = def_str).node_id()
+        crate_out = CrateNode.new(mvir, defs = defs)
+    else:
+        assert False
+        json_out = FileNode.new(mvir, b'')
+        crate_out = CrateNode.new(mvir, defs = {})
+
+    n_op = SplitOpNode.new(
+        mvir,
+        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
+        # output in the successful case.
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code_in = code_in.node_id(),
+        json_out = json_out.node_id(),
+        crate_out = crate_out.node_id(),
+    )
+    return n_op
+
+def split_rust(cfg: Config, mvir: MVIR, n_code: TreeNode) -> SplitOpNode:
+    with run_sandbox(cfg, mvir) as sb:
+        cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
+        root_file = os.path.join(cargo_dir, 'src/lib.rs')
+        cmd = ['split_rust', root_file, '--output-path', sb.join("out.json")]
+        n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op

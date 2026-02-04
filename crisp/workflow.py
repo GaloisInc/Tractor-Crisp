@@ -16,7 +16,7 @@ from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
-    WorkflowStepNode,
+    WorkflowStepNode, SplitOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -563,3 +563,7 @@ class Workflow:
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         return n_op
+
+    @step
+    def split_op(self, n_code: TreeNode) -> SplitOpNode:
+        return analysis.split_rust(self.cfg, self.mvir, n_code)

@@ -752,6 +752,38 @@ class EditOpNode(Node):
     new_code = property(lambda self: self._metadata['new_code'])
 
 
+class DefNode(Node):
+    KIND = 'def'
+    # `body` stores the source code of this def
+
+class CrateNode(Node):
+    KIND = 'crate'
+    # Maps each def ID/path to a `DefNode`
+    defs: Metadata[dict[str, NodeId]]
+
+    defs = property(lambda self: self._metadata['defs'])
+
+class SplitOpNode(Node):
+    '''
+    Split a `TreeNode` containing Rust code into a collection of separate
+    `DefNode`s.
+    '''
+    KIND = 'split_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` (a collection of files)
+    code_in: Metadata[NodeId]
+    json_out: Metadata[NodeId]
+    # Output `CrateNode` (a collection of defs)
+    crate_out: Metadata[NodeId]
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code_in = property(lambda self: self._metadata['code_in'])
+    json_out = property(lambda self: self._metadata['json_out'])
+    crate_out = property(lambda self: self._metadata['crate_out'])
+
+
 class WorkflowStepInputsNode(Node):
     KIND = 'workflow_step_inputs'
     func_name: Metadata[str]
@@ -782,6 +814,10 @@ NODE_CLASSES = [
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
     EditOpNode,
+
+    DefNode,
+    CrateNode,
+    SplitOpNode,
 
     WorkflowStepInputsNode,
     WorkflowStepNode,

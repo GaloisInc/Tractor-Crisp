@@ -36,7 +36,7 @@ COPY .cargo/config.toml $CARGO_HOME/config.toml
 ENV XDG_BIN_HOME=/usr/local/bin
 # `uv` installs data (like libraries) in `$XDG_DATA_HOME/uv`.
 ENV XDG_DATA_HOME=/usr/local
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 
 # Install c2rust

@@ -73,7 +73,7 @@ def run_crisp():
     for i,source_filepath in enumerate(source_filepaths):
         with open(source_filepath, 'r', encoding='utf-8') as f:
             task_input = {
-                'input': f.read(),
+                'input': f"<code>\n{f.read()}\n</code>",
                 'filepath': source_filepath.relative_to(UNSAFE_RUST_PROJECTS_FOLDER)
             }
         (trainset if i < len(source_filepaths) // 2 else valset).append(task_input)
@@ -84,7 +84,7 @@ def run_crisp():
 
     gepa_result = gepa.optimize(
         seed_candidate = {
-            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code which you'll have to convert to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code goes here\n</code>"
+            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code inside tags like this:\n<code>\nUnsafe Rust code\n</code>\nYou'll have to convert this to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code\n</code>."
         },
         trainset = trainset,
         valset = valset,

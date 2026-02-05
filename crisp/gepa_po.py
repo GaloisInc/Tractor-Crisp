@@ -1,6 +1,5 @@
 """
-Use the GEPA prompt optimization technique.
-https://arxiv.org/abs/2507.19457
+Helper classes / functions for GEPA prompt optimization.
 
 Note: This file is named gepa_po.py and not gepa.py to
 avoid import issues, since the library is also called gepa.
@@ -11,7 +10,8 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 
 from dataclasses import dataclass
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
-from openai import OpenAI
+import litellm
+from llama_cpp import Llama
 import re
 import tempfile
 from typing import Any
@@ -83,11 +83,9 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
     def __init__(
         self,
         model: str,
-        client: OpenAI, #TODO extend to other clients and APIs like Huggingface (can use litellm)
         evaluator: Any = ResponseEvaluator()
     ):
         self.model = model
-        self.client = client
         self.evaluator = evaluator
 
     def evaluate(
@@ -100,17 +98,29 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         scores = []
         trajectories = [] if capture_traces else None
 
-        responses = [
-            self.client.responses.create(
-                model = self.model,
-                instructions = candidate['system_prompt'],
-                input = task.input
-            )
-            for task in batch
-        ]
+        for task in batch:
+            messages = [
+                {'role': 'system', 'content': candidate['system_prompt']},
+                {'role': 'user', 'content': task.input}
+            ]
 
-        for task, response in zip(batch, responses, strict=True):
+            # If the model is the path to a GGUF file, use Llama CPP to run it
+            if self.model.endswith('.gguf'):
+                llama_cpp_model = Llama(
+                    model_path = self.model,
+                    n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
+                    n_ctx = 0 # set to model's default
+                )
+                response = llama_cpp_model.create_chat_completion(messages = messages)
+                response = response['choices'][0]['message']['content']
+
+            # Otherwise, use LiteLLM to run it
+            else:
+                response = litellm.completion(model = self.model, messages = messages)
+                response = response.choices[0].message.content
+
             outputs.append(TaskOutput(response = response))
+
             eval_result = self.evaluator(response = response)
             scores.append(eval_result.score)
             if capture_traces:
@@ -132,7 +142,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         self,
         candidate: dict[str,str], # pylint: disable=unused-argument # required as per GEPA
         eval_batch: EvaluationBatch[TaskTrace, TaskOutput],
-        components_to_update: list[str]
+        components_to_update: list[str] # pylint: disable=unused-argument # required as per GEPA
     ) -> dict[str, list[dict[str, Any]]]:
         dataset = {'system_prompt': []}
 

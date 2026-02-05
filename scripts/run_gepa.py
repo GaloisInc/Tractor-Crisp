@@ -1,5 +1,11 @@
+"""
+Run GEPA prompt optimization. (Paper: https://arxiv.org/abs/2507.19457)
+
+Note: If using the gpt-oss-20b model using Llama CPP, it has to first be downloaded in GGUF format.
+The model is then run using the Python package, so `pip install`ing llama-cpp-python is required.
+"""
+
 import gepa
-from openai import OpenAI
 import os
 
 from crisp.gepa_po import RustAdapter
@@ -61,8 +67,7 @@ def run_crisp():
     valset = None
 
     adapter = RustAdapter(
-        model = 'openai/gpt-3.5-turbo',
-        client = OpenAI(api_key = openai_api_key)
+        model = '~/Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'
     )
 
     gepa_result = gepa.optimize(

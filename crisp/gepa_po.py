@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import litellm
 from llama_cpp import Llama
+from pathlib import Path
 import re
 import tempfile
 from typing import Any
@@ -20,6 +21,7 @@ from typing import Any
 @dataclass
 class TaskInput:
     input: str
+    filepath: Path
 
 @dataclass
 class TaskTrace:

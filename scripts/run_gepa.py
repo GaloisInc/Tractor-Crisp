@@ -6,10 +6,14 @@ The model is then run using the Python package, so `pip install`ing llama-cpp-py
 """
 
 import gepa
+from pathlib import Path
+import random
 import os
 
 from crisp.gepa_po import RustAdapter
 
+
+UNSAFE_RUST_PROJECTS_FOLDER = Path(__file__).resolve().parent.parent / 'converted_rust_projects'
 
 # Set environment variable in the way GEPA expects
 openai_api_key = os.getenv('TRACTOR_OPENAI_API_KEY')
@@ -61,10 +65,18 @@ def run_crisp():
     Run on CRISP.
     """
 
-    # Load dataset
-    #TODO get trainset (and optionally valset) here
-    trainset = None
-    valset = None
+    # Load datasets
+    trainset, valset = [], []
+    source_projects_folderpath = UNSAFE_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_organic'
+    source_filepaths = list(source_projects_folderpath.rglob('*.rs'))
+    random.shuffle(source_filepaths)
+    for i,source_filepath in enumerate(source_filepaths):
+        with open(source_filepath, 'r', encoding='utf-8') as f:
+            task_input = {
+                'input': f.read(),
+                'filepath': source_filepath.relative_to(UNSAFE_RUST_PROJECTS_FOLDER)
+            }
+        (trainset if i < len(source_filepaths) // 2 else valset).append(task_input)
 
     adapter = RustAdapter(
         model = '~/Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'
@@ -72,7 +84,7 @@ def run_crisp():
 
     gepa_result = gepa.optimize(
         seed_candidate = {
-            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code within tags <code> and </code>, which you'll have to convert to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code goes here\n</code>"
+            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code which you'll have to convert to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code goes here\n</code>"
         },
         trainset = trainset,
         valset = valset,

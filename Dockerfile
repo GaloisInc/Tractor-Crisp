@@ -84,7 +84,11 @@ RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 # Install CRISP tool binaries
 COPY tools/rust_util/ /opt/crisp-tools/rust_util/
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
+COPY tools/split_rust/ /opt/crisp-tools/split_rust/
+
 RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_rust
+
 
 FROM tractor-crisp-user AS tractor-crisp
 

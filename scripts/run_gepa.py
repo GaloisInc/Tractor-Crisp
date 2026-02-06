@@ -60,7 +60,10 @@ def run_aime_example():
     print("GEPA Optimized Prompt:", gepa_result.best_candidate['system_prompt'])
 
 
-def run_crisp():
+def run_crisp(
+    task_lm: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
+    trainset_frac: float = 0.5
+):
     """
     Run on CRISP.
     """
@@ -76,11 +79,9 @@ def run_crisp():
                 'input': f"<code>\n{f.read()}\n</code>",
                 'filepath': source_filepath.relative_to(UNSAFE_RUST_PROJECTS_FOLDER)
             }
-        (trainset if i < len(source_filepaths) // 2 else valset).append(task_input)
+        (trainset if i < trainset_frac*len(source_filepaths) else valset).append(task_input)
 
-    adapter = RustAdapter(
-        model = '~/Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'
-    )
+    adapter = RustAdapter(model = task_lm)
 
     gepa_result = gepa.optimize(
         seed_candidate = {

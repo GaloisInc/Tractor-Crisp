@@ -513,6 +513,7 @@ class Workflow:
                 commit = '',
                 body = logs,
                 )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         return n_op
 

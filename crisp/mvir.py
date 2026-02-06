@@ -783,6 +783,30 @@ class SplitOpNode(Node):
     json_out = property(lambda self: self._metadata['json_out'])
     crate_out = property(lambda self: self._metadata['crate_out'])
 
+class MergeOpNode(Node):
+    '''
+    Merge a collection of `DefNode`s into a `TreeNode` containing Rust source
+    files.  This takes an initial `TreeNode` to use as a template, updates it
+    to contain the provided definitions, and produces a new `TreeNode` as
+    output.
+    '''
+    KIND = 'merge_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` containing source code to use as the template
+    code_in: Metadata[NodeId]
+    # Input `CrateNode` containing (possibly) updated definitions
+    crate_in: Metadata[NodeId]
+    # Output `TreeNode`, produced by merging all the definitions from
+    # `crate_in` into `code_in`.
+    code_out: Metadata[NodeId]
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code_in = property(lambda self: self._metadata['code_in'])
+    crate_in = property(lambda self: self._metadata['crate_in'])
+    code_out = property(lambda self: self._metadata['code_out'])
+
 
 class WorkflowStepInputsNode(Node):
     KIND = 'workflow_step_inputs'
@@ -818,6 +842,7 @@ NODE_CLASSES = [
     DefNode,
     CrateNode,
     SplitOpNode,
+    MergeOpNode,
 
     WorkflowStepInputsNode,
     WorkflowStepNode,

@@ -94,6 +94,9 @@ RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 # Install CRISP tool binaries
 COPY tools/rust_util/ /opt/crisp-tools/rust_util/
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
+COPY tools/split_rust/ /opt/crisp-tools/split_rust/
+
 RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points \
+    && cargo install --locked --path /opt/crisp-tools/split_rust \
     && rm -rf $CARGO_TARGET_DIR \
     && rm -rf $CARGO_HOME/registry $CARGO_HOME/git

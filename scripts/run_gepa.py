@@ -41,7 +41,7 @@ def run_aime_example():
         #NOTE from Sourya: Consider getting only a slice (e.g. `valset[:10]`) for faster performance
         valset = valset,
 
-        #NOTE from Sourya: This is the model being optimized, i.e. the 'junior' LM
+        #NOTE from Sourya: This is the model being optimized, i.e. the task LM
         # It is currently called in gepa/adapters/default_adapter/default_adapter.py, specifically in lines 132-137 using `litellm.batch_completion()`. This can be updated to `litellm.responses()` (or other APIs) as required by different models.
         # IMPORTANT: The main issue in `litellm.batch_completion()` is the `max_workers` argument. If this is large, the OpenAI / Anthropic / whatever server will get too many requests quickly and may return None. This will crash the program.
         # The feedback text (for both current and wrong answer cases) is hardcoded in the `ContainsAnswerEvaluator` class in the same file
@@ -51,9 +51,9 @@ def run_aime_example():
         # So, if this is less than the number of examples in the valset, optimization will not happen
         max_metric_calls = 150,
 
-        #NOTE from Sourya: This is the model used for reflecting on mistakes and proposing better prompts, i.e. the 'senior' LM
+        #NOTE from Sourya: This is the model used for reflecting on mistakes and proposing better prompts, i.e. the reflection LM
         # The format and basic text for the reflection prompt is hardcoded in gepa/strategies/instruction_proposal.py, specifically in `InstructionProposalSignature.default_prompt_template`
-        # The senior LM is called in gepa.api.py, specifically in line 248 using `litellm.completion()`. This can be updated to `litellm.responses()` (or other APIs) as required by different models.
+        # The reflection LM is called in gepa.api.py, specifically in line 248 using `litellm.completion()`. This can be updated to `litellm.responses()` (or other APIs) as required by different models.
         reflection_lm = "openai/gpt-5"
     )
 

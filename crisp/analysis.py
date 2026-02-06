@@ -8,9 +8,11 @@ import typing
 
 from . import inline_errors as inline_errors_module
 from .config import Config
-from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
-        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode, \
-        InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode
+from .mvir import (
+    MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
+    CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
+    InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
+)
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -398,6 +400,53 @@ def split_rust(cfg: Config, mvir: MVIR, n_code: TreeNode) -> SplitOpNode:
         root_file = os.path.join(cargo_dir, 'src/lib.rs')
         cmd = ['split_rust', root_file, '--output-path', sb.join("out.json")]
         n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def _merge_rust_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox,
+    code_in: TreeNode, crate_in: CrateNode, cmd: list[str]
+) -> MergeOpNode:
+    sb.checkout(code_in)
+
+    j = {k: mvir.node(v).body_str() for k, v in crate_in.defs.items()}
+    json_in = FileNode.new(mvir, json.dumps(j))
+    sb.checkout_file('in.json', json_in)
+
+    exit_code, logs = sb.run(cmd)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        _ = sb.run(['rm', '-f', 'in.json'])
+
+        code_out = sb.commit_dir('.')
+    else:
+        assert False
+        code_out = TreeNode.new(mvir, files = {})
+
+    n_op = MergeOpNode.new(
+        mvir,
+        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
+        # output in the successful case.
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code_in = code_in.node_id(),
+        crate_in = crate_in.node_id(),
+        code_out = code_out.node_id(),
+    )
+    return n_op
+
+def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
+    with run_sandbox(cfg, mvir) as sb:
+        cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
+        root_file = os.path.join(cargo_dir, 'src/lib.rs')
+        cmd = ['merge_rust', root_file, sb.join("in.json")]
+        n_op = _merge_rust_impl(cfg, mvir, sb, n_code, n_crate, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     return n_op

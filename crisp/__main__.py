@@ -113,6 +113,10 @@ def parse_args():
     split = sub.add_parser('split')
     split.add_argument('node', nargs='?', default='current')
 
+    merge = sub.add_parser('merge')
+    merge.add_argument('code')
+    merge.add_argument('crate')
+
     git = sub.add_parser('git')
     git.add_argument('-n', '--node', default='current')
     git.add_argument('args', nargs='*')
@@ -375,6 +379,24 @@ def do_split(args, cfg):
     print('\nresult: %s' % n.node_id())
     print('crate: %s' % n.crate_out)
 
+def do_merge(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    code_node_id = parse_node_id_arg(mvir, args.code)
+    n_code = mvir.node(code_node_id)
+    crate_node_id = parse_node_id_arg(mvir, args.crate)
+    n_crate = mvir.node(crate_node_id)
+
+    n = w.merge_op(n_code, n_crate)
+
+    if n.exit_code != 0:
+        print(f'error: code {n.exit_code}\nlogs:\n{n.body_str()}')
+
+    print('\nresult: %s' % n.node_id())
+    if n.exit_code == 0:
+        print('code: %s' % n.code_out)
+
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
@@ -614,6 +636,8 @@ def main():
         do_find_unsafe(args, cfg)
     elif args.cmd == 'split':
         do_split(args, cfg)
+    elif args.cmd == 'merge':
+        do_merge(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
     else:

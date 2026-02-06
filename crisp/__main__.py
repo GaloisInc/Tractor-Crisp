@@ -117,6 +117,9 @@ def parse_args():
     merge.add_argument('code')
     merge.add_argument('crate')
 
+    delete_ffi_funcs = sub.add_parser('delete-ffi-funcs')
+    delete_ffi_funcs.add_argument('node', nargs='?', default='current')
+
     git = sub.add_parser('git')
     git.add_argument('-n', '--node', default='current')
     git.add_argument('args', nargs='*')
@@ -397,6 +400,30 @@ def do_merge(args, cfg):
     if n.exit_code == 0:
         print('code: %s' % n.code_out)
 
+def do_delete_ffi_funcs(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(node_id)
+
+    n_split_op = w.split_op(n_code)
+    assert n_split_op.exit_code == 0
+
+    n_crate = mvir.node(n_split_op.crate_out)
+    from .mvir import DefNode, CrateNode
+    n_empty_def = DefNode.new(mvir, b'')
+    n_crate2 = CrateNode.new(mvir,
+        defs = {k: n_empty_def.node_id() for k in n_crate.defs
+            if k.endswith('_ffi')})
+
+    n_merge_op = w.merge_op(n_code, n_crate2)
+    assert n_merge_op.exit_code == 0
+
+    n_code2 = mvir.node(n_merge_op.code_out)
+
+    print('\nresult: %s' % n_code2.node_id())
+
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
@@ -638,6 +665,8 @@ def main():
         do_split(args, cfg)
     elif args.cmd == 'merge':
         do_merge(args, cfg)
+    elif args.cmd == 'delete-ffi-funcs':
+        do_delete_ffi_funcs(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
     else:

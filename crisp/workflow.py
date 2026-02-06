@@ -509,5 +509,6 @@ class Workflow:
                 new_code = n_new_tree.node_id(),
                 body = logs,
                 )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         return n_op

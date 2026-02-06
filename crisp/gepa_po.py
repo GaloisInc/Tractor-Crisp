@@ -45,21 +45,12 @@ class ResponseEvaluator:
         self.failure_score = failure_score
 
     def __call__(self, response: str) -> EvaluationResult:
-        code = ''
-
-        for output in response.output:
-            if output.content is None:
-                continue
-            for content in output.content:
-                if content.type != 'output_text':
-                    continue
-                m = re.search(r'<code>\n(?P<code>.*)</code>', content.text, flags=re.DOTALL)
-                if m:
-                    code = m.group('code')
+        m = re.search(r'<code>\n(?P<code>.*)</code>', response, flags=re.DOTALL)
+        code = m.group('code') if m else ''
 
         if not code:
             score = self.failure_score
-            feedback = "The generated response is not in the proper format. Please include safe Rust code as follows:\n<code>\nSafe Rust code goes here\n</code>"
+            feedback = "The generated response is not in the proper format. Please include safe Rust code as follows:\n<code>\nSafe Rust code\n</code>"
 
         else:
             with tempfile.NamedTemporaryFile(

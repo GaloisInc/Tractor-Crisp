@@ -9,9 +9,12 @@ from typing import Any
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
-        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode, CargoCheckJsonAnalysisNode, EditOpNode, SplitOpNode
+from .mvir import (
+    MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
+    LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
+    CargoCheckJsonAnalysisNode, EditOpNode, SplitOpNode, MergeOpNode,
+    CrateNode,
+)
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -516,3 +519,7 @@ class Workflow:
     @step
     def split_op(self, n_code: TreeNode) -> SplitOpNode:
         return analysis.split_rust(self.cfg, self.mvir, n_code)
+
+    @step
+    def merge_op(self, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
+        return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)

@@ -66,9 +66,15 @@ RUN cd /opt/hayroll/Hayroll \
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
+COPY tools/rust_util/Cargo.toml tools/rust_util/Cargo.lock /opt/crisp-tools/rust_util/
+COPY tools/rust_util/src/ /opt/crisp-tools/rust_util/src/
 COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
 COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
+COPY tools/split_rust/Cargo.toml tools/split_rust/Cargo.lock /opt/crisp-tools/split_rust/
+COPY tools/split_rust/src/ /opt/crisp-tools/split_rust/src/
+
 RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+RUN cargo install --locked --path /opt/crisp-tools/split_rust
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo

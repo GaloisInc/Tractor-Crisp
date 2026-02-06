@@ -55,15 +55,19 @@ class ResponseEvaluator:
         else:
             with tempfile.NamedTemporaryFile(
                 suffix = '.rs',
-                mode = 'w',
-                encoding = 'utf-8'
+                delete = False
             ) as f:
                 f.write(code)
-                #TODO evaluate the Rust file produced in f.name, then
-                # replace the following lines with appopriate score and feedback
-                # can also add objective scores, e.g. logical errors, compiler errors, etc
-                score = self.failure_score
-                feedback = "The generated response is ..."
+                f.flush()
+                tmp_filepath = f.name
+
+            #TODO evaluate the Rust file produced in f.name, then
+            # replace the following lines with appopriate score and feedback
+            # can also add objective scores, e.g. logical errors, compiler errors, etc
+            score = self.failure_score
+            feedback = "The generated response is ..."
+
+            Path(tmp_filepath).unlink()
 
         return EvaluationResult(
             score = score,
@@ -94,7 +98,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         for task in batch:
             messages = [
                 {'role': 'system', 'content': candidate['system_prompt']},
-                {'role': 'user', 'content': task.input}
+                {'role': 'user', 'content': task['input']}
             ]
 
             # If the model is the path to a GGUF file, use Llama CPP to run it

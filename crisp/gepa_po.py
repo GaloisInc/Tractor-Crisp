@@ -10,10 +10,12 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 
 from dataclasses import dataclass
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
+import json
 import litellm
 from llama_cpp import Llama
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 from typing import Any
 
@@ -41,31 +43,49 @@ class EvaluationResult:
 
 class ResponseEvaluator:
 
-    def __init__(self, failure_score: float = 0.0):
-        self.failure_score = failure_score
+    def __init__(
+        self,
+        score_success: float = 1.0,
+        score_compiles_but_unsafe: float = 0.5,
+        score_failure: float = 0.0
+    ):
+        self.score_success = score_success
+        self.score_compiles_but_unsafe = score_compiles_but_unsafe
+        self.score_failure = score_failure
 
     def __call__(self, response: str) -> EvaluationResult:
         m = re.search(r'<code>\n(?P<code>.*)</code>', response, flags=re.DOTALL)
         code = m.group('code') if m else ''
 
         if not code:
-            score = self.failure_score
+            score = self.score_failure
             feedback = "The generated response is not in the proper format. Please include safe Rust code as follows:\n<code>\nSafe Rust code\n</code>"
 
         else:
             with tempfile.NamedTemporaryFile(
                 suffix = '.rs',
+                mode = 'w',
+                encoding = 'utf-8',
                 delete = False
             ) as f:
                 f.write(code)
                 f.flush()
                 tmp_filepath = f.name
 
-            #TODO evaluate the Rust file produced in f.name, then
-            # replace the following lines with appopriate score and feedback
-            # can also add objective scores, e.g. logical errors, compiler errors, etc
-            score = self.failure_score
-            feedback = "The generated response is ..."
+            can_compile, compile_results = self.compile(tmp_filepath)
+            if not can_compile:
+                score = self.score_failure
+                feedback = f"The generated response includes Rust code that cannot compile. Please try again to produce Rust code that is correct and can compile, as well as safe.\nHere are the results of attempting to compile:\n{compile_results}"
+
+            else:
+                is_safe, unsafety_results = self.is_safe(tmp_filepath)
+                if not is_safe:
+                    score = self.score_compiles_but_unsafe
+                    feedback = f"The generated response includes Rust code that successfully compiles, but is unsafe. Please try again to produce safe Rust code.\nHere is some additional feedback on un-safety that might be useful:\n{unsafety_results}"
+
+                else:
+                    score = self.score_success
+                    feedback = "The generated response includes Rust code that successfully compiles, and is safe. Good job!"
 
             Path(tmp_filepath).unlink()
 
@@ -73,6 +93,60 @@ class ResponseEvaluator:
             score = score,
             feedback = feedback
         )
+
+    @staticmethod
+    def compile(filepath: str) -> tuple[bool, str]:
+
+        # Create a temporary directory to hold the rlib file
+        with tempfile.TemporaryDirectory() as out_dir:
+            out_dir = Path(out_dir)
+
+            # Try binary
+            r = subprocess.run(
+                ["rustc", filepath, "--out-dir", out_dir],
+                stdout = subprocess.PIPE,
+                stderr = subprocess.PIPE,
+                text = True
+            )
+            if r.returncode == 0:
+                return True, r.stderr
+
+            # Try library
+            r = subprocess.run(
+                ["rustc", "--crate-type=lib", filepath, "--out-dir", out_dir],
+                stdout = subprocess.PIPE,
+                stderr = subprocess.PIPE,
+                text = True
+            )
+            if r.returncode == 0:
+                return True, r.stderr
+
+            return False, r.stderr
+
+    @staticmethod
+    def is_safe(filepath: str) -> tuple[bool, str]:
+        with open(filepath, 'rb') as f:
+            r = subprocess.run(
+                ["cargo", "run", "--", "--single-file"],
+                cwd = Path(__file__).parent.parent / 'tools/find_unsafe',
+                stdin = f,
+                stdout = subprocess.PIPE,
+                stderr = subprocess.PIPE,
+                text = True
+            )
+        out = json.loads(r.stdout.strip())
+        internal_unsafe_fns = out['input.rs']['internal_unsafe_fns']
+        fns_containing_unsafe = out['input.rs']['fns_containing_unsafe']
+
+        output_str = ''
+        if internal_unsafe_fns:
+            internal_unsafe_fns = ', '.join([f'`{elem}`' for elem in internal_unsafe_fns])
+            output_str += f"Internal unsafe functions are {internal_unsafe_fns}. "
+        if fns_containing_unsafe:
+            fns_containing_unsafe = ', '.join([f'`{elem}`' for elem in fns_containing_unsafe])
+            output_str += f"Functions containing unsafe are {fns_containing_unsafe}. "
+
+        return (not internal_unsafe_fns and not fns_containing_unsafe), output_str
 
 
 class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):

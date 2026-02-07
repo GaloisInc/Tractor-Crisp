@@ -36,6 +36,9 @@ COPY .cargo/config.toml $CARGO_HOME/config.toml
 ENV XDG_BIN_HOME=/usr/local/bin
 # `uv` installs data (like libraries) in `$XDG_DATA_HOME/uv`.
 ENV XDG_DATA_HOME=/usr/local
+# We pin the `uv` version because using directories not owned by the user
+# may not be supported by `uv` in the future,
+# but it works in the current version.
 RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 

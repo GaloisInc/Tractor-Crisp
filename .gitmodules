@@ -1,3 +1,6 @@
 [submodule "deps/c2rust"]
 	path = deps/c2rust
 	url = https://github.com/immunant/c2rust.git
+[submodule "deps/hayroll"]
+	path = deps/hayroll
+	url = https://github.com/UW-HARVEST/Hayroll.git

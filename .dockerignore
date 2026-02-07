@@ -33,3 +33,6 @@
 # c2rust submodules
 /deps/c2rust/tests/
 /deps/c2rust/examples/
+
+# hayroll build dir
+/deps/hayroll/build/

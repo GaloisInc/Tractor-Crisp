@@ -56,18 +56,13 @@ RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-RUN mkdir -p /opt/hayroll \
-    && cd /opt/hayroll \
-    && git clone --depth 1 https://github.com/UW-HARVEST/Hayroll \
-    && cd Hayroll \
-    && git fetch --depth 1 origin fed1474939fe0dd161ad30413d5225252a8fe471 \
-    && git checkout FETCH_HEAD
+COPY deps/hayroll /opt/hayroll/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
-RUN cd /opt/hayroll/Hayroll \
+RUN cd /opt/hayroll/hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19
-RUN cd /opt/hayroll/Hayroll \
+RUN cd /opt/hayroll/hayroll \
     && ./build.bash --release
-RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
+RUN ln -s /opt/hayroll/hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/

@@ -20,6 +20,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Note that this ignores `update = none` submodules,
+          # like the ones in `c2rust`.
+          # This is intended; we only want a shallow clone.
+          submodules: true
 
       - uses: docker/login-action@v3
         with:

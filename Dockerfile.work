@@ -48,11 +48,7 @@ RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 
 # Install c2rust
-RUN cd /opt \
-    && git clone --depth 1 https://github.com/immunant/c2rust \
-    && cd c2rust \
-    && git fetch --depth 1 origin 1b2818697e2322b99ca0b78d8e23e8c965451343 \
-    && git checkout FETCH_HEAD
+COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt

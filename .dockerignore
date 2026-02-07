@@ -21,3 +21,15 @@
 # vscode
 **/.vscode/
 *.code-workspace
+
+# c2rust-analyze
+*.rlib
+*.analysis.txt
+**/polonius_cache/
+
+# c2rust-instrument
+**/instrument.target/
+
+# c2rust submodules
+/deps/c2rust/tests/
+/deps/c2rust/examples/

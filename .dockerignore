@@ -1,0 +1,23 @@
+# git
+**/.git/
+
+# cargo
+**/target/
+
+# python
+**/.venv/
+**/__pycache__/
+**/*.egg-info/
+
+# ruff
+**/.ruff_cache/
+
+# mypy
+**/.mypy_cache/
+
+# clangd
+**/.cache/clangd/
+
+# vscode
+**/.vscode/
+*.code-workspace

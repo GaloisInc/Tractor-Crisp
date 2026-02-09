@@ -220,7 +220,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         for traj in (eval_batch.trajectories or []):
             dataset['system_prompt'].append(
                 {
-                    "Inputs": traj.task.input,
+                    "Inputs": traj.task['input'],
                     "Generated Outputs": traj.response,
                     "Feedback": traj.feedback,
                 }

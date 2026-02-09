@@ -157,6 +157,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         evaluator: Any = ResponseEvaluator()
     ):
         self.model = model
+        self.llama_cpp_model = None if not self.model.endswith('.gguf') else Llama(
+            model_path = self.model,
+            n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
+            n_ctx = 8192 # can set to 0 for model's default
+        )
         self.evaluator = evaluator
 
     def evaluate(
@@ -175,17 +180,12 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 {'role': 'user', 'content': task['input']}
             ]
 
-            # If the model is the path to a GGUF file, use Llama CPP to run it
-            if self.model.endswith('.gguf'):
-                llama_cpp_model = Llama(
-                    model_path = self.model,
-                    n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
-                    n_ctx = 0 # set to model's default
-                )
-                response = llama_cpp_model.create_chat_completion(messages = messages)
+            # If the Llama CPP model exists (i.e. self.model is GGUF), run that
+            if self.llama_cpp_model is not None:
+                response = self.llama_cpp_model.create_chat_completion(messages = messages)
                 response = response['choices'][0]['message']['content']
 
-            # Otherwise, use LiteLLM to run it
+            # Otherwise, use LiteLLM to run self.model
             else:
                 response = litellm.completion(model = self.model, messages = messages)
                 response = response.choices[0].message.content

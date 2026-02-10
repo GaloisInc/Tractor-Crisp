@@ -183,11 +183,13 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             # If the Llama CPP model exists (i.e. self.model is GGUF), run that
             if self.llama_cpp_model is not None:
                 response = self.llama_cpp_model.create_chat_completion(messages = messages)
+                print("==================== OBTAINED LLAMA CPP MODEL RESPONSE ====================")
                 response = response['choices'][0]['message']['content']
 
             # Otherwise, use LiteLLM to run self.model
             else:
                 response = litellm.completion(model = self.model, messages = messages)
+                print("==================== OBTAINED LITELLM MODEL RESPONSE ====================")
                 response = response.choices[0].message.content
 
             outputs.append(TaskOutput(response = response))
@@ -203,6 +205,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
                 )
 
+        print("==================== RETURNING EVALUATION BATCH ====================")
         return EvaluationBatch(
             outputs = outputs,
             scores = scores,

@@ -94,7 +94,9 @@ def run_crisp(
         reflection_lm = "openai/gpt-5"
     )
 
-    print("GEPA Optimized Prompt:", gepa_result.best_candidate['system_prompt'])
+    print("==================== START GEPA OPTIMIZED PROMPT ====================")
+    print(gepa_result.best_candidate['system_prompt'])
+    print("==================== END GEPA OPTIMIZED PROMPT ====================")
 
 
 if __name__ == "__main__":

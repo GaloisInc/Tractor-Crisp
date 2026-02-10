@@ -13,8 +13,6 @@ import os
 from crisp.gepa_po import RustAdapter
 
 
-UNSAFE_RUST_PROJECTS_FOLDER = Path(__file__).resolve().parent.parent / 'converted_rust_projects'
-
 # Set environment variable in the way GEPA expects
 openai_api_key = os.getenv('TRACTOR_OPENAI_API_KEY')
 os.environ['OPENAI_API_KEY'] = openai_api_key
@@ -60,24 +58,33 @@ def run_aime_example():
     print("GEPA Optimized Prompt:", gepa_result.best_candidate['system_prompt'])
 
 
-def run_crisp(
+def run_rust(
+    dataset_path: str | Path,
+    trainset_frac: float = 0.5,
     task_lm: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
-    trainset_frac: float = 0.5
+    reflection_lm: str = 'openai/gpt-5',
+    max_metric_calls: int = 150
 ):
     """
-    Run on CRISP.
+    Run GEPA to convert unsafe Rust to safe Rust.
+
+    Inputs:
+    - dataset_path: Path to a folder containing unsafe Rust projects and .rs files inside.
+    - trainset_frac: The fraction of .rs files inside `dataset_path` that will be used for training. The rest will be used for validation.
+    - task_lm: The LM being optimized. Either a string, or the path to a GGUF file.
+    - reflection_lm: The (usually more powerful) LM being used for reflection. Either a string, or the path to a GGUF file.
+    - max_metric_calls: Required for gepa.optimize().
     """
 
     # Load datasets
     trainset, valset = [], []
-    source_projects_folderpath = UNSAFE_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_organic'
-    source_filepaths = list(source_projects_folderpath.rglob('*.rs'))
+    source_filepaths = list(Path(dataset_path).resolve().rglob('*.rs'))
     random.shuffle(source_filepaths)
     for i,source_filepath in enumerate(source_filepaths):
         with open(source_filepath, 'r', encoding='utf-8') as f:
             task_input = {
                 'input': f"<code>\n{f.read()}\n</code>",
-                'filepath': source_filepath.relative_to(UNSAFE_RUST_PROJECTS_FOLDER)
+                'filepath': source_filepath
             }
         (trainset if i < trainset_frac*len(source_filepaths) else valset).append(task_input)
 
@@ -90,8 +97,8 @@ def run_crisp(
         trainset = trainset,
         valset = valset,
         adapter = adapter,
-        max_metric_calls = 150,
-        reflection_lm = "openai/gpt-5"
+        max_metric_calls = max_metric_calls,
+        reflection_lm = reflection_lm
     )
 
     print("==================== START GEPA OPTIMIZED PROMPT ====================")
@@ -100,4 +107,6 @@ def run_crisp(
 
 
 if __name__ == "__main__":
-    run_crisp()
+    run_rust(
+        dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
+    )

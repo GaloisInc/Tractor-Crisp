@@ -1,6 +1,9 @@
+#!/usr/bin/env -S uv run
+
 import argparse
 import json
 import os
+from pathlib import Path
 import sys
 import subprocess
 import tempfile
@@ -9,7 +12,7 @@ import toml
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('project_dir')
-    ap.add_argument('--main-compilation-unit', default='main',
+    ap.add_argument('--main-compilation-unit',
         help='name of the compilation unit that defines `main`')
     return ap.parse_args()
 
@@ -57,6 +60,26 @@ def get_target_info(project_dir):
 
         return j_target
 
+def file_contains_main(path: Path) -> bool:
+    p = subprocess.run(
+            ('ctags', '-x', path),
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True)
+    for line in p.stdout.splitlines():
+        parts = line.split()
+        if len(parts) > 0 and parts[0] == 'main':
+            return True
+    return False
+
+def find_file_containing_main(project_dir: str, j_target) -> str | None:
+    for j_source in j_target['sources']:
+        path = Path(j_source['path'])
+        full_path = Path(project_dir).joinpath('test_case', path)
+        if file_contains_main(full_path):
+            return path.stem
+    return None
+
 def find_git_root(path):
     orig_path = path
     while True:
@@ -83,7 +106,7 @@ def run_crisp(cli_args, *args, **kwargs):
     else:
         env['PYTHONPATH'] += ':' + crisp_dir
 
-    python3_bin = os.path.join(crisp_dir, 'venv', 'bin', 'python3')
+    python3_bin = os.path.join(crisp_dir, '.venv', 'bin', 'python3')
     cmd = (python3_bin, '-m', 'crisp') + args
 
     return subprocess.run(cmd, **kwargs)
@@ -104,8 +127,8 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests --root {base_dir} -s {example_dir}
-python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
+python3 -m runtests.ci --root ../../.. -s {example_dir}
+python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]
@@ -128,8 +151,8 @@ set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 cd {example_dir}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests --root {base_dir} -s {example_dir}
-python3 -m runtests --root {base_dir} -s {example_dir} --rust --verbose
+python3 -m runtests.ci --root ../../.. -s {example_dir}
+python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]
@@ -152,8 +175,15 @@ def main():
     match target_info['type']:
         case 'STATIC_LIBRARY' | 'SHARED_LIBRARY':
             cfg_template = LIB_CONFIG_STR
+            main_compilation_unit = None
         case 'EXECUTABLE':
             cfg_template = BIN_CONFIG_STR
+            main_compilation_unit = args.main_compilation_unit
+            if main_compilation_unit is None:
+                main_compilation_unit = find_file_containing_main(args.project_dir, target_info)
+                print(f'autodetected main compilation unit = {main_compilation_unit!r}')
+            if main_compilation_unit is None:
+                raise ValueError('--main-compilation-unit is unset and autodetection failed')
         case t:
             raise ValueError('unknown CMake target type %r' % (t,))
 
@@ -161,7 +191,7 @@ def main():
             base_dir = os.path.relpath(base_dir, args.project_dir),
             example_dir = example_dir_rel,
             example_name = target_info['name'],
-            main_compilation_unit = args.main_compilation_unit,
+            main_compilation_unit = main_compilation_unit,
             )
     with open(os.path.join(args.project_dir, 'crisp.toml'), 'w') as f:
         f.write(cfg_str)

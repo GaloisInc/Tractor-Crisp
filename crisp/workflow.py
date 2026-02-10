@@ -21,7 +21,7 @@ This Rust code was auto-translated from C, so it is partly unsafe. Your task is 
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
-After making the code safe, output the updated Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+After making the code safe, {output_instructions_lowercase}
 
 {input_files}
 '''
@@ -29,7 +29,7 @@ After making the code safe, output the updated Rust code in a Markdown code bloc
 LLM_REPAIR_PROMPT = '''
 I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
 
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+{output_instructions}
 
 {input_files}
 
@@ -45,7 +45,7 @@ I tried compiling this Rust code, but I got an error. Please fix the error so th
 
 Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
 
-Output the resulting Rust code in a Markdown code block, with the file path on the preceding line, as shown in the input.
+{output_instructions}
 
 {input_files}
 
@@ -119,9 +119,21 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
-    def transpile(self, c_code: TreeNode, hayroll: bool = False) -> TreeNode:
+    def transpile(
+        self,
+        c_code: TreeNode,
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
+        hayroll: bool = False,
+    ) -> TreeNode:
         compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(c_code, compile_commands, hayroll = hayroll)
+        n_op_transpile = self.transpile_cc_op(
+            c_code,
+            compile_commands,
+            src_loc_annotations=src_loc_annotations,
+            refactor_transforms=refactor_transforms,
+            hayroll=hayroll,
+        )
         if n_op_transpile.rust_code is None:
             print('error: transpile failed', file=sys.stderr)
             return None
@@ -146,8 +158,19 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
+        src_loc_annotations: bool = False,
+        refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
     ) -> TranspileOpNode:
+        if "reorganize_definitions" in refactor_transforms:
+            assert src_loc_annotations, (
+                "reorganize_definitions requires src loc annotations"
+            )
+        if hayroll:
+            assert len(refactor_transforms) == 0, (
+                "refactor_transforms are not supported with hayroll yet"
+            )
+
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
             import json, shlex
@@ -178,24 +201,49 @@ class Workflow:
             # Run c2rust-transpile
             if not hayroll:
                 c2rust_cmd = [
-                        'c2rust', 'transpile',
-                        sb.join(COMPILE_COMMANDS_PATH),
-                        '--output-dir', sb.join(output_path),
-                        '--emit-build-files',
-                        ]
+                    "c2rust",
+                    "transpile",
+                    sb.join(COMPILE_COMMANDS_PATH),
+                    "--output-dir",
+                    sb.join(output_path),
+                    "--emit-build-files",
+                    "--c2rust-dir",
+                    "/opt/c2rust/",
+                ]
+                if src_loc_annotations:
+                    c2rust_cmd += [
+                        "--reorganize-definitions",
+                        "--disable-refactoring",
+                    ]
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
+
+                for transform in refactor_transforms:
+                    if exit_code == 0:
+                        c2rust_refactor_cmd = [
+                            "c2rust",
+                            "refactor",
+                            "--cargo",
+                            "--rewrite-mode",
+                            "inplace",
+                            transform,
+                        ]
+                        new_exit_code, new_logs = sb.run(
+                            c2rust_refactor_cmd, cwd=output_path
+                        )
+                        exit_code = new_exit_code
+                        logs += new_logs
+
+                if exit_code == 0:
+                    new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
+                    exit_code = new_exit_code
+                    logs += new_logs
+
             else:
-                # Hacks to get the C path relative to `n_tree`.  This handles
-                # tricks like `base_dir = ".."` used by the testing scripts.
-                # TODO: clean up config path handling and get rid of this
-                config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-                base_path = os.path.abspath(cfg.base_dir)
-                c_path = os.path.join(config_path, cfg.transpile.cmake_src_dir)
-                c_path_rel = os.path.relpath(c_path, base_path)
+                c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
                 # Setting `--project-dir` explicitly prevents Hayroll from
                 # including various ancestor directories as intermediate
@@ -208,6 +256,7 @@ class Workflow:
                         sb.join(output_path),
                         '--project-dir', os.path.join(c_path_rel, 'src'),
                         ]
+                # hayroll already has c2rust-transpile emit src loc annotations.
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', cfg.transpile.bin_main,
@@ -239,7 +288,7 @@ class Workflow:
 
         if exit_code != 0:
             # TODO: proper log parsing
-            print(repr(logs))
+            print(logs.decode())
         print('c2rust process %s with code %d:\n%s' % (
             'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
 
@@ -274,18 +323,6 @@ class Workflow:
             t['package']['name'] = cfg.project_name
             t['lib']['name'] = cfg.project_name
             t['lib']['crate-type'] = ['cdylib']
-
-        bitfields_ver = t.get('dependencies', {}).get('c2rust-bitfields')
-        if bitfields_ver is not None:
-            assert isinstance(bitfields_ver, str), (
-                f'expected version string for c2rust-bitfields, but got {repr(bitfields_ver)}')
-            # `c2rust-bitfields` is present and is a plain version dependency
-            # like `c2rust-bitfields = "1.2.3"`.  Replace it with a path dependency
-            # with the same version number.
-            t['dependencies']['c2rust-bitfields'] = {
-                'version': bitfields_ver,
-                'path': '/opt/c2rust/c2rust-bitfields',
-            }
 
         new_files = code.files.copy()
         new_files[cargo_toml_path] = FileNode.new(mvir, toml.dumps(t)).node_id()
@@ -442,13 +479,7 @@ class Workflow:
     def split_ffi_op(self, n_tree: TreeNode) -> SplitFfiOpNode:
         cfg, mvir = self.cfg, self.mvir
 
-        # Hacks to get the transpiled Rust path relative to `n_tree`.  This handles
-        # tricks like `base_dir = ".."` used by the testing scripts.
-        # TODO: clean up config path handling and get rid of this
-        config_path = os.path.abspath(os.path.dirname(cfg.config_path))
-        base_path = os.path.abspath(cfg.base_dir)
-        rust_path = os.path.join(config_path, cfg.transpile.output_dir)
-        rust_path_rel = os.path.relpath(rust_path, base_path)
+        rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
 
         with run_sandbox(cfg, mvir) as sb:
             sb.checkout(n_tree)

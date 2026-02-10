@@ -24,14 +24,10 @@ RUN rustup toolchain add \
     --component rustfmt \
     nightly-2023-04-15
 
-# Update crates.io index for future use.  There's no dedicated command to force
-# an update, but adding a dependency will do it.
-# https://stackoverflow.com/a/74708239
-RUN mkdir /tmp/empty_project \
-    && cd /tmp/empty_project \
-    && cargo +nightly-2022-08-08 init \
-    && cargo +nightly-2022-08-08 add serde \
-    && rm -rf /tmp/empty_project
+# Enable sparse registry
+ENV CARGO_HOME=/usr/local/cargo
+RUN mkdir -p $CARGO_HOME
+COPY .cargo/config.toml $CARGO_HOME/config.toml
 
 # `uv` is required for building c2rust-refactor
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -40,17 +36,16 @@ RUN uv python install
 
 # Install c2rust
 RUN cd /opt \
-    && git clone https://github.com/immunant/c2rust --depth 1 \
+    && git clone --depth 1 https://github.com/immunant/c2rust \
     && cd c2rust \
-    && git fetch --depth 1 origin 5d5295e5253db46c3124f264622673b307d2d04e \
+    && git fetch --depth 1 origin e8d55cdc311912889ea82db6979c3709c7c8c4b2 \
     && git checkout FETCH_HEAD
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
-RUN cd /opt/c2rust \
-    && cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust
-RUN cd /opt/c2rust \
-    && cargo +nightly-2022-08-08 install --locked --path /opt/c2rust/c2rust-refactor
+RUN cargo install --locked --path /opt/c2rust/c2rust
+# `cd` to resolve the `rust-toolchain.toml`.
+RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 
 # Install hayroll
 #
@@ -59,17 +54,21 @@ RUN cd /opt/c2rust \
 # right version.
 RUN mkdir -p /opt/hayroll \
     && cd /opt/hayroll \
-    && git clone https://github.com/UW-HARVEST/Hayroll \
+    && git clone --depth 1 https://github.com/UW-HARVEST/Hayroll \
     && cd Hayroll \
-    && git checkout a35b1028c16d5784f45cdbcedff81960d8be8899 \
-    && ./prerequisites.bash --no-sudo --llvm-version 18 \
-    && ./build.bash
+    && git fetch --depth 1 origin fed1474939fe0dd161ad30413d5225252a8fe471 \
+    && git checkout FETCH_HEAD
+# Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
+RUN cd /opt/hayroll/Hayroll \
+    && ./prerequisites.bash --no-sudo --llvm-version 19
+RUN cd /opt/hayroll/Hayroll \
+    && ./build.bash --release
 RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
-COPY tools/split_ffi_entry_points /opt/crisp-tools/split_ffi_entry_points
+COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
+COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
 RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
-
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -100,7 +99,6 @@ RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
 
-COPY tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
-COPY tools/find_unsafe/Cargo.toml ./tools/find_unsafe/
+COPY tools/find_unsafe/Cargo.toml tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
 COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
-RUN cd tools/find_unsafe && cargo build --release
+RUN cargo install --locked --path tools/find_unsafe

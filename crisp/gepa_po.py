@@ -160,7 +160,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         self.llama_cpp_model = None if not self.model.endswith('.gguf') else Llama(
             model_path = self.model,
             n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
-            n_ctx = 8192 # can set to 0 for model's default
+            n_ctx = 0 # 0 = model's default
         )
         self.evaluator = evaluator
 

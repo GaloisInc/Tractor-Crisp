@@ -471,6 +471,8 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'transpile'))
 
+    n_code = w.rename_idiomatic(n_code)
+
     n_code = w.split_ffi(n_code)
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
@@ -483,7 +485,7 @@ def do_main(args, cfg):
         if unsafe_count == 0:
             break
 
-        n_new_code = w.llm_safety(n_code)
+        n_new_code = w.llm_safety_no_ffi(n_code)
 
         for repair_try in range(3):
             n_op_check = w.cargo_check_json_op(n_new_code)

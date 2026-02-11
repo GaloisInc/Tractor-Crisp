@@ -55,6 +55,11 @@ def parse_args():
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
 
+    repl = sub.add_parser('repl')
+
+    eval_ = sub.add_parser('eval')
+    eval_.add_argument('expr')
+
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
 
@@ -204,6 +209,10 @@ def parse_node_id_arg_and_check_tag(mvir, s):
         return (matches[0], False)
     else:
         raise ValueError('found multiple nodes with prefix %r: %r' % (s, matches))
+
+def parse_node_id(mvir, s):
+    node_id, _is_tag = parse_node_id_arg_and_check_tag(mvir, s)
+    return node_id
 
 
 def do_llm(args, cfg):
@@ -504,6 +513,28 @@ def do_main(args, cfg):
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 
+def repl_locals(cfg, mvir, w):
+    return dict(
+        cfg = cfg,
+        mvir = mvir,
+        w = w,
+        node = lambda s: mvir.node(parse_node_id(mvir, s)),
+    )
+
+def do_repl(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    import code
+    code.interact(local = repl_locals(cfg, mvir, w))
+
+def do_eval(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    x = eval(args.expr, globals(), repl_locals(cfg, mvir, w))
+    print(x)
+
 def do_reflog(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     for x in mvir.tag_reflog(args.tag):
@@ -631,6 +662,10 @@ def main():
 
     if args.cmd == 'main':
         do_main(args, cfg)
+    elif args.cmd == 'repl':
+        do_repl(args, cfg)
+    elif args.cmd == 'eval':
+        do_eval(args, cfg)
     elif args.cmd == 'reflog':
         do_reflog(args, cfg)
     elif args.cmd == 'tag':

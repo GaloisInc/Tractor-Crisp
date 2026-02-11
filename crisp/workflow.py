@@ -708,9 +708,10 @@ class Workflow:
     ) -> CrateNode:
         cfg, mvir = self.cfg, self.mvir
 
-        ffi_file = FileNode.new(mvir,
-            '\n\n'.join(mvir.node(v).body_str()
-                for k,v in ffi_defs.defs.items() if k.endswith('_ffi')))
+        ffi_defs_list = [mvir.node(v) for k,v in ffi_defs.defs.items() if k.endswith('_ffi')]
+        if len(ffi_defs_list) == 0:
+            return CrateNode.new(mvir, defs = {})
+        ffi_file = FileNode.new(mvir, '\n\n'.join(d.body_str() for d in ffi_defs_list))
         ffi_tree = TreeNode.new(mvir, files = {'ffi.rs': ffi_file.node_id()})
 
         old_sigs_str = '\n'.join(mvir.node(v).body_str() for v in old_sigs.defs.values())

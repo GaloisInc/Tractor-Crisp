@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import toml
-from typing import Any
+from typing import Any, Callable
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
@@ -13,7 +13,7 @@ from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, SplitOpNode, MergeOpNode,
-    CrateNode,
+    CrateNode, DefNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -23,6 +23,14 @@ LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+
+After making the code safe, {output_instructions_lowercase}
+
+{input_files}
+'''
+
+LLM_SAFETY_PROMPT_NO_FFI = '''
+This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
 After making the code safe, {output_instructions_lowercase}
 
@@ -57,6 +65,64 @@ Compiler logs:
 ```
 {stderr}
 ```
+'''
+
+LLM_PROMPT_REPAIR_CALL_SITES = '''
+The file `ffi.rs` below contains FFI wrapper functions, which expose various Rust functions to C. The signatures of the underlying Rust functions have changed; please update the wrappers to match.
+
+{output_instructions}
+
+Old signatures:
+```rust
+{old_sigs}
+```
+
+New signatures:
+```rust
+{new_sigs}
+```
+
+{input_files}
+'''
+
+LLM_PROMPT_RENAME_IDIOMATIC = '''
+This Rust code was auto-translated from C, so it uses unidiomatic names in some places.  Please find these cases and rename them according to Rust conventions: snake_case for functions and variables, CamelCase for types, and SNAKE_CASE for consts and statics.  Don't change anything but the names.
+
+{output_instructions}
+
+{input_files}
+'''
+
+LLM_PROMPT_EXTRACT_SIGS = '''
+Please extract function signatures (and only function signatures) from each
+input file.  For each one, output a file with the same name, but with all
+function bodies replaced with `/* ... */` and all non-function items removed.
+
+{output_instructions}
+
+Example input:
+
+<file name="example.rs">
+use core::ffi::c_int;
+type MyInt = c_int;
+fn f(x: c_int) -> c_int {{
+    x + 10
+}}
+fn g(a: &c_int, b: &mut c_int) {{
+    *b += a;
+}}
+</file>
+
+Example output:
+
+<file name="example.rs">
+fn f(x: c_int) -> c_int {{ /* ... */ }}
+fn g(a: &c_int, b: &mut c_int) {{ /* ... */ }}
+</file>
+
+Actual input:
+
+{input_files}
 '''
 
 
@@ -422,14 +488,22 @@ class Workflow:
         return analysis.find_unsafe(self.cfg, self.mvir, n_code)
 
     @step
-    def llm_safety(self, n_code: TreeNode) -> TreeNode:
-        n_new_code, n_op_llm = self.llm_safety_op(n_code)
+    def llm_safety(
+        self,
+        n_code: TreeNode,
+        prompt: str = LLM_SAFETY_PROMPT,
+    ) -> TreeNode:
+        n_new_code, n_op_llm = self.llm_safety_op(n_code, prompt = prompt)
         return n_new_code
 
     @step
-    def llm_safety_op(self, n_code: TreeNode) -> tuple[TreeNode, LlmOpNode]:
+    def llm_safety_op(
+        self,
+        n_code: TreeNode,
+        prompt: str = LLM_SAFETY_PROMPT,
+    ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
+                self.cfg, self.mvir, prompt, n_code,
                 glob_filter = self.cfg.src_globs)
 
     @step
@@ -518,9 +592,143 @@ class Workflow:
         return n_op
 
     @step
-    def split_op(self, n_code: TreeNode) -> SplitOpNode:
-        return analysis.split_rust(self.cfg, self.mvir, n_code)
+    def split(self, n_code: TreeNode, root_file: str | None = None) -> CrateNode:
+        n_op = self.split_op(n_code, root_file = root_file)
+        return self.mvir.node(n_op.crate_out)
+
+    @step
+    def split_op(self, n_code: TreeNode, root_file: str | None = None) -> SplitOpNode:
+        return analysis.split_rust(self.cfg, self.mvir, n_code, root_file = root_file)
+
+    @step
+    def merge(self, n_code: TreeNode, n_crate: CrateNode) -> TreeNode:
+        n_op = self.merge_op(n_code, n_crate)
+        return self.mvir.node(n_op.code_out)
 
     @step
     def merge_op(self, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
         return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)
+
+    def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
+        mvir = self.mvir
+
+        crate = self.split(code)
+
+        # TODO: update merge_rust to delete defs that are absent from the json
+        # input, then change this to simply filter out defs instead of
+        # replacing them with `empty_def`
+        empty_def = DefNode.new(mvir, b'')
+        crate_erased = CrateNode.new(mvir,
+            defs = {k: v if f(k) else empty_def.node_id() for k, v in crate.defs.items()})
+        return crate_erased
+
+    @step
+    def erase_ffi(self, code: TreeNode) -> TreeNode:
+        """
+        Erase all function definitions named `*_ffi` from `code`.  They can be
+        handled separately and re-inserted using `unerase_ffi`.
+        """
+        crate_erased = self._filter_defs(code, lambda k: not k.endswith('_ffi'))
+        code_erased = self.merge(code, crate_erased)
+        return code_erased
+
+    @step
+    def extract_ffi_defs(self, code: TreeNode) -> CrateNode:
+        """
+        Extract FFI function definitions from `code`.
+        """
+        return self._filter_defs(code, lambda k: k.endswith('_ffi'))
+
+    @step
+    def unerase_ffi(self,
+            code_old: TreeNode, code_new: TreeNode, crate_ffi: CrateNode) -> TreeNode:
+        mvir = self.mvir
+
+        crate_new = self.split(code_new)
+
+        defs_out = crate_new.defs.copy()
+        defs_out.update((k, v) for k,v in crate_ffi.defs.items()
+            if k.endswith('_ffi'))
+        crate_out = CrateNode.new(mvir, defs = defs_out)
+
+        code_out = self.merge(code_old, crate_out)
+        return code_out
+
+    @step
+    def llm_safety_no_ffi(self, orig_code: TreeNode) -> TreeNode:
+        main_code = self.erase_ffi(orig_code)
+        # TODO: alternate safety prompt
+        new_main_code = self.llm_safety(main_code, prompt = LLM_SAFETY_PROMPT_NO_FFI)
+
+        orig_sigs = self.extract_sigs(orig_code)
+        main_sigs = self.extract_sigs(new_main_code)
+        ffi_defs = self.extract_ffi_defs(orig_code)
+        new_ffi_defs = self.llm_repair_call_sites(ffi_defs, orig_sigs, main_sigs)
+
+        code = self.unerase_ffi(orig_code, new_main_code, new_ffi_defs)
+        return code
+
+    @step
+    def rename_idiomatic(self, code: TreeNode) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        # TODO: replace with a symbolic tool.  Use suggested names from
+        # `bad_style` lints: see `compiler/rustc_lint/src/nonstandard_style.rs`
+
+        code, _llm_op = llm.run_rewrite(
+                cfg, mvir, LLM_PROMPT_RENAME_IDIOMATIC, code,
+                glob_filter = cfg.src_globs)
+
+        n_op_check = self.cargo_check_json_op(code)
+        if not n_op_check.passed:
+            raise ValueError('rename_idiomatic: llm introduced a compile error')
+
+        return code
+
+    @step
+    def extract_sigs(self, code: TreeNode) -> CrateNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        # TODO: replace with a symbolic tool
+
+        sigs_code, _llm_op = llm.run_rewrite(
+                cfg, mvir, LLM_PROMPT_EXTRACT_SIGS, code,
+                glob_filter = cfg.src_globs)
+
+        sigs_crate = self.split(sigs_code)
+
+        return sigs_crate
+
+    @step
+    def llm_repair_call_sites(
+        self,
+        ffi_defs: CrateNode,
+        old_sigs: CrateNode,
+        new_sigs: CrateNode,
+    ) -> CrateNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        ffi_file = FileNode.new(mvir,
+            '\n\n'.join(mvir.node(v).body_str()
+                for k,v in ffi_defs.defs.items() if k.endswith('_ffi')))
+        ffi_tree = TreeNode.new(mvir, files = {'ffi.rs': ffi_file.node_id()})
+
+        old_sigs_str = '\n'.join(mvir.node(v).body_str() for v in old_sigs.defs.values())
+        new_sigs_str = '\n'.join(mvir.node(v).body_str() for v in new_sigs.defs.values())
+
+        new_ffi_tree, _llm_op = llm.run_rewrite(
+                cfg, mvir, LLM_PROMPT_REPAIR_CALL_SITES, ffi_tree,
+                format_kwargs = dict(
+                    old_sigs = old_sigs_str,
+                    new_sigs = new_sigs_str,
+                ))
+
+        # `new_ffi_tree` has a flat module structure; all FFI functions are at
+        # top level.  We need to move these back to their respective paths.
+        new_ffi_crate_renamed = self.split(new_ffi_tree, root_file = 'ffi.rs')
+        print(new_ffi_crate_renamed.defs)
+        new_ffi_defs = CrateNode.new(mvir,
+            defs = {k: new_ffi_crate_renamed.defs[k.rpartition('::')[2]]
+                for k in ffi_defs.defs.keys() if k.endswith('_ffi')})
+
+        return new_ffi_defs

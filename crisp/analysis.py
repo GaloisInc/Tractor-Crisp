@@ -399,11 +399,19 @@ def _split_rust_impl(
     )
     return n_op
 
-def split_rust(cfg: Config, mvir: MVIR, n_code: TreeNode) -> SplitOpNode:
+def split_rust(
+    cfg: Config,
+    mvir: MVIR,
+    n_code: TreeNode,
+    root_file: str | None = None,
+) -> SplitOpNode:
     with run_sandbox(cfg, mvir) as sb:
-        cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
-        root_file = os.path.join(cargo_dir, 'src/lib.rs')
-        cmd = ['split_rust', root_file, '--output-path', sb.join("out.json")]
+        if root_file is None:
+            cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
+            sb_root_file = os.path.join(cargo_dir, 'src/lib.rs')
+        else:
+            sb_root_file = sb.join(root_file)
+        cmd = ['split_rust', sb_root_file, '--output-path', sb.join("out.json")]
         n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

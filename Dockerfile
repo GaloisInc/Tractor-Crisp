@@ -43,11 +43,7 @@ RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 
 # Install c2rust
-RUN cd /opt \
-    && git clone --depth 1 https://github.com/immunant/c2rust \
-    && cd c2rust \
-    && git fetch --depth 1 origin 1b2818697e2322b99ca0b78d8e23e8c965451343 \
-    && git checkout FETCH_HEAD
+COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
@@ -60,22 +56,16 @@ RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-RUN mkdir -p /opt/hayroll \
-    && cd /opt/hayroll \
-    && git clone --depth 1 https://github.com/UW-HARVEST/Hayroll \
-    && cd Hayroll \
-    && git fetch --depth 1 origin fed1474939fe0dd161ad30413d5225252a8fe471 \
-    && git checkout FETCH_HEAD
+COPY deps/hayroll /opt/hayroll/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
-RUN cd /opt/hayroll/Hayroll \
+RUN cd /opt/hayroll/hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19
-RUN cd /opt/hayroll/Hayroll \
+RUN cd /opt/hayroll/hayroll \
     && ./build.bash --release
-RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
+RUN ln -s /opt/hayroll/hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
-COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
-COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
+COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
 RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
 
 # Set up sudo so CRISP can use it for sandboxing
@@ -107,6 +97,5 @@ RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
 
-COPY tools/find_unsafe/Cargo.toml tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
-COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
+COPY tools/find_unsafe/ ./tools/find_unsafe/
 RUN cargo install --locked --path tools/find_unsafe

@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import subprocess
+import toml
 import typing
 
 from . import inline_errors as inline_errors_module
@@ -399,19 +400,41 @@ def _split_rust_impl(
     )
     return n_op
 
+def cargo_target_root_file(t: dict) -> str | None:
+    if (path := t.get('path')) is not None:
+        return path
+    if (name := t.get('name')) is not None:
+        return f'src/{name}'
+    return None
+
+def detect_root_file(cfg: Config, mvir: MVIR, n_code: TreeNode) -> str:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    cargo_toml_path = os.path.join(cargo_dir, 'Cargo.toml')
+    n_cargo_toml = mvir.node(n_code.files[cargo_toml_path])
+    t = toml.loads(n_cargo_toml.body_str())
+
+    for t_bin in t.get('bin', ()):
+        if (path := cargo_target_root_file(t_bin)) is not None:
+            return path
+
+    if (t_lib := t.get('lib')) is not None:
+        if (path := cargo_target_root_file(t_lib)) is not None:
+            return path
+
+    return 'src/lib.rs'
+
 def split_rust(
     cfg: Config,
     mvir: MVIR,
     n_code: TreeNode,
     root_file: str | None = None,
 ) -> SplitOpNode:
+    if root_file is None:
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = detect_root_file(cfg, mvir, n_code)
+        root_file = os.path.join(cargo_dir, root_file_rel)
     with run_sandbox(cfg, mvir) as sb:
-        if root_file is None:
-            cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
-            sb_root_file = os.path.join(cargo_dir, 'src/lib.rs')
-        else:
-            sb_root_file = sb.join(root_file)
-        cmd = ['split_rust', sb_root_file, '--output-path', sb.join("out.json")]
+        cmd = ['split_rust', sb.join(root_file), '--output-path', sb.join("out.json")]
         n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
@@ -455,10 +478,11 @@ def _merge_rust_impl(
     return n_op
 
 def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    root_file_rel = detect_root_file(cfg, mvir, n_code)
+    root_file = os.path.join(cargo_dir, root_file_rel)
     with run_sandbox(cfg, mvir) as sb:
-        cargo_dir = sb.join(cfg.relative_path(cfg.transpile.output_dir))
-        root_file = os.path.join(cargo_dir, 'src/lib.rs')
-        cmd = ['merge_rust', root_file, sb.join("in.json")]
+        cmd = ['merge_rust', sb.join(root_file), sb.join("in.json")]
         n_op = _merge_rust_impl(cfg, mvir, sb, n_code, n_crate, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

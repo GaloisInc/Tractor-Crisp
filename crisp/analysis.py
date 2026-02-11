@@ -156,7 +156,12 @@ def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonA
     j = []
     for line in logs.splitlines():
         if line.startswith(b'{'):
-            j.append(json.loads(line))
+            # Print the human-readable version of the message for the logs
+            j_line = json.loads(line)
+            if isinstance(j_line, dict) and (j_msg := j_line.get('message')) is not None:
+                if (j_rendered := j_msg.get('rendered')) is not None:
+                    print(j_rendered, end='')
+            j.append(j_line)
     n_json = FileNode.new(mvir, json.dumps(j))
 
     n_op = CargoCheckJsonAnalysisNode.new(

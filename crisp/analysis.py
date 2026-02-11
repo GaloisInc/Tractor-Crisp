@@ -427,10 +427,12 @@ def split_rust(
     cfg: Config,
     mvir: MVIR,
     n_code: TreeNode,
+    root_file: str | None = None,
 ) -> SplitOpNode:
-    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-    root_file_rel = detect_root_file(cfg, mvir, n_code)
-    root_file = os.path.join(cargo_dir, root_file_rel)
+    if root_file is None:
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = detect_root_file(cfg, mvir, n_code)
+        root_file = os.path.join(cargo_dir, root_file_rel)
     with run_sandbox(cfg, mvir) as sb:
         cmd = ['split_rust', sb.join(root_file), '--output-path', sb.join("out.json")]
         n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)

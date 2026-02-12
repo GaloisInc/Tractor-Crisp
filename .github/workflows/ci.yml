@@ -71,6 +71,16 @@ jobs:
           docker pull ${IMAGE_NAME}:latest
           docker tag ${IMAGE_NAME}:latest ${{ matrix.image }}:latest
 
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync
+
+      - name: Test on Test-Corpus
+        if: matrix.image == 'tractor-crisp-user'
+        run: |
+          export LLM_SAFETY_TRIES=0
+          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+
   build-crisp:
     runs-on: ubuntu-latest
     steps:

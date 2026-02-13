@@ -19,12 +19,23 @@ jobs:
             image: tractor-crisp-user
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Tractor-Crisp w/ HTTPS w/o submodules
+        uses: actions/checkout@v4
         with:
-          # Note that this ignores `update = none` submodules,
-          # like the ones in `c2rust`.
-          # This is intended; we only want a shallow clone.
-          submodules: true
+          submodules: false
+
+      - name: Configure git for private GitLab submodule
+        run: |
+          # Set SSH command just for GitLab
+          mkdir -p ~/.ssh
+          echo "${{ secrets.READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR }}" > ~/.ssh/test_corpus_mirror_deploy_key
+          chmod 600 ~/.ssh/test_corpus_mirror_deploy_key
+          git config --global url."git@gitlab-ext.galois.com:".insteadOf "ssh://git@gitlab-ext.galois.com/"
+          git config --global core.sshCommand "ssh -i ~/.ssh/test_corpus_mirror_deploy_key -o StrictHostKeyChecking=no"
+
+      - name: Update submodules
+        run: |
+          git submodule update --init --depth 1
 
       - uses: docker/login-action@v3
         with:

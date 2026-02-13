@@ -126,6 +126,10 @@ def check_type(ty, x):
         for k, v in x.items():
             check_type(key_ty, k)
             check_type(value_ty, v)
+    elif origin is datetime:
+        assert isinstance(x, datetime)
+    elif origin is typing.Any:
+        pass
     elif origin is typing.Union:
         for variant_ty in typing.get_args(ty):
             try:
@@ -806,6 +810,22 @@ class MergeOpNode(Node):
     crate_in = property(lambda self: self._metadata['crate_in'])
     code_out = property(lambda self: self._metadata['code_out'])
 
+class WorkflowStepInputsNode(Node):
+    KIND = 'workflow_step_inputs'
+    func_name: Metadata[str]
+    # `body` stores the CBOR encoding of the step arguments
+
+    func_name = property(lambda self: self._metadata['func_name'])
+
+class WorkflowStepNode(Node):
+    KIND = 'workflow_step'
+    inputs: Metadata[NodeId]
+    output: Metadata[NodeId]
+    timestamp: Metadata[datetime]
+
+    inputs = property(lambda self: self._metadata['inputs'])
+    output = property(lambda self: self._metadata['output'])
+    timestamp = property(lambda self: self._metadata['timestamp'])
 
 NODE_CLASSES = [
     FileNode,
@@ -824,6 +844,9 @@ NODE_CLASSES = [
     CrateNode,
     SplitOpNode,
     MergeOpNode,
+
+    WorkflowStepInputsNode,
+    WorkflowStepNode,
 ]
 
 def _build_node_kind_map(classes):

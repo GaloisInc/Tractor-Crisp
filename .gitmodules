@@ -4,3 +4,6 @@
 [submodule "deps/hayroll"]
 	path = deps/hayroll
 	url = https://github.com/UW-HARVEST/Hayroll.git
+[submodule "Test-Corpus"]
+	path = Test-Corpus
+	url = git@gitlab-ext.galois.com:tractor/Test-Corpus-Mirror.git

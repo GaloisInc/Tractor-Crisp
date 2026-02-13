@@ -45,9 +45,7 @@ def get_target_info(project_dir: Path):
             for f in reply_dir.iterdir()
             if f.name.startswith("index-") and f.suffix == ".json"
         ]
-        assert len(index_jsons) == 1, "got multiple index.json files: %r" % (
-            index_jsons,
-        )
+        assert len(index_jsons) == 1, f"got multiple index.json files: {index_jsons!r}"
         index_json = index_jsons[0]
 
         j_index = json.loads(index_json.read_text())
@@ -63,7 +61,7 @@ def get_target_info(project_dir: Path):
             for j_target in j_cfg["targets"]
         ]
         # Expect one build target per project for now.
-        # assert len(target_jsons) == 1, 'got multiple build targets: %r' % (target_jsons,)
+        # assert len(target_jsons) == 1, f"got multiple build targets: {target_jsons!r}"
         target_json = target_jsons[0]
 
         j_target = json.loads((reply_dir / target_json).read_text())
@@ -98,7 +96,7 @@ def find_git_root(path: Path) -> Path:
         if (path / ".git").is_dir():
             return path
         new_path = path.parent
-        assert new_path != path, "found no .git directory above %r" % (orig_path,)
+        assert new_path != path, f"found no .git directory above {orig_path!r}"
         path = new_path
 
 
@@ -207,8 +205,8 @@ def main():
                 raise ValueError(
                     "--main-compilation-unit is unset and autodetection failed"
                 )
-        case t:
-            raise ValueError("unknown CMake target type %r" % (t,))
+        case ty:
+            raise ValueError(f"unknown CMake target type {ty!r}")
 
     cfg_str = cfg_template.format(
         base_dir=str(relpath(base_dir, args.project_dir)),

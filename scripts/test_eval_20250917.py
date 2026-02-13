@@ -92,9 +92,9 @@ def find_file_containing_main(project_dir: Path, j_target) -> str | None:
 def find_git_root(path: Path) -> Path:
     orig_path = path
     while True:
-        # Use `.is_dir()` instead of `.exists()` so that the `gitdir: ...` files
-        # placed in submodule roots will be ignored.
-        if (path / ".git").is_dir():
+        # Use `.exists()` to count both `.git/` directories
+        # and `.git` submodule files (containing `gitdir: ...`).
+        if (path / ".git").exists():
             return path
         new_path = path.parent
         assert new_path != path, f"found no .git directory above {orig_path!r}"

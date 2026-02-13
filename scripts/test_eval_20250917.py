@@ -1,5 +1,6 @@
 #!/usr/bin/env -S uv run
 
+from dataclasses import dataclass
 import argparse
 import json
 import os
@@ -8,14 +9,20 @@ import subprocess
 import tempfile
 
 
-def parse_args():
+@dataclass
+class Args:
+    project_dir: str
+    main_compilation_unit: str | None
+
+
+def parse_args() -> Args:
     ap = argparse.ArgumentParser()
     ap.add_argument("project_dir")
     ap.add_argument(
         "--main-compilation-unit",
         help="name of the compilation unit that defines `main`",
     )
-    return ap.parse_args()
+    return Args(**ap.parse_args().__dict__)
 
 
 def get_target_info(project_dir):

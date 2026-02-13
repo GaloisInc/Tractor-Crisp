@@ -1,10 +1,11 @@
 #!/usr/bin/env -S uv run
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Sequence
 import argparse
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 
@@ -100,16 +101,13 @@ def find_git_root(path: Path) -> Path:
         path = new_path
 
 
-def run_crisp(cli_args: Args, *args, **kwargs):
-    if "cwd" not in kwargs:
-        kwargs["cwd"] = cli_args.project_dir
-    if "check" not in kwargs:
-        kwargs["check"] = True
-
+def run_crisp(cli_args: Args, args: Sequence[str | Path]):
     crisp_dir = Path(__file__).parent.parent.absolute()
-    cmd = ("uv", "run", "--project", crisp_dir, "crisp", *args)
-
-    return subprocess.run(cmd, **kwargs)
+    return subprocess.run(
+        ["uv", "run", "--project", crisp_dir, "crisp", *args],
+        cwd=cli_args.project_dir,
+        check=True,
+    )
 
 
 LIB_CONFIG_STR = r'''
@@ -230,8 +228,8 @@ def main():
                 if dirs[i] in ("target", "__pycache__"):
                     del dirs[i]
 
-    run_crisp(args, "commit", "-t", "c_code", *src_files)
-    run_crisp(args, "main")
+    run_crisp(args, ["commit", "-t", "c_code", *src_files])
+    run_crisp(args, ["main"])
 
 
 if __name__ == "__main__":

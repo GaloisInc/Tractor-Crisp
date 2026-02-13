@@ -34,7 +34,7 @@ def get_target_info(project_dir: Path):
         query_file.open("w")
 
         subprocess.run(
-            ("cmake", project_dir / "test_case/CMakeLists.txt"),
+            ("cmake", project_dir.absolute() / "test_case/CMakeLists.txt"),
             cwd=td,
             check=True,
         )

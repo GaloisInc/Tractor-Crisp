@@ -106,17 +106,8 @@ def run_crisp(cli_args: Args, *args, **kwargs):
     if "check" not in kwargs:
         kwargs["check"] = True
 
-    if "env" not in kwargs:
-        kwargs["env"] = os.environ.copy()
-    env = kwargs["env"]
     crisp_dir = Path(__file__).parent.parent.absolute()
-    if "PYTHONPATH" not in "env":
-        env["PYTHONPATH"] = str(crisp_dir)
-    else:
-        env["PYTHONPATH"] += ":" + str(crisp_dir)
-
-    python3_bin = crisp_dir / ".venv/bin/python3"
-    cmd = (python3_bin, "-m", "crisp") + args
+    cmd = ("uv", "run", "--project", crisp_dir, "crisp", *args)
 
     return subprocess.run(cmd, **kwargs)
 

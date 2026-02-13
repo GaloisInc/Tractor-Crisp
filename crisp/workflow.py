@@ -1,19 +1,34 @@
+import cbor
+from datetime import datetime
 import functools
 import inspect
 import os
 import subprocess
 import sys
 import toml
+import typing
 from typing import Any
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .mvir import MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, \
-        TranspileOpNode, LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, \
-        SplitFfiOpNode, CargoCheckJsonAnalysisNode, EditOpNode
+from .mvir import (
+    MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
+    LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
+    CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
+    WorkflowStepNode,
+)
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
+
+
+# Whether to cache the results of workflow steps.  This is more aggressive than
+# the built-in caching of the `analysis` module because it will even cache the
+# results of nondeterministic steps like LLM calls.  This is useful during
+# development, particularly when working on a step later in the pipeline,
+# because it allows skipping over all of the prior steps and going directly to
+# the step of interest.
+USE_WORKFLOW_CACHE = int(os.environ.get('CRISP_USE_WORKFLOW_CACHE') or 0) != 0
 
 
 LLM_SAFETY_PROMPT = '''
@@ -75,22 +90,58 @@ def _print_step_value(prefix: str, x: Any):
 def step(f):
     name = f.__name__
     sig = inspect.signature(f)
+    ann = typing.get_type_hints(f)
+    return_type = ann['return']
+    can_cache = isinstance(return_type, type) and issubclass(return_type, Node)
+    if not USE_WORKFLOW_CACHE:
+        can_cache = False
 
     @functools.wraps(f)
     def g(self, *args, **kwargs):
+        bound = sig.bind(self, *args, **kwargs)
         if self._step_depth == 0:
             print(' ** ' + name)
-            bound = sig.bind(self, *args, **kwargs)
             for arg_name, val in bound.arguments.items():
                 if isinstance(val, Workflow):
                     continue
                 _print_step_value(arg_name, val)
 
-        self._step_depth += 1
-        try:
-            result = f(self, *args, **kwargs)
-        finally:
-            self._step_depth -= 1
+        mvir = self.mvir
+        n_step = None
+        if can_cache:
+            # Look for a cached node for this step.
+            inputs = [(k, v.node_id().to_cbor() if isinstance(v, Node) else v)
+                      for k, v in bound.arguments.items()
+                      if not isinstance(v, Workflow)]
+            n_inputs = WorkflowStepInputsNode.new(
+                    mvir, func_name = name, body = cbor.dumps(inputs))
+
+            for ie in mvir.index(n_inputs.node_id()):
+                if ie.kind == 'workflow_step' and ie.key == 'inputs':
+                    n = mvir.node(ie.node_id)
+                    if n_step is None or n.timestamp > n_step.timestamp:
+                        n_step = n
+
+        if n_step is not None:
+            print(f'use workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
+            result = mvir.node(n_step.output)
+        else:
+            self._step_depth += 1
+            try:
+                result = f(self, *args, **kwargs)
+            finally:
+                self._step_depth -= 1
+
+            if can_cache:
+                # Create a cached node for this step, for future use.
+                n_step = WorkflowStepNode.new(
+                    mvir,
+                    inputs = n_inputs.node_id(),
+                    output = result.node_id(),
+                    timestamp = datetime.now(),
+                )
+                mvir.set_tag('workflow_cache', n_step, name)
+                print(f'save workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
 
         if result is not None:
             _print_step_value(name + ' result', result)

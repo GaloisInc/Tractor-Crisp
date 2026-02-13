@@ -54,6 +54,8 @@ jobs:
           IMAGE_NAME=ghcr.io/${OWNER,,}/${{ matrix.image }}
           DOCKERFILE=${{ matrix.dockerfile }}
 
+          # `--push` instead of `--load` so that everything is cached first
+          # and so we don't accidentally run out of storage.
           docker buildx build \
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
@@ -61,6 +63,13 @@ jobs:
             -t ${IMAGE_NAME}:latest \
             --push \
             .
+
+      - name: Pull and Tag Docker Image
+        run: |
+          OWNER=${{ github.repository_owner }}
+          IMAGE_NAME=ghcr.io/${OWNER,,}/${{ matrix.image }}
+          docker pull ${IMAGE_NAME}:latest
+          docker tag ${IMAGE_NAME}:latest ${{ matrix.image }}:latest
 
   build-crisp:
     runs-on: ubuntu-latest

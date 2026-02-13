@@ -11,13 +11,13 @@ import tempfile
 
 @dataclass
 class Args:
-    project_dir: str
+    project_dir: Path
     main_compilation_unit: str | None
 
 
 def parse_args() -> Args:
     ap = argparse.ArgumentParser()
-    ap.add_argument("project_dir")
+    ap.add_argument("project_dir", type=Path)
     ap.add_argument(
         "--main-compilation-unit",
         help="name of the compilation unit that defines `main`",
@@ -25,50 +25,48 @@ def parse_args() -> Args:
     return Args(**ap.parse_args().__dict__)
 
 
-def get_target_info(project_dir):
+def get_target_info(project_dir: Path):
     with tempfile.TemporaryDirectory() as td:
-        query_file = os.path.join(td, ".cmake/api/v1/query/codemodel-v2")
-        os.makedirs(os.path.dirname(query_file))
-        with open(query_file, "w") as f:
-            pass
+        td = Path(td)
+        query_file = td / ".cmake/api/v1/query/codemodel-v2"
+        query_file.parent.mkdir(parents=True)
+        query_file.open("w")
 
         subprocess.run(
-            ("cmake", os.path.join(project_dir, "test_case/CMakeLists.txt")),
+            ("cmake", project_dir / "test_case/CMakeLists.txt"),
             cwd=td,
             check=True,
         )
 
-        reply_dir = os.path.join(td, ".cmake/api/v1/reply")
+        reply_dir = td / ".cmake/api/v1/reply"
 
-        index_jsons = []
-        for f in os.listdir(reply_dir):
-            if not (f.startswith("index-") and f.endswith(".json")):
-                continue
-            index_jsons.append(f)
+        index_jsons = [
+            f
+            for f in reply_dir.iterdir()
+            if f.name.startswith("index-") and f.suffix == ".json"
+        ]
         assert len(index_jsons) == 1, "got multiple index.json files: %r" % (
             index_jsons,
         )
         index_json = index_jsons[0]
 
-        with open(os.path.join(reply_dir, index_json)) as f:
-            j_index = json.load(f)
+        j_index = json.loads(index_json.read_text())
 
         codemodel_json = j_index["reply"]["codemodel-v2"]["jsonFile"]
+        assert isinstance(codemodel_json, str)
 
-        with open(os.path.join(reply_dir, codemodel_json)) as f:
-            j_cm = json.load(f)
+        j_cm = json.loads((reply_dir / codemodel_json).read_text())
 
-        target_jsons = []
-        for j_cfg in j_cm["configurations"]:
-            for j_target in j_cfg["targets"]:
-                target_jsons.append(j_target["jsonFile"])
+        target_jsons = [
+            j_target["jsonFile"]
+            for j_cfg in j_cm["configurations"]
+            for j_target in j_cfg["targets"]
+        ]
         # Expect one build target per project for now.
         # assert len(target_jsons) == 1, 'got multiple build targets: %r' % (target_jsons,)
         target_json = target_jsons[0]
 
-        with open(os.path.join(reply_dir, target_json)) as f:
-            j_target = json.load(f)
-
+        j_target = json.loads((reply_dir / target_json).read_text())
         return j_target
 
 
@@ -83,28 +81,28 @@ def file_contains_main(path: Path) -> bool:
     return False
 
 
-def find_file_containing_main(project_dir: str, j_target) -> str | None:
+def find_file_containing_main(project_dir: Path, j_target) -> str | None:
     for j_source in j_target["sources"]:
         path = Path(j_source["path"])
-        full_path = Path(project_dir).joinpath("test_case", path)
+        full_path = project_dir / "test_case" / path
         if file_contains_main(full_path):
             return path.stem
     return None
 
 
-def find_git_root(path):
+def find_git_root(path: Path) -> Path:
     orig_path = path
     while True:
-        # Use `isdir` instead of `exists` so that the `gitdir: ...` files
+        # Use `.is_dir()` instead of `.exists()` so that the `gitdir: ...` files
         # placed in submodule roots will be ignored.
-        if os.path.isdir(os.path.join(path, ".git")):
+        if (path / ".git").is_dir():
             return path
-        new_path = os.path.dirname(path)
+        new_path = path.parent
         assert new_path != path, "found no .git directory above %r" % (orig_path,)
         path = new_path
 
 
-def run_crisp(cli_args, *args, **kwargs):
+def run_crisp(cli_args: Args, *args, **kwargs):
     if "cwd" not in kwargs:
         kwargs["cwd"] = cli_args.project_dir
     if "check" not in kwargs:
@@ -113,13 +111,13 @@ def run_crisp(cli_args, *args, **kwargs):
     if "env" not in kwargs:
         kwargs["env"] = os.environ.copy()
     env = kwargs["env"]
-    crisp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    crisp_dir = Path(__file__).parent.parent.absolute()
     if "PYTHONPATH" not in "env":
-        env["PYTHONPATH"] = crisp_dir
+        env["PYTHONPATH"] = str(crisp_dir)
     else:
-        env["PYTHONPATH"] += ":" + crisp_dir
+        env["PYTHONPATH"] += ":" + str(crisp_dir)
 
-    python3_bin = os.path.join(crisp_dir, ".venv", "bin", "python3")
+    python3_bin = crisp_dir / ".venv/bin/python3"
     cmd = (python3_bin, "-m", "crisp") + args
 
     return subprocess.run(cmd, **kwargs)
@@ -177,6 +175,12 @@ single_target = "{example_name}"
 '''
 
 
+def relpath(path: Path, start: Path) -> Path:
+    # Use `os.path.relpath` instead of `Path.relative_to`
+    # since these paths aren't inside `args.project_dir`.
+    return Path(os.path.relpath(path, start))
+
+
 def main():
     args = parse_args()
 
@@ -185,7 +189,7 @@ def main():
 
     # Write crisp.toml
     base_dir = find_git_root(args.project_dir)
-    example_dir_rel = os.path.relpath(args.project_dir, base_dir)
+    example_dir_rel = args.project_dir.relative_to(base_dir)
 
     match target_info["type"]:
         case "STATIC_LIBRARY" | "SHARED_LIBRARY":
@@ -207,34 +211,31 @@ def main():
             raise ValueError("unknown CMake target type %r" % (t,))
 
     cfg_str = cfg_template.format(
-        base_dir=os.path.relpath(base_dir, args.project_dir),
-        example_dir=example_dir_rel,
+        base_dir=str(relpath(base_dir, args.project_dir)),
+        example_dir=str(example_dir_rel),
         example_name=target_info["name"],
         main_compilation_unit=main_compilation_unit,
     )
-    with open(os.path.join(args.project_dir, "crisp.toml"), "w") as f:
-        f.write(cfg_str)
+    (args.project_dir / "crisp.toml").write_text(cfg_str)
 
     # Collect source files
-    src_files = []
     commit_files = [
-        os.path.join(base_dir, "Cargo.toml"),
+        base_dir / "Cargo.toml",
     ]
     commit_dirs = [
-        os.path.join(args.project_dir, "runner"),
-        os.path.join(args.project_dir, "test_case"),
-        os.path.join(args.project_dir, "test_vectors"),
-        os.path.join(base_dir, "deployment"),
-        os.path.join(base_dir, "tools"),
+        args.project_dir / "runner",
+        args.project_dir / "test_case",
+        args.project_dir / "test_vectors",
+        base_dir / "deployment",
+        base_dir / "tools",
     ]
-    for path in commit_files:
-        rel_path = os.path.relpath(path, args.project_dir)
-        src_files.append(rel_path)
+
+    src_files = [relpath(path, args.project_dir) for path in commit_files]
     for start_dir in commit_dirs:
-        for root, dirs, files in os.walk(start_dir):
+        for root, dirs, files in start_dir.walk():
             for f in files:
-                path = os.path.join(root, f)
-                rel_path = os.path.relpath(path, args.project_dir)
+                path = root / f
+                rel_path = relpath(path, args.project_dir)
                 src_files.append(rel_path)
             for i in reversed(range(len(dirs))):
                 if dirs[i] in ("target", "__pycache__"):

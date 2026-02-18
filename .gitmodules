@@ -7,3 +7,8 @@
 [submodule "Test-Corpus"]
 	path = Test-Corpus
 	url = git@gitlab-ext.galois.com:tractor/Test-Corpus-Mirror.git
+	# This is a private repo, so we set it to `update = none`
+	# so that normal submodule updates don't run into permission errors.
+	# `Test-Corpus` needs to be manually updated with
+	# `git submodule update --init --checkout Test-Corpus`.
+	update = none

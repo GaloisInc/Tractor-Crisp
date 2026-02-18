@@ -19,19 +19,15 @@ jobs:
             image: tractor-crisp-user
 
     steps:
-      - name: Checkout Tractor-Crisp w/ HTTPS w/o submodules
+      - name: Checkout Tractor-Crisp w/o submodules
         uses: actions/checkout@v4
         with:
           submodules: false
 
       - name: Configure git for private GitLab submodule
         run: |
-          # Set SSH command just for GitLab
-          mkdir -p ~/.ssh
-          echo "${{ secrets.READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR }}" > ~/.ssh/test_corpus_mirror_deploy_key
-          chmod 600 ~/.ssh/test_corpus_mirror_deploy_key
-          git config --global url."git@gitlab-ext.galois.com:".insteadOf "ssh://git@gitlab-ext.galois.com/"
-          git config --global core.sshCommand "ssh -i ~/.ssh/test_corpus_mirror_deploy_key -o StrictHostKeyChecking=no"
+          DEPLOY_TOKEN="${{ secrets.DEPLOY_TOKEN_READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR }}"
+          git config --global url."https://gitlab-deploy-token-for-tractor-crisp-ci:${DEPLOY_TOKEN}@gitlab-ext.galois.com/".insteadOf "https://gitlab-ext.galois.com/"
 
       - name: Update submodules
         run: |

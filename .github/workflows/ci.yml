@@ -24,6 +24,12 @@ jobs:
         with:
           submodules: false
 
+      # This HTTPS Deploy Token was generated at
+      # <https://gitlab-ext.galois.com/tractor/Test-Corpus-Mirror/-/settings/repository#js-deploy-keys-settings>.
+      # The username is `gitlab-deploy-token-for-tractor-crisp-ci`
+      # and the password is saved as a GitHub secret in this repo
+      # at <https://github.com/GaloisInc/Tractor-Crisp/settings/secrets/actions>
+      # with the name `DEPLOY_TOKEN_READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR`.
       - name: Configure git for private GitLab submodule
         run: |
           DEPLOY_TOKEN="${{ secrets.DEPLOY_TOKEN_READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR }}"

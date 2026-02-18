@@ -42,14 +42,21 @@ ENV XDG_DATA_HOME=/usr/local
 RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 
+ENV CARGO_TARGET_DIR=/tmp/cargo-target
+
 # Install c2rust
 COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
-RUN cargo install --locked --path /opt/c2rust/c2rust
+RUN cargo install --locked --path /opt/c2rust/c2rust \
+    && rm -rf $CARGO_TARGET_DIR \
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git
 # `cd` to resolve the `rust-toolchain.toml`.
-RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
+RUN cd /opt/c2rust \
+    && cargo install --locked --path c2rust-refactor \
+    && rm -rf $CARGO_TARGET_DIR \
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git
 
 # Install hayroll
 #
@@ -59,14 +66,32 @@ RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
 COPY deps/hayroll /opt/hayroll/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll/hayroll \
-    && ./prerequisites.bash --no-sudo --llvm-version 19
+    && ./prerequisites.bash --no-sudo --llvm-version 19 \
+    && rm -rf ../z3/build/src/ \
+    && mv ../Maki/build/lib/libcpp2c.so . \
+    && mv ../Maki/build/bin/cpp2c . \
+    && rm -rf ../Maki/build/ \
+    && mkdir -p ../Maki/build/lib \
+    && mkdir -p ../Maki/build/bin \
+    && mv libcpp2c.so ../Maki/build/lib/ \
+    && mv cpp2c ../Maki/build/bin/
 RUN cd /opt/hayroll/hayroll \
-    && ./build.bash --release
+    && ./build.bash --release \
+    && rm -rf $CARGO_TARGET_DIR \
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git \
+    && ln -f build/hayroll . \
+    && ln -f build/release/reaper . \
+    && ln -f build/release/merger . \
+    && ln -f build/release/inliner . \
+    && ln -f build/release/cleaner . \
+    && rm -rf build/
 RUN ln -s /opt/hayroll/hayroll/build/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
-RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points \
+    && rm -rf $CARGO_TARGET_DIR \
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -98,4 +123,6 @@ RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
 
 COPY tools/find_unsafe/ ./tools/find_unsafe/
-RUN cargo install --locked --path tools/find_unsafe
+RUN cargo install --locked --path tools/find_unsafe \
+    && rm -rf $CARGO_TARGET_DIR \
+    && rm -rf $CARGO_HOME/registry $CARGO_HOME/git

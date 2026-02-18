@@ -165,3 +165,14 @@ out the contents of the `TreeNode` to actual files on disk (e.g. so you can try
 compiling the code ), use `crisp checkout 287272d --path ./out`; this will
 create `./out/Public-Tests/B01_organic/colourblind_lib/translated_rust/Cargo.lock`
 and so on.
+
+# Testing
+
+To run all of the CI tests on `Test-Corpus`, you'll need access to
+[Test-Corpus-Mirror](https://gitlab-ext.galois.com/tractor/Test-Corpus-Mirror).
+Due to this restriction, the `Test-Corpus` submodule is set to `update = none`
+and has to be explicitly checked out with
+
+```sh
+git submodule update --init --checkout Test-Corpus
+```

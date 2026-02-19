@@ -100,6 +100,8 @@ New signatures:
 LLM_PROMPT_RENAME_IDIOMATIC = '''
 This Rust code was auto-translated from C, so it uses unidiomatic names in some places.  Please find these cases and rename them according to Rust conventions: snake_case for functions and variables, CamelCase for types, and SNAKE_CASE for consts and statics.  Don't change anything but the names.
 
+If you rename a `#[no_mangle]` function, be sure to replace `#[no_mangle]` with `#[export_name = "the_original_name"]` so that the exported symbol name remains the same.
+
 {output_instructions}
 
 {input_files}

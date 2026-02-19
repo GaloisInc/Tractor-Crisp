@@ -17,6 +17,9 @@ jobs:
             image: tractor-crisp
           - dockerfile: Dockerfile.work
             image: tractor-crisp-user
+    
+    env:
+      LLM_SAFETY_TRIES: 0
 
     steps:
       - name: Checkout Tractor-Crisp w/o submodules
@@ -84,8 +87,6 @@ jobs:
       - name: Test on Test-Corpus
         if: matrix.image == 'tractor-crisp-user'
         run: |
-          export LLM_SAFETY_TRIES=0
-          
           # library, runs hayroll
           ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
           

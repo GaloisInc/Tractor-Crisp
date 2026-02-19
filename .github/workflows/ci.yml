@@ -95,6 +95,10 @@ jobs:
       - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
         if: matrix.image == 'tractor-crisp-user'
         run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
+      
+      - name: Test on Test-Corpus (uses c2rust-bitfields)
+        if: matrix.image == 'tractor-crisp-user'
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/P01_sphincs_plus/005_sphincs_PQCgenKAT_sign_blake_128f_simple/
 
   build-crisp:
     runs-on: ubuntu-latest

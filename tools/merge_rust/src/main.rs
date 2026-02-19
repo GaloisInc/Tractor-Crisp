@@ -32,7 +32,8 @@ fn main() {
     let new_snippet_json_path = args.new_snippets_file;
 
     let new_snippets_file = File::open(&new_snippet_json_path).unwrap();
-    let new_snippets: IndexMap<String, String> = serde_json::from_reader(new_snippets_file).unwrap();
+    let new_snippets: IndexMap<String, String> =
+        serde_json::from_reader(new_snippets_file).unwrap();
 
     let mut fc = FileCollector::default();
     fc.parse(&src_root_path, vec![], true).unwrap();
@@ -46,14 +47,13 @@ fn main() {
     }).collect::<HashMap<ModPath, (PathBuf, usize)>>();
 
 
-    let mut new_snippets = new_snippets;
-
     // For every module mentioned in `new_snippets`, if the module doesn't exist in `fc.mods`,
     // create it.
     let snippet_modules = new_snippets.keys()
         .map(|k| k.rsplit_once("::").map_or("", |(parent_path, _child_name)| parent_path))
         .map(|x| x.to_owned())
         .collect::<HashSet<_>>();
+    let mut new_snippets = new_snippets;
     for mod_path in &snippet_modules {
         // Iterate over all ancestors of `mod_path`.
         let idxs = iter::once(mod_path.len())
@@ -88,12 +88,14 @@ fn main() {
             assert!(old.is_none(), "item {:?} exists but is not a module", mod_path);
         }
     }
+    let new_snippets = new_snippets;
 
 
-    let mut file_rewrites = IndexMap::<PathBuf, Vec<(usize, usize, String)>>::new();
+    let mut file_rewrites = IndexMap::<PathBuf, Vec<(usize, usize, &str)>>::new();
 
-    // Collect rewrites for updated or removed items.  We remove each item from `new_snippets` as
+    // Collect rewrites for updated or removed items.  We record each item in `snippets_applied` as
     // we apply it.
+    let mut snippets_applied = HashSet::<String>::new();
     for (mod_path, &(ref file_path, ref ast)) in &file_map {
         eprintln!("visit {file_path:?}");
         let old_src = fs::read_to_string(file_path).unwrap();
@@ -109,15 +111,18 @@ fn main() {
         for (item_path, lo, hi) in item_spans(mod_path_parts, ast) {
             let old_snippet = &old_src[lo..hi];
             let item_path_str = item_path.join("::");
-            let new_snippet = match new_snippets.remove(&item_path_str) {
-                Some(x) => x,
+            let new_snippet = match new_snippets.get(&item_path_str) {
+                Some(x) => {
+                    snippets_applied.insert(item_path_str);
+                    x
+                },
                 None => {
                     if args.update_only {
                         // We would normally delete this item, but we're currently in
                         // update-only mode.
                         continue;
                     } else {
-                        String::from("")
+                        ""
                     }
                 },
             };
@@ -127,16 +132,19 @@ fn main() {
         }
     }
 
-    // Collect rewrites for newly added items.  Any entry in `new_snippets` that wasn't consume
-    // above must be a newly added item.
+    // Collect rewrites for newly added items.  Any entry in `new_snippets` that wasn't added to
+    // `snippets_applied` above must be a newly added item.
     if !args.update_only {
-        for (item_path, new_snippet) in new_snippets {
+        for (item_path, new_snippet) in &new_snippets {
+            if snippets_applied.contains(item_path) {
+                continue;
+            }
             let mod_path = item_path.rsplit_once("::").map_or("", |(parent, child)| parent);
             let &(ref file_path, end_pos) = mod_locations.get(mod_path).unwrap_or_else(|| {
                 unreachable!("parent mod for {:?} should be added above", item_path);
             });
             let rewrites = file_rewrites.entry(file_path.clone()).or_insert(Vec::new());
-            rewrites.push((end_pos, end_pos, "\n\n".into()));
+            rewrites.push((end_pos, end_pos, "\n\n"));
             rewrites.push((end_pos, end_pos, new_snippet));
         }
     }

@@ -84,17 +84,17 @@ jobs:
 
       - run: uv sync
 
-      - name: Test on Test-Corpus
+      - name: Test on Test-Corpus (library, runs hayroll)
         if: matrix.image == 'tractor-crisp-user'
-        run: |
-          # library, runs hayroll
-          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
-          
-          # binary, runs c2rust transpile
-          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
-          
-          # multi-file binary, runs c2rust transpile and c2rust refactor
-          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+      
+      - name: Test on Test-Corpus (binary, runs c2rust transpile)
+        if: matrix.image == 'tractor-crisp-user'
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
+      
+      - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
+        if: matrix.image == 'tractor-crisp-user'
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
 
   build-crisp:
     runs-on: ubuntu-latest

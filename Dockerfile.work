@@ -89,7 +89,7 @@ RUN cd /opt/hayroll/hayroll \
     && ln -f build/release/inliner . \
     && ln -f build/release/cleaner . \
     && rm -rf build/
-RUN ln -s /opt/hayroll/hayroll/build/hayroll /usr/local/bin/hayroll
+RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/

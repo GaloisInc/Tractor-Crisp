@@ -48,6 +48,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            universal-ctags
+
       - name: Docker Build
         run: |
           OWNER=${{ github.repository_owner }}

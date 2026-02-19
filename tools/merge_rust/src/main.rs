@@ -38,8 +38,8 @@ fn main() {
     let mut fc = FileCollector::default();
     fc.parse(&src_root_path, vec![], true).unwrap();
 
-    let mut file_map: HashMap<ModPath, (PathBuf, syn::File)> = fc.files.into_iter()
-        .map(|(file_path, mod_path_parts, ast)| (mod_path_parts.join("::"), (file_path, ast)))
+    let mut files: Vec<(PathBuf, ModPath, syn::File)> = fc.files.into_iter()
+        .map(|(file_path, mod_path_parts, ast)| (file_path, mod_path_parts.join("::"), ast))
         .collect();
     // Gives the file path and end position for each module.
     let mut mod_locations = fc.mods.iter().map(|m| {
@@ -65,7 +65,7 @@ fn main() {
                 continue;
             }
 
-            // Create an empty file on disk and add it to `file_map`.
+            // Create an empty file on disk and add it to `files`.
             debug_assert!(mod_path.len() != 0);
             let file_path_rel = mod_path.replace("::", "/") + ".rs";
             let file_path = src_root_dir.join(&file_path_rel);
@@ -77,7 +77,7 @@ fn main() {
                 attrs: Vec::new(),
                 items: Vec::new(),
             };
-            file_map.insert(mod_path.to_owned(), (file_path.clone(), ast));
+            files.push((file_path.clone(), mod_path.to_owned(), ast));
             // The file is empty, so new items should be inserted at byte position 0.
             mod_locations.insert(mod_path.to_owned(), (file_path, 0));
 
@@ -96,7 +96,7 @@ fn main() {
     // Collect rewrites for updated or removed items.  We record each item in `snippets_applied` as
     // we apply it.
     let mut snippets_applied = HashSet::<String>::new();
-    for (mod_path, &(ref file_path, ref ast)) in &file_map {
+    for &(ref file_path, ref mod_path, ref ast) in &files {
         eprintln!("visit {file_path:?}");
         let old_src = fs::read_to_string(file_path).unwrap();
 

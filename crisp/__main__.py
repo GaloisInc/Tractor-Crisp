@@ -420,11 +420,10 @@ def do_delete_ffi_funcs(args, cfg):
     assert n_split_op.exit_code == 0
 
     n_crate = mvir.node(n_split_op.crate_out)
-    from .mvir import DefNode, CrateNode
-    n_empty_def = DefNode.new(mvir, b'')
+    from .mvir import CrateNode
     n_crate2 = CrateNode.new(mvir,
-        defs = {k: n_empty_def.node_id() for k in n_crate.defs
-            if k.endswith('_ffi')})
+        defs = {k: v for k,v  in n_crate.defs.items()
+            if not k.endswith('_ffi')})
 
     n_merge_op = w.merge_op(n_code, n_crate2)
     assert n_merge_op.exit_code == 0

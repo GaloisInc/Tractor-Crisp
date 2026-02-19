@@ -661,15 +661,9 @@ class Workflow:
 
     def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
         mvir = self.mvir
-
         crate = self.split(code)
-
-        # TODO: update merge_rust to delete defs that are absent from the json
-        # input, then change this to simply filter out defs instead of
-        # replacing them with `empty_def`
-        empty_def = DefNode.new(mvir, b'')
         crate_erased = CrateNode.new(mvir,
-            defs = {k: v if f(k) else empty_def.node_id() for k, v in crate.defs.items()})
+            defs = {k: v for k, v in crate.defs.items() if f(k)})
         return crate_erased
 
     @step
@@ -697,8 +691,9 @@ class Workflow:
         crate_new = self.split(code_new)
 
         defs_out = crate_new.defs.copy()
-        defs_out.update((k, v) for k,v in crate_ffi.defs.items()
-            if k.endswith('_ffi'))
+        for k, v in crate_ffi.defs.items():
+            assert k not in defs_out, f'{k!r} is present in both the ffi and non-ffi inputs'
+            defs_out[k] = v
         crate_out = CrateNode.new(mvir, defs = defs_out)
 
         code_out = self.merge(code_old, crate_out)

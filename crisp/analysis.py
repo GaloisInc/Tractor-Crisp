@@ -482,7 +482,7 @@ def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) ->
     root_file_rel = detect_root_file(cfg, mvir, n_code)
     root_file = os.path.join(cargo_dir, root_file_rel)
     with run_sandbox(cfg, mvir) as sb:
-        cmd = ['merge_rust', '--update-only', sb.join(root_file), sb.join("in.json")]
+        cmd = ['merge_rust', sb.join(root_file), sb.join("in.json")]
         n_op = _merge_rust_impl(cfg, mvir, sb, n_code, n_crate, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

@@ -85,7 +85,9 @@ jobs:
         if: matrix.image == 'tractor-crisp-user'
         run: |
           export LLM_SAFETY_TRIES=0
-          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/              # library
+          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/             # binary
+          ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/ # multiple files
 
   build-crisp:
     runs-on: ubuntu-latest

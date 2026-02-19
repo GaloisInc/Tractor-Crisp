@@ -157,4 +157,5 @@ define_tests! {
     update,
     add_remove,
     add_module,
+    inline_module,
 }

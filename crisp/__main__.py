@@ -56,9 +56,13 @@ def parse_args():
     main.add_argument('node', nargs='?', default='c_code')
 
     repl = sub.add_parser('repl')
+    repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
+        help='store NODE in local variable NAME (default: `n`) before starting repl')
 
     eval_ = sub.add_parser('eval')
     eval_.add_argument('expr')
+    eval_.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
+        help='store NODE in local variable NAME (default: `n`) before evaluating')
 
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
@@ -443,26 +447,35 @@ def do_main(args, cfg):
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 
-def repl_locals(cfg, mvir, w):
-    return dict(
+def repl_locals(args, cfg, mvir, w):
+    dct = dict(
         cfg = cfg,
         mvir = mvir,
         w = w,
         node = lambda s: mvir.node(parse_node_id(mvir, s)),
     )
 
+    for x in args.node:
+        name, sep, expr = x.partition('=')
+        if sep == '':
+            name, expr = 'n', x
+        assert name not in dct, f'duplicate entry for {name!r}'
+        dct[name] = mvir.node(parse_node_id(mvir, expr))
+
+    return dct
+
 def do_repl(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 
     import code
-    code.interact(local = repl_locals(cfg, mvir, w))
+    code.interact(local = repl_locals(args, cfg, mvir, w))
 
 def do_eval(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 
-    x = eval(args.expr, globals(), repl_locals(cfg, mvir, w))
+    x = eval(args.expr, globals(), repl_locals(args, cfg, mvir, w))
     print(x)
 
 def do_reflog(args, cfg):

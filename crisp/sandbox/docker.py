@@ -4,6 +4,7 @@ import io
 import os
 import sys
 import tarfile
+import shlex
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -112,6 +113,9 @@ class WorkContainer:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
+
+        print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
+
         if isinstance(cmd, tuple):
             # `exec_run` requires either a list or str, not a tuple.
             cmd = list(cmd)

@@ -652,18 +652,13 @@ class TranspileOpNode(Node):
     rust_code = property(lambda self: self._metadata['rust_code'])
 
 class SplitFfiOpNode(Node):
-    KIND = 'split_ffi_op'
+    KIND = 'split_ffi_op_v2'
     old_code: Metadata[NodeId]
     new_code: Metadata[NodeId]
-    # Commit hash of the `split_ffi_entry_points` version that was used
-    # TODO: remove - no longer used.  Figure out a way to remove fields without
-    # breaking the ability to read old MVIR storage
-    commit: Metadata[str]
     # `body` stores the log output
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
-    commit = property(lambda self: self._metadata['commit'])
 
 class LlmOpNode(Node):
     KIND = 'llm_op'
@@ -794,3 +789,9 @@ def migrate_compile_commands_op(metadata):
     metadata['kind'] = 'compile_commands_op_v2'
     # cmd: list[str]  ->  cmds: list[list[str]]
     metadata['cmds'] = [metadata.pop('cmd')]
+
+@migration('split_ffi_op')
+def migrate_split_ffi_op(metadata):
+    metadata['kind'] = 'split_ffi_op_v2'
+    # `commit` field was removed
+    del metadata['commit']

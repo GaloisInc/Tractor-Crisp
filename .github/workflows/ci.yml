@@ -82,7 +82,10 @@ jobs:
       matrix:
         crate:
           - find_unsafe
+          - merge_rust
+          - related_decls
           - split_ffi_entry_points
+          - split_rust
 
     env:
       RUSTFLAGS: "-D warnings"

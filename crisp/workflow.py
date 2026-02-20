@@ -507,7 +507,6 @@ class Workflow:
                 mvir,
                 old_code = n_tree.node_id(),
                 new_code = n_new_tree.node_id(),
-                commit = '',
                 body = logs,
                 )
 

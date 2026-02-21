@@ -6,7 +6,7 @@
 ## Building the Docker image
 
 ```sh
-docker build . -t tractor-crisp
+docker build --target tractor-crisp --tag tractor-crisp
 ```
 
 ## Configuring CRISP
@@ -26,7 +26,7 @@ it for your project.
 Run the Docker container:
 
 ```sh
-docker run --rm -it -v /path/to/my-project:/root/project tractor-crisp
+docker run --rm -it -v /path/to/my-project:/root/project tractor-crisp .
 ```
 
 Then, within the container, run these commands:
@@ -78,7 +78,7 @@ uv sync
 ## Building the sandbox container
 
 ```sh
-docker build . -f Dockerfile.work -t tractor-crisp-user
+docker build --target tractor-crisp-user --tag tractor-crisp-user .
 ```
 
 ## Configuring CRISP

@@ -571,3 +571,24 @@ class Workflow:
     @step
     def merge_op(self, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
         return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)
+
+    @step
+    def delete_ffi_funcs(self, n_code: TreeNode) -> TreeNode:
+        mvir = self.mvir
+
+        n_split_op = self.split_op(n_code)
+        assert n_split_op.exit_code == 0
+
+        n_crate = mvir.node(n_split_op.crate_out)
+        from .mvir import DefNode, CrateNode
+        n_empty_def = DefNode.new(mvir, b'')
+        n_crate2 = CrateNode.new(mvir,
+            defs = {k: n_empty_def.node_id() for k in n_crate.defs
+                if k.endswith('_ffi')})
+
+        n_merge_op = self.merge_op(n_code, n_crate2)
+        assert n_merge_op.exit_code == 0
+
+        n_code2 = mvir.node(n_merge_op.code_out)
+
+        return n_code2

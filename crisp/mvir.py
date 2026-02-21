@@ -126,6 +126,10 @@ def check_type(ty, x):
         for k, v in x.items():
             check_type(key_ty, k)
             check_type(value_ty, v)
+    elif origin is datetime:
+        assert isinstance(x, datetime)
+    elif origin is typing.Any:
+        pass
     elif origin is typing.Union:
         for variant_ty in typing.get_args(ty):
             try:
@@ -522,10 +526,10 @@ class Node:
         return n
 
     @classmethod
-    def _metadata_from_cbor(cls, pairs):
+    def _metadata_from_cbor(cls, dct):
         field_tys = _metadata_field_types(cls)
         metadata = {}
-        for name, value in pairs:
+        for name, value in dct.items():
             assert name not in metadata
             ty = field_tys[name]
             metadata[name] = from_cbor(ty, value)
@@ -541,12 +545,29 @@ class Node:
             with open(path, 'rb') as f:
                 metadata = cbor.load(f)
                 body_offset = f.tell()
-            for k,v in metadata:
-                if k == 'kind':
-                    cls = NODE_KIND_MAP[v]
-                    break
-            else:
+            metadata = {k: v for k,v in metadata}
+
+            cls_name = metadata.get('kind')
+            if cls_name is None:
                 raise KeyError('missing `kind` in metadata')
+
+            orig_cls_name = cls_name
+            while (cls := NODE_KIND_MAP.get(cls_name)) is None:
+                migration_func = NODE_MIGRATION_MAP.get(cls_name)
+                if migration_func is None:
+                    if cls_name == orig_cls_name:
+                        raise KeyError(f'unknown node kind {cls_name!r}')
+                    else:
+                        raise KeyError(
+                            f'unknown node kind {cls_name!r} (migrated from {orig_cls_name!r})')
+                migration_func(metadata)
+
+                new_cls_name = metadata.get('kind')
+                if new_cls_name is None:
+                    raise KeyError(
+                        f'missing `kind` in metadata, after migration from {cls_name!r}')
+                cls_name = new_cls_name
+
             metadata = cls._metadata_from_cbor(metadata)
             n = cls(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n
@@ -635,18 +656,13 @@ class TranspileOpNode(Node):
     rust_code = property(lambda self: self._metadata['rust_code'])
 
 class SplitFfiOpNode(Node):
-    KIND = 'split_ffi_op'
+    KIND = 'split_ffi_op_v2'
     old_code: Metadata[NodeId]
     new_code: Metadata[NodeId]
-    # Commit hash of the `split_ffi_entry_points` version that was used
-    # TODO: remove - no longer used.  Figure out a way to remove fields without
-    # breaking the ability to read old MVIR storage
-    commit: Metadata[str]
     # `body` stores the log output
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
-    commit = property(lambda self: self._metadata['commit'])
 
 class LlmOpNode(Node):
     KIND = 'llm_op'
@@ -735,6 +751,25 @@ class EditOpNode(Node):
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
 
+
+class WorkflowStepInputsNode(Node):
+    KIND = 'workflow_step_inputs'
+    func_name: Metadata[str]
+    # `body` stores the CBOR encoding of the step arguments
+
+    func_name = property(lambda self: self._metadata['func_name'])
+
+class WorkflowStepNode(Node):
+    KIND = 'workflow_step'
+    inputs: Metadata[NodeId]
+    output: Metadata[NodeId]
+    timestamp: Metadata[datetime]
+
+    inputs = property(lambda self: self._metadata['inputs'])
+    output = property(lambda self: self._metadata['output'])
+    timestamp = property(lambda self: self._metadata['timestamp'])
+
+
 NODE_CLASSES = [
     FileNode,
     TreeNode,
@@ -747,6 +782,9 @@ NODE_CLASSES = [
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
     EditOpNode,
+
+    WorkflowStepInputsNode,
+    WorkflowStepNode,
 ]
 
 def _build_node_kind_map(classes):
@@ -756,3 +794,30 @@ def _build_node_kind_map(classes):
         m[cls.KIND] = cls
     return m
 NODE_KIND_MAP = _build_node_kind_map(NODE_CLASSES)
+
+
+# Metadata migrations.  Whenever we make changes to an existing `Node`'s
+# metadata types, we also change the `KIND` and add a migration function that
+# maps the old metadata types to the new ones.  This allows newer versions of
+# CRISP to load older nodes without error.
+
+NODE_MIGRATION_MAP = {}
+
+def migration(old_kind):
+    def decorate(f):
+        assert old_kind not in NODE_MIGRATION_MAP, f'duplicate migration for {old_kind!r}'
+        NODE_MIGRATION_MAP[old_kind] = f
+        return f
+    return decorate
+
+@migration('compile_commands_op')
+def migrate_compile_commands_op(metadata):
+    metadata['kind'] = 'compile_commands_op_v2'
+    # cmd: list[str]  ->  cmds: list[list[str]]
+    metadata['cmds'] = [metadata.pop('cmd')]
+
+@migration('split_ffi_op')
+def migrate_split_ffi_op(metadata):
+    metadata['kind'] = 'split_ffi_op_v2'
+    # `commit` field was removed
+    del metadata['commit']

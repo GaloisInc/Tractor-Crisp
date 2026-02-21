@@ -9,14 +9,6 @@ on:
 jobs:
   docker-build:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        include:
-          - dockerfile: Dockerfile
-            image: tractor-crisp
-          - dockerfile: Dockerfile.work
-            image: tractor-crisp-user
     
     env:
       LLM_SAFETY_TRIES: 0
@@ -56,48 +48,56 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             universal-ctags
-
-      - name: Docker Build
+      
+      # `--push` instead of `--load` so that everything is cached first
+      # and so we don't accidentally run out of storage.
+      
+      - name: docker build tractor-crisp-user
         run: |
           OWNER=${{ github.repository_owner }}
-          IMAGE_NAME=ghcr.io/${OWNER,,}/${{ matrix.image }}
-          DOCKERFILE=${{ matrix.dockerfile }}
-
-          # `--push` instead of `--load` so that everything is cached first
-          # and so we don't accidentally run out of storage.
+          TARGET=tractor-crisp-user
+          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
           docker buildx build \
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
-            -f ${DOCKERFILE} \
-            -t ${IMAGE_NAME}:latest \
-            --push \
+            --target ${TARGET} \
+            --tag ${IMAGE_NAME}:latest \
             .
-
-      - name: Pull and Tag Docker Image
+      
+      - name: docker build tractor-crisp
         run: |
           OWNER=${{ github.repository_owner }}
-          IMAGE_NAME=ghcr.io/${OWNER,,}/${{ matrix.image }}
+          TARGET=tractor-crisp
+          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
+          docker buildx build \
+            --cache-from type=registry,ref=${IMAGE_NAME}:cache \
+            --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
+            --target ${TARGET} \
+            --tag ${IMAGE_NAME}:latest \
+            .
+
+      - name: docker pull and docker tag tractor-crips-user
+        run: |
+          OWNER=${{ github.repository_owner }}
+          TARGET=tractor-crisp-user
+          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
           docker pull ${IMAGE_NAME}:latest
-          docker tag ${IMAGE_NAME}:latest ${{ matrix.image }}:latest
+          docker tag ${IMAGE_NAME}:latest ${TARGET}:latest
 
       - uses: astral-sh/setup-uv@v6
 
       - run: uv sync
 
       - name: Test on Test-Corpus (library, runs hayroll)
-        if: matrix.image == 'tractor-crisp-user'
         run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
       
       - name: Test on Test-Corpus (binary, runs c2rust transpile)
-        if: matrix.image == 'tractor-crisp-user'
         run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
       
       - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
-        if: matrix.image == 'tractor-crisp-user'
         run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
       
       - name: Test on Test-Corpus (uses c2rust-bitfields)
-        if: matrix.image == 'tractor-crisp-user'
         run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/P01_sphincs_plus/005_sphincs_PQCgenKAT_sign_blake_128f_simple/
 
   build-crisp:

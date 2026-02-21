@@ -51,12 +51,17 @@ jobs:
       
       # `--push` instead of `--load` so that everything is cached first
       # and so we don't accidentally run out of storage.
+
+      - name: Set $IMAGE_PREFIX
+        run: |
+          OWNER=${{ github.repository_owner }}
+          IMAGE_PREFIX=ghcr.io/${OWNER,,}
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> $GITHUB_ENV
       
       - name: docker build tractor-crisp-user
         run: |
-          OWNER=${{ github.repository_owner }}
           TARGET=tractor-crisp-user
-          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
           docker buildx build \
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
@@ -66,9 +71,8 @@ jobs:
       
       - name: docker build tractor-crisp
         run: |
-          OWNER=${{ github.repository_owner }}
           TARGET=tractor-crisp
-          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
           docker buildx build \
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
@@ -78,9 +82,8 @@ jobs:
 
       - name: docker pull and docker tag tractor-crips-user
         run: |
-          OWNER=${{ github.repository_owner }}
           TARGET=tractor-crisp-user
-          IMAGE_NAME=ghcr.io/${OWNER,,}/${TARGET}
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
           docker pull ${IMAGE_NAME}:latest
           docker tag ${IMAGE_NAME}:latest ${TARGET}:latest
 

@@ -1,7 +1,7 @@
 # Need gcc-13 for hayroll.
 # Debian bookworm (12) only has gcc-12.
 # Debian trixie (13) has gcc-13.
-FROM docker.io/rust:trixie
+FROM docker.io/rust:trixie AS tractor-crisp-user
 
 # rust-analyzer (required by hayroll)'s deps require Rust 1.89
 RUN rustup default 1.90.0
@@ -84,6 +84,8 @@ RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 # Install CRISP tool binaries
 COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
 RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+
+FROM tractor-crisp-user AS tractor-crisp
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo

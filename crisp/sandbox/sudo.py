@@ -10,7 +10,6 @@ from subprocess import CompletedProcess, Popen
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
-from ..work_dir import WorkDir
 
 
 class SudoSandbox:

@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 bytes = "1.11"
+
+[workspace]

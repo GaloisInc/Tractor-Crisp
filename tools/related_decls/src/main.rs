@@ -12,6 +12,8 @@ use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::{AstNode, Edition, NodeOrToken, TextRange, WalkEvent};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+use std::fs::File;
+use std::io::BufWriter;
 use std::ops::Index;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,10 @@ struct Args {
     #[arg(required = true)]
     /// Paths to Rust item to analyze.
     item_paths: Vec<String>,
+
+    /// Where to write output JSON.  Default: stdout.
+    #[clap(short, long)]
+    output_path: Option<PathBuf>,
 }
 
 /// Obtain the textual range of a given item
@@ -533,10 +539,19 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 fn main() -> Result<(), String> {
     env_logger::init();
 
-    let output = find_related_decls(Args::parse())?;
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, &output)
-        .map_err(|e| format!("error writing output: {e}"))?;
+    let args = Args::parse();
+    let output_path = args.output_path.clone();
+    let output = find_related_decls(args)?;
+    if let Some(output_path) = output_path {
+        let f = File::create(&output_path)
+            .map_err(|e| format!("error opening output file {output_path:?}: {e}"))?;
+        let f = BufWriter::new(f);
+        serde_json::to_writer(f, &output)
+            .map_err(|e| format!("error writing output: {e}"))?;
+    } else {
+        serde_json::to_writer(std::io::stdout().lock(), &output)
+            .map_err(|e| format!("error writing output: {e}"))?;
+    }
 
     Ok(())
 }

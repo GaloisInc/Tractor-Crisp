@@ -801,23 +801,23 @@ NODE_KIND_MAP = _build_node_kind_map(NODE_CLASSES)
 # maps the old metadata types to the new ones.  This allows newer versions of
 # CRISP to load older nodes without error.
 
-NODE_MIGRATION_MAP = {}
+NODE_MIGRATION_MAP: dict[str, Callable[[dict[str, Any]], None]] = {}
 
-def migration(old_kind):
-    def decorate(f):
+def migration(old_kind: str):
+    def decorate(f: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         assert old_kind not in NODE_MIGRATION_MAP, f'duplicate migration for {old_kind!r}'
         NODE_MIGRATION_MAP[old_kind] = f
         return f
     return decorate
 
 @migration('compile_commands_op')
-def migrate_compile_commands_op(metadata):
+def migrate_compile_commands_op(metadata: dict[str, Any]):
     metadata['kind'] = 'compile_commands_op_v2'
     # cmd: list[str]  ->  cmds: list[list[str]]
     metadata['cmds'] = [metadata.pop('cmd')]
 
 @migration('split_ffi_op')
-def migrate_split_ffi_op(metadata):
+def migrate_split_ffi_op(metadata: dict[str, Any]):
     metadata['kind'] = 'split_ffi_op_v2'
     # `commit` field was removed
     del metadata['commit']

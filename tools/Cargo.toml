@@ -38,3 +38,9 @@ ra_ap_syntax = "=0.0.301"
 ra_ap_vfs = "=0.0.301"
 
 rust_util = { path = "rust_util" }
+
+
+# Tools based on rust-analyzer are unusably slow at opt-level=0, so use
+# opt-level=1 for debug builds.
+[profile.dev]
+opt-level = 1

@@ -7,7 +7,7 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar, Optional, Annotated, TypeVar
+from typing import Any, Callable, ClassVar, Optional, Annotated, TypeVar
 from types import NoneType
 from weakref import WeakValueDictionary
 

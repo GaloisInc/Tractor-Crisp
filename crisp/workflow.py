@@ -108,38 +108,6 @@ If you rename a `#[no_mangle]` function, be sure to replace `#[no_mangle]` with 
 {input_files}
 '''
 
-LLM_PROMPT_EXTRACT_SIGS = '''
-Please extract function signatures (and only function signatures) from each
-input file.  For each one, output a file with the same name, but with all
-function bodies replaced with `/* ... */` and all non-function items removed.
-
-{output_instructions}
-
-Example input:
-
-<file name="example.rs">
-use core::ffi::c_int;
-type MyInt = c_int;
-fn f(x: c_int) -> c_int {{
-    x + 10
-}}
-fn g(a: &c_int, b: &mut c_int) {{
-    *b += a;
-}}
-</file>
-
-Example output:
-
-<file name="example.rs">
-fn f(x: c_int) -> c_int {{ /* ... */ }}
-fn g(a: &c_int, b: &mut c_int) {{ /* ... */ }}
-</file>
-
-Actual input:
-
-{input_files}
-'''
-
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -739,15 +707,11 @@ class Workflow:
     def extract_sigs(self, code: TreeNode) -> CrateNode:
         cfg, mvir = self.cfg, self.mvir
 
-        # TODO: replace with a symbolic tool
+        # TODO: add a `--all` option to related_decls
+        all_def_ids = list(self.split(code).defs.keys())
 
-        sigs_code, _llm_op = llm.run_rewrite(
-                cfg, mvir, LLM_PROMPT_EXTRACT_SIGS, code,
-                glob_filter = cfg.src_globs)
-
-        sigs_crate = self.split(sigs_code)
-
-        return sigs_crate
+        n_op = self.related_decls_op(code, all_def_ids)
+        return mvir.node(n_op.sigs_out)
 
     @step
     def llm_repair_call_sites(

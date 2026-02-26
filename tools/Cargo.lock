@@ -1879,6 +1879,8 @@ name = "split_ffi_entry_points"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "env_logger",
+ "log",
  "proc-macro2",
  "quote",
  "ra_ap_base_db",

@@ -628,8 +628,13 @@ class Workflow:
         return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)
 
     @step
-    def related_decls_op(self, n_code: TreeNode, query_def_names: list[str]) -> RelatedDeclsOpNode:
-        return analysis.related_decls(self.cfg, self.mvir, n_code, query_def_names)
+    def related_decls_op(
+        self,
+        n_code: TreeNode,
+        query_def_names: list[str] | None = None,
+    ) -> RelatedDeclsOpNode:
+        return analysis.related_decls(self.cfg, self.mvir, n_code,
+            query_def_names = query_def_names)
 
     def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
         mvir = self.mvir
@@ -706,11 +711,7 @@ class Workflow:
     @step
     def extract_sigs(self, code: TreeNode) -> CrateNode:
         cfg, mvir = self.cfg, self.mvir
-
-        # TODO: add a `--all` option to related_decls
-        all_def_ids = list(self.split(code).defs.keys())
-
-        n_op = self.related_decls_op(code, all_def_ids)
+        n_op = self.related_decls_op(code)
         return mvir.node(n_op.sigs_out)
 
     @step

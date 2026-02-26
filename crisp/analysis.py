@@ -532,12 +532,16 @@ def related_decls(
     cfg: Config,
     mvir: MVIR,
     n_code: TreeNode,
-    query_def_names: list[str],
+    query_def_names: list[str] | None = None,
 ) -> RelatedDeclsOpNode:
     cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
     with run_sandbox(cfg, mvir) as sb:
         cmd = ['related_decls', sb.join(cargo_dir), '--output-path', sb.join("out.json")]
-        cmd += query_def_names
+        if query_def_names is not None:
+            cmd += query_def_names
+        else:
+            cmd += ['--all']
+            query_def_names = []
         n_op = _related_decls_impl(cfg, mvir, sb, n_code, query_def_names, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

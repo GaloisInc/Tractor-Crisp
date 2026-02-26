@@ -10,6 +10,8 @@ syn.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
 
 ra_ap_base_db.workspace = true
 ra_ap_hir.workspace = true

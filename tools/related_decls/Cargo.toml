@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-rust_util.workspace = true
-
 clap.workspace = true
 log.workspace = true
 

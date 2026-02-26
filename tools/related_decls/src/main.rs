@@ -22,13 +22,17 @@ use std::path::{Path, PathBuf};
 struct Args {
     /// Directory of Rust project to analyze. `Cargo.toml` should reside inside this directory.
     cargo_dir_path: PathBuf,
-    #[arg(required = true)]
+
     /// Paths to Rust item to analyze.
     item_paths: Vec<String>,
 
     /// Where to write output JSON.  Default: stdout.
     #[clap(short, long)]
     output_path: Option<PathBuf>,
+
+    /// Output info about all items, ignoring `item_paths`.
+    #[clap(long)]
+    all: bool,
 }
 
 /// Obtain the textual range of a given item
@@ -452,12 +456,16 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
             let abs_path = absolute_item_path(db, module_def, file.edition(db));
             let canonical_path = canonical_item_path(&module_def, db, file.edition(db));
 
-            if let Some(path) = canonical_path
-                .and_then(|path| unfound_paths.take(&path))
+            if let Some(path) = canonical_path.as_ref()
+                .and_then(|path| unfound_paths.take(path))
                 .or_else(|| unfound_paths.take(&abs_path))
             {
                 log::debug!("item traversal found queried path: {path}");
                 found_items.insert(path.to_owned(), module_def);
+            } else if args.all {
+                let path = canonical_path.unwrap_or(abs_path);
+                log::debug!("item traversal found path: {path}");
+                found_items.insert(path, module_def);
             }
 
             // Save source range

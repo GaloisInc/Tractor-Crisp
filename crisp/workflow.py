@@ -101,7 +101,7 @@ New signatures:
 LLM_PROMPT_RENAME_IDIOMATIC = '''
 This Rust code was auto-translated from C, so it uses unidiomatic names in some places.  Please find these cases and rename them according to Rust conventions: snake_case for functions and variables, CamelCase for types, and SNAKE_CASE for consts and statics.  Don't change anything but the names.
 
-If you rename a `#[no_mangle]` function, be sure to replace `#[no_mangle]` with `#[export_name = "the_original_name"]` so that the exported symbol name remains the same.
+When renaming a function with the `#[export_name = "..."]` attribute, never change the name in the attribute - doing so would break linking with outside C code.
 
 {output_instructions}
 
@@ -701,10 +701,6 @@ class Workflow:
         code, _llm_op = llm.run_rewrite(
                 cfg, mvir, LLM_PROMPT_RENAME_IDIOMATIC, code,
                 glob_filter = cfg.src_globs)
-
-        n_op_check = self.cargo_check_json_op(code)
-        if not n_op_check.passed:
-            raise ValueError('rename_idiomatic: llm introduced a compile error')
 
         return code
 

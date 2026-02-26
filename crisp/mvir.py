@@ -817,7 +817,13 @@ class RelatedDeclsOpNode(Node):
     exit_code: Metadata[int]
     # Input `TreeNode` (a collection of files)
     code: Metadata[NodeId]
-    query_def_names: Metadata[list[str]]
+    # List of defs to retrieve information for.  If this is `None`, information
+    # is retrieved for all defs.
+    #
+    # Note it's actually the `cmd` that determines what defs are retrieved.
+    # This field is for informational purposes only.  The two fields are kept
+    # in sync by the logic in `analysis.related_decls`.
+    query_def_names: Metadata[list[str] | None]
     # The complete JSON output as a `FileNode`.
     json_out: Metadata[NodeId]
     # Output `CrateNode` containing defs reduced to just their signatures.

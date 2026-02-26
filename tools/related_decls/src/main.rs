@@ -314,12 +314,10 @@ fn items_used_by(sema: &Semantics<RootDatabase>, module_def: ModuleDef) -> HashS
                 .source::<Function>(func)
                 .expect("def without source")
                 .value;
-            // Obtain body definition as token sequence
-            fn_ast
-                .body()
-                .expect("function has no body")
-                .syntax()
-                .to_owned()
+            // Obtain body definition as token sequence.  Extern functions have no body to inspect.
+            let Some(body) = fn_ast.body()
+                else { return used_module_defs };
+            body.syntax().to_owned()
         }
         ModuleDef::Static(s) => {
             use_type_components(s.ty(sema.db));

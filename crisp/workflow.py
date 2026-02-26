@@ -17,6 +17,7 @@ from .mvir import (
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
+    RelatedDeclsOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -657,6 +658,10 @@ class Workflow:
     @step
     def merge_op(self, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
         return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)
+
+    @step
+    def related_decls_op(self, n_code: TreeNode, query_def_names: list[str]) -> RelatedDeclsOpNode:
+        return analysis.related_decls(self.cfg, self.mvir, n_code, query_def_names)
 
     def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
         mvir = self.mvir

@@ -212,8 +212,8 @@ def do_main(args, cfg):
             src_loc_annotations=True,
             refactor_transforms=("rename_unnamed", "reorganize_definitions"),
         )
-    if n_code is None:
-        n_code = w.transpile(n_c_code, src_loc_annotations=True, hayroll=True)
+    #if n_code is None:
+    #    n_code = w.transpile(n_c_code, src_loc_annotations=True, hayroll=True)
     if n_code is None:
         n_code = w.transpile(n_c_code)
     if n_code is None:

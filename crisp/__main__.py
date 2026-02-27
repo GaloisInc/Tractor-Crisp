@@ -226,12 +226,6 @@ def do_main(args, cfg):
         return None
     w.accept(n_code, ('main', 'split_ffi'))
 
-    n_code = w.rename_idiomatic(n_code)
-    if not w.test(n_code, n_c_code):
-        print('error: tests failed after rename_idiomatic')
-        return None
-    w.accept(n_code, ('main', 'rename_idiomatic'))
-
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe(n_code)

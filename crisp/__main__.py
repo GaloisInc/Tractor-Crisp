@@ -55,6 +55,15 @@ def parse_args():
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
 
+    repl = sub.add_parser('repl')
+    repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
+        help='store NODE in local variable NAME (default: `n`) before starting repl')
+
+    eval_ = sub.add_parser('eval')
+    eval_.add_argument('expr')
+    eval_.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
+        help='store NODE in local variable NAME (default: `n`) before evaluating')
+
     reflog = sub.add_parser('reflog')
     reflog.add_argument('tag', nargs='?', default='current')
 
@@ -79,36 +88,6 @@ def parse_args():
     checkout.add_argument('node', nargs='?', default='current')
     checkout.add_argument('--path', default='.',
         help='check out the files into this directory')
-
-    cc_cmake = sub.add_parser('cc_cmake')
-    cc_cmake.add_argument('node', nargs='?', default='c_code')
-
-    transpile = sub.add_parser('transpile')
-    transpile.add_argument('compile_commands_node', nargs='?', default='compile_commands')
-    transpile.add_argument('c_code_node', nargs='?')
-
-    split_ffi = sub.add_parser('split-ffi')
-    split_ffi.add_argument('node', nargs='?', default='current')
-
-    llm = sub.add_parser('llm')
-    llm.add_argument('node', nargs='?', default='current')
-
-    llm_repair = sub.add_parser('llm-repair')
-    llm_repair.add_argument('node', nargs='?', default='current')
-    llm_repair.add_argument('--c-code', default='c_code')
-
-    test = sub.add_parser('test')
-    test.add_argument('node', nargs='?', default='current')
-    test.add_argument('--c-code', default='c_code')
-
-    test = sub.add_parser('cargo-check-json')
-    test.add_argument('node', nargs='?', default='current')
-
-    test = sub.add_parser('inline-errors')
-    test.add_argument('node', nargs='?', default='current')
-
-    find_unsafe = sub.add_parser('find_unsafe')
-    find_unsafe.add_argument('node', nargs='?', default='current')
 
     git = sub.add_parser('git')
     git.add_argument('-n', '--node', default='current')
@@ -195,164 +174,10 @@ def parse_node_id_arg_and_check_tag(mvir, s):
     else:
         raise ValueError('found multiple nodes with prefix %r: %r' % (s, matches))
 
+def parse_node_id(mvir, s):
+    node_id, _is_tag = parse_node_id_arg_and_check_tag(mvir, s)
+    return node_id
 
-def do_llm(args, cfg):
-    '''Apply an LLM-based transformation to the codebase.  This takes the files
-    identified by `cfg.src_globs`, passes them to the LLM, and overwrites the
-    files with updated versions.  This creates a new `LlmOpNode` in the MVIR,
-    which references the old and new states of the codebase, and records the
-    node in the `op_history` reflog.'''
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
-    dest_tag = args.node if is_tag else 'current'
-    n_tree = mvir.node(node_id)
-
-    n_new_tree, n_op = w.llm_safety_op(n_tree)
-
-    mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
-    print('new state: %s' % n_new_tree.node_id())
-    print('operation: %s' % n_op.node_id())
-
-
-def do_llm_repair(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
-    dest_tag = args.node if is_tag else 'current'
-    n_tree = mvir.node(node_id)
-
-    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
-    n_c_code = mvir.node(c_code_node_id)
-
-    n_test = w.test_op(n_tree, n_c_code)
-    n_new_tree, n_op = w.llm_repair_op(n_tree, n_test)
-
-    mvir.set_tag(dest_tag, n_new_tree.node_id(), n_op.kind)
-    print('new state: %s' % n_new_tree.node_id())
-    print('operation: %s' % n_op.node_id())
-
-
-def do_cc_cmake(args, cfg):
-    '''Generate compile_commands.json by running `cmake`.'''
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id = parse_node_id_arg(mvir, args.node)
-    node = mvir.node(node_id)
-
-    n_op = w.cc_cmake_op(node)
-
-    if n_op.exit_code != 0:
-        print(n_op.body().decode('utf-8'))
-    print('cmake process %s with code %d:\n%s' % (
-        'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
-    print('operation: %s' % n_op.node_id())
-    print('result: %s' % n_op.compile_commands)
-
-def do_transpile(args, cfg):
-    '''Transpile from C to unsafe Rust.'''
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    cc_node_id = parse_node_id_arg(mvir, args.compile_commands_node)
-    n_cc = mvir.node(cc_node_id)
-
-    if args.c_code_node is not None:
-        c_code_node_id = parse_node_id_arg(mvir, args.c_code_node)
-    else:
-        for ie in mvir.index(n_cc.node_id()):
-            if ie.kind == 'compile_commands_op' and ie.key == 'compile_commands':
-                n_op = mvir.node(ie.node_id)
-                c_code_node_id = n_op.c_code
-                break
-        else:
-            raise ValueError("couldn't find a compile_commands_op for %s" % n_cc.node_id())
-    n_c_code = mvir.node(c_code_node_id)
-
-    n_op = w.transpile_cc_op(n_c_code, n_cc)
-
-    print('operation: %s' % n_op.node_id())
-    print('result: %s' % n_op.rust_code)
-
-def do_split_ffi(args, cfg):
-    '''Run `split_ffi_entry_points` tool on Rust code.'''
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id, is_tag = parse_node_id_arg_and_check_tag(mvir, args.node)
-    dest_tag = args.node if is_tag else 'current'
-    n_tree = mvir.node(node_id)
-
-    n_op = w.split_ffi_op(n_tree)
-
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
-    mvir.set_tag(dest_tag, n_op.new_code, n_op.kind)
-    print('new state: %s' % n_op.new_code)
-    print('operation: %s' % n_op.node_id())
-
-def do_test(args, cfg):
-    """
-    Run a test on the current codebase.  This produces a `TestResultNode` and
-    adds it to the `test_results` reflog.  If the test succeeds, this also adds
-    it to the `test_passed` reflog.
-    """
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id = parse_node_id_arg(mvir, args.node)
-    n_code = mvir.node(node_id)
-
-    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
-    n_c_code = mvir.node(c_code_node_id)
-
-    n = w.test_op(n_code, n_c_code)
-
-    print('\ntest process %s with code %d:\n%s' % (
-        'passed' if n.passed else 'failed', n.exit_code, n.cmd))
-    print('result: %s' % n.node_id())
-
-def do_cargo_check_json(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id = parse_node_id_arg(mvir, args.node)
-    n_code = mvir.node(node_id)
-
-    n = w.cargo_check_json_op(n_code)
-    n_json = mvir.node(n.json)
-    print(n_json.body_str())
-
-    print('\ncargo check process %s with code %d' % (
-        'passed' if n.passed else 'failed', n.exit_code))
-    print('operation: %s' % n.node_id())
-    print('json: %s' % n_json.node_id())
-
-def do_inline_errors(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id = parse_node_id_arg(mvir, args.node)
-    n_code = mvir.node(node_id)
-
-    n_op = w.inline_errors_op(n_code)
-    print('operation: %s' % n_op.node_id())
-    print('new state: %s' % n_op.new_code)
-
-def do_find_unsafe(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    node_id = parse_node_id_arg(mvir, args.node)
-    n_code = mvir.node(node_id)
-
-    n = w.find_unsafe_op(n_code)
-
-    json.dump(n.body_json(), sys.stdout, indent='  ')
-
-    print('\nresult: %s' % n.node_id())
 
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -433,6 +258,37 @@ def do_main(args, cfg):
     unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def repl_locals(args, cfg, mvir, w):
+    dct = dict(
+        cfg = cfg,
+        mvir = mvir,
+        w = w,
+        node = lambda s: mvir.node(parse_node_id(mvir, s)),
+    )
+
+    for x in args.node:
+        name, sep, expr = x.partition('=')
+        if sep == '':
+            name, expr = 'n', x
+        assert name not in dct, f'duplicate entry for {name!r}'
+        dct[name] = mvir.node(parse_node_id(mvir, expr))
+
+    return dct
+
+def do_repl(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    import code
+    code.interact(local = repl_locals(args, cfg, mvir, w))
+
+def do_eval(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    x = eval(args.expr, globals(), repl_locals(args, cfg, mvir, w))
+    print(x)
 
 def do_reflog(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
@@ -561,6 +417,10 @@ def main():
 
     if args.cmd == 'main':
         do_main(args, cfg)
+    elif args.cmd == 'repl':
+        do_repl(args, cfg)
+    elif args.cmd == 'eval':
+        do_eval(args, cfg)
     elif args.cmd == 'reflog':
         do_reflog(args, cfg)
     elif args.cmd == 'tag':
@@ -573,24 +433,6 @@ def main():
         do_commit(args, cfg)
     elif args.cmd == 'checkout':
         do_checkout(args, cfg)
-    elif args.cmd == 'cc_cmake':
-        do_cc_cmake(args, cfg)
-    elif args.cmd == 'transpile':
-        do_transpile(args, cfg)
-    elif args.cmd == 'split-ffi':
-        do_split_ffi(args, cfg)
-    elif args.cmd == 'llm':
-        do_llm(args, cfg)
-    elif args.cmd == 'llm-repair':
-        do_llm_repair(args, cfg)
-    elif args.cmd == 'test':
-        do_test(args, cfg)
-    elif args.cmd == 'cargo-check-json':
-        do_cargo_check_json(args, cfg)
-    elif args.cmd == 'inline-errors':
-        do_inline_errors(args, cfg)
-    elif args.cmd == 'find_unsafe':
-        do_find_unsafe(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
     else:

@@ -1,0 +1,18 @@
+# Directories to provide inside the sandbox.  Valid options:
+# - `expose`: make the directory (or file) visible but read-only
+# - `expose_path`: like `expose`, but also add the directory to `$PATH`
+# - `sandbox`: provide a new directory at this location in the sandbox.  The
+#   directory is persistent but initially empty.
+[dirs]
+
+# Provide CRISP tools and add them to `$PATH`
+"tools/target/debug" = "expose_path"
+"../c2rust/target/release" = "expose_path"
+
+# cargo/rustup
+# Don't expose ~/.cargo, which may contain credentials.  Also don't expose
+# `~/.cargo/{git,registry}`, since they may contain cached copies of private
+# git repos or private registries.
+"~/.cargo" = "sandbox"
+"~/.cargo/bin" = "expose"
+"~/.rustup" = "expose"

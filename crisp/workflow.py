@@ -8,6 +8,8 @@ import sys
 import toml
 import typing
 from typing import Any
+import json
+import shlex
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
@@ -224,7 +226,6 @@ class Workflow:
 
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
-            import json, shlex
             j = n_cc.body_json()
             for x in j:
                 if 'command' in x and 'arguments' not in x:

@@ -263,12 +263,10 @@ class Workflow:
                         "--disable-refactoring",
                     ]
                 if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend(
-                        (
-                            "--binary",
-                            cfg.transpile.bin_main,
-                        )
-                    )
+                    c2rust_cmd += [
+                        "--binary",
+                        cfg.transpile.bin_main,
+                    ]
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 for transform in refactor_transforms:
@@ -311,12 +309,10 @@ class Workflow:
                 ]
                 # hayroll already has c2rust-transpile emit src loc annotations.
                 if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend(
-                        (
-                            "--binary",
-                            cfg.transpile.bin_main,
-                        )
-                    )
+                    c2rust_cmd += [
+                        "--binary",
+                        cfg.transpile.bin_main,
+                    ]
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 if exit_code == 0:

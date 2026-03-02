@@ -265,9 +265,12 @@ class Workflow:
                         "--disable-refactoring",
                     ]
                 if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
-                        ))
+                    c2rust_cmd.extend(
+                        (
+                            "--binary",
+                            cfg.transpile.bin_main,
+                        )
+                    )
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 for transform in refactor_transforms:
@@ -287,7 +290,9 @@ class Workflow:
                         logs += new_logs
 
                 if exit_code == 0:
-                    new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
+                    new_exit_code, new_logs = sb.run(
+                        ["cargo", "clean"], cwd=output_path
+                    )
                     exit_code = new_exit_code
                     logs += new_logs
 
@@ -300,23 +305,33 @@ class Workflow:
                 # rather than `foo/bar/baz/src/lib.rs` because overly long file
                 # paths sometimes confuse weaker LLMs.
                 c2rust_cmd = [
-                        'hayroll',
-                        sb.join(COMPILE_COMMANDS_PATH),
-                        sb.join(output_path),
-                        '--project-dir', os.path.join(c_path_rel, 'src'),
-                        ]
+                    "hayroll",
+                    sb.join(COMPILE_COMMANDS_PATH),
+                    sb.join(output_path),
+                    "--project-dir",
+                    os.path.join(c_path_rel, "src"),
+                ]
                 # hayroll already has c2rust-transpile emit src loc annotations.
                 if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
-                        ))
+                    c2rust_cmd.extend(
+                        (
+                            "--binary",
+                            cfg.transpile.bin_main,
+                        )
+                    )
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 if exit_code == 0:
-                    exit_code, logs2 = sb.run([
-                        'find', sb.join(output_path), '-name', '*.*.*', '-delete',
-                    ])
-                    logs = b'\n\n'.join((logs, logs2))
+                    exit_code, logs2 = sb.run(
+                        [
+                            "find",
+                            sb.join(output_path),
+                            "-name",
+                            "*.*.*",
+                            "-delete",
+                        ]
+                    )
+                    logs = b"\n\n".join((logs, logs2))
 
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)
@@ -326,20 +341,26 @@ class Workflow:
 
         n_op = TranspileOpNode.new(
             mvir,
-            body = logs,
-            compile_commands = n_cc.node_id(),
-            c_code = n_c_code.node_id(),
-            cmd = c2rust_cmd,
-            exit_code = exit_code,
-            rust_code = n_rust_code_id,
-            )
+            body=logs,
+            compile_commands=n_cc.node_id(),
+            c_code=n_c_code.node_id(),
+            cmd=c2rust_cmd,
+            exit_code=exit_code,
+            rust_code=n_rust_code_id,
+        )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         if exit_code != 0:
             # TODO: proper log parsing
             print(logs.decode())
-        print('c2rust process %s with code %d:\n%s' % (
-            'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+        print(
+            "c2rust process %s with code %d:\n%s"
+            % (
+                "succeeded" if n_op.exit_code == 0 else "failed",
+                n_op.exit_code,
+                n_op.cmd,
+            )
+        )
 
         return n_op
 

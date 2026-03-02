@@ -216,10 +216,6 @@ class Workflow:
             assert src_loc_annotations, (
                 "reorganize_definitions requires src loc annotations"
             )
-        if hayroll:
-            assert len(refactor_transforms) == 0, (
-                "refactor_transforms are not supported with hayroll yet"
-            )
 
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
@@ -268,30 +264,6 @@ class Workflow:
                         cfg.transpile.bin_main,
                     ]
                 exit_code, logs = sb.run(c2rust_cmd)
-
-                for transform in refactor_transforms:
-                    if exit_code == 0:
-                        c2rust_refactor_cmd = [
-                            "c2rust",
-                            "refactor",
-                            "--cargo",
-                            "--rewrite-mode",
-                            "inplace",
-                            transform,
-                        ]
-                        new_exit_code, new_logs = sb.run(
-                            c2rust_refactor_cmd, cwd=output_path
-                        )
-                        exit_code = new_exit_code
-                        logs += new_logs
-
-                if exit_code == 0:
-                    new_exit_code, new_logs = sb.run(
-                        ["cargo", "clean"], cwd=output_path
-                    )
-                    exit_code = new_exit_code
-                    logs += new_logs
-
             else:
                 c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
@@ -307,7 +279,10 @@ class Workflow:
                     "--project-dir",
                     os.path.join(c_path_rel, "src"),
                 ]
-                # hayroll already has c2rust-transpile emit src loc annotations.
+                if src_loc_annotations:
+                    c2rust_cmd += [
+                        "--keep-src-loc",
+                    ]
                 if cfg.transpile.bin_main is not None:
                     c2rust_cmd += [
                         "--binary",
@@ -326,6 +301,29 @@ class Workflow:
                         ]
                     )
                     logs = b"\n\n".join((logs, logs2))
+
+            for transform in refactor_transforms:
+                if exit_code == 0:
+                    c2rust_refactor_cmd = [
+                        "c2rust",
+                        "refactor",
+                        "--cargo",
+                        "--rewrite-mode",
+                        "inplace",
+                        transform,
+                    ]
+                    new_exit_code, new_logs = sb.run(
+                        c2rust_refactor_cmd, cwd=output_path
+                    )
+                    exit_code = new_exit_code
+                    logs += new_logs
+
+            if exit_code == 0:
+                new_exit_code, new_logs = sb.run(
+                    ["cargo", "clean"], cwd=output_path
+                )
+                exit_code = new_exit_code
+                logs += new_logs
 
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)

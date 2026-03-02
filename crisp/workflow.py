@@ -12,6 +12,7 @@ from typing import Any, Callable
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
+from .error import CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
@@ -593,9 +594,8 @@ class Workflow:
             if exit_code == 0:
                 n_new_tree = sb.commit_dir(rust_path_rel)
             else:
-                # TODO: record failure without throwing an exception, like
-                # `transpile_cc_op` does
-                raise ValueError(
+                # TODO: record exit code in the `Node`, like `transpile_cc_op` does
+                raise CrispError(
                     f'split_ffi_entry_points failed (exit code = {exit_code})\n'
                     f'logs:\n{logs.decode("utf-8", errors="replace")}')
 
@@ -670,8 +670,10 @@ class Workflow:
         crate_new = self.split(code_new)
 
         defs_out = crate_new.defs.copy()
-        defs_out.update((k, v) for k,v in crate_ffi.defs.items()
-            if k.endswith('_ffi'))
+        for k, v in crate_ffi.defs.items():
+            if k in defs_out:
+                raise CrispError(f'{k!r} is present in both the ffi and non-ffi inputs')
+            defs_out[k] = v
         crate_out = CrateNode.new(mvir, defs = defs_out)
 
         code_out = self.merge(code_old, crate_out)
@@ -735,12 +737,21 @@ class Workflow:
                     new_sigs = new_sigs_str,
                 ))
 
-        # `new_ffi_tree` has a flat module structure; all FFI functions are at
-        # top level.  We need to move these back to their respective paths.
+        # `new_ffi_tree` has a flat module structure; all FFI functions have
+        # been renamed to be at top level, e.g. `foo::bar_ffi` -> `bar_ffi`.
+        # We need to move these back to their respective paths.
         new_ffi_crate_renamed = self.split(new_ffi_tree, root_file = 'ffi.rs')
-        print(new_ffi_crate_renamed.defs)
-        new_ffi_defs = CrateNode.new(mvir,
-            defs = {k: new_ffi_crate_renamed.defs[k.rpartition('::')[2]]
-                for k in ffi_defs.defs.keys() if k.endswith('_ffi')})
+        new_ffi_defs_dct = {}
+        for k in ffi_defs.defs.keys():
+            _, _, def_name = k.rpartition('::')
+            if def_name in new_ffi_crate_renamed.defs:
+                new_ffi_defs_dct[k] = new_ffi_crate_renamed.defs[def_name]
+            else:
+                print(f'warning: LLM omitted FFI def {def_name!r}')
+                # Copy the original version of this FFI function.  This will
+                # likely cause a compile error, which `llm_repair_compile` will
+                # try to fix.
+                new_ffi_defs_dct[k] = ffi_defs.defs[k]
+        new_ffi_defs = CrateNode.new(mvir, defs = new_ffi_defs_dct)
 
         return new_ffi_defs

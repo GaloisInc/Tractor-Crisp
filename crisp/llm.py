@@ -7,6 +7,7 @@ import requests
 
 from . import llm_format
 from .config import Config, ModelConfig
+from .error import CrispError
 from .mvir import MVIR, FileNode, TreeNode, LlmOpNode
 from .util import ChunkPrinter
 
@@ -274,12 +275,17 @@ def run_rewrite(
             }
     resp = do_request(req, stream=True)
 
-    output = resp['choices'][0]['message']['content']
+    try:
+        output = resp['choices'][0]['message']['content']
+    except (IndexError, KeyError) as e:
+        raise CrispError('missing content in LLM output')
+    if output is None:
+        raise CrispError('LLM output content is `None`')
     output_files = input_code.files.copy()
     files_changed = 0
     for out_short_path, out_text in file_formatter.extract_files(output):
-        assert out_short_path in short_path_map, \
-            'output contained unknown file path %r' % (out_short_path,)
+        if out_short_path not in short_path_map:
+            raise CrispError(f'output contained unknown file path {out_short_path!r}')
         out_path = short_path_map[out_short_path]
         # Note only paths matching `glob_filter` end up in `short_path_map`.
         output_files[out_path] = FileNode.new(mvir, out_text.encode('utf-8')).node_id()

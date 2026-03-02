@@ -504,13 +504,11 @@ class Workflow:
                         "--disable-refactoring",
                     ]
                 if art_cfg.bin_main is not None:
-                    c2rust_cmd.extend(
-                        (
-                            '--binary',
-                            art_cfg.bin_main,
-                            '--thin-binaries',
-                        )
-                    )
+                    c2rust_cmd += [
+                        '--binary',
+                        art_cfg.bin_main,
+                        '--thin-binaries',
+                    ]
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 for transform in refactor_transforms:
@@ -553,13 +551,11 @@ class Workflow:
                 ]
                 # hayroll already has c2rust-transpile emit src loc annotations.
                 if art_cfg.bin_main is not None:
-                    c2rust_cmd.extend(
-                        (
-                            '--binary',
-                            art_cfg.bin_main,
-                            '--thin-binaries',
-                        )
-                    )
+                    c2rust_cmd += [
+                        '--binary',
+                        art_cfg.bin_main,
+                        '--thin-binaries',
+                    ]
                 exit_code, logs = sb.run(c2rust_cmd)
 
                 if exit_code == 0:

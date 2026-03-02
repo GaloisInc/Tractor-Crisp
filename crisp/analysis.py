@@ -9,6 +9,7 @@ import typing
 
 from . import inline_errors as inline_errors_module
 from .config import Config
+from .error import CrispError
 from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
@@ -384,7 +385,6 @@ def _split_rust_impl(
             defs[def_id] = DefNode.new(mvir, body = def_str).node_id()
         crate_out = CrateNode.new(mvir, defs = defs)
     else:
-        assert False
         json_out = FileNode.new(mvir, b'')
         crate_out = CrateNode.new(mvir, defs = {})
 
@@ -399,6 +399,8 @@ def _split_rust_impl(
         json_out = json_out.node_id(),
         crate_out = crate_out.node_id(),
     )
+    if exit_code != 0:
+        raise CrispError('split_rust failed', n_op)
     return n_op
 
 def cargo_target_root_file(t: dict) -> str | None:
@@ -462,7 +464,6 @@ def _merge_rust_impl(
 
         code_out = sb.commit_dir('.')
     else:
-        assert False
         code_out = TreeNode.new(mvir, files = {})
 
     n_op = MergeOpNode.new(
@@ -474,6 +475,8 @@ def _merge_rust_impl(
         crate_in = crate_in.node_id(),
         code_out = code_out.node_id(),
     )
+    if exit_code != 0:
+        raise CrispError('merge_rust failed', n_op)
     return n_op
 
 def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
@@ -512,7 +515,6 @@ def _related_decls_impl(
                 sig_defs[def_id] = DefNode.new(mvir, body = sig).node_id()
         sigs_out = CrateNode.new(mvir, defs = sig_defs)
     else:
-        assert False
         json_out = FileNode.new(mvir, b'')
         sigs_out = CrateNode.new(mvir, defs = {})
 
@@ -526,6 +528,8 @@ def _related_decls_impl(
         json_out = json_out.node_id(),
         sigs_out = sigs_out.node_id(),
     )
+    if exit_code != 0:
+        raise CrispError('related_decls failed', n_op)
     return n_op
 
 def related_decls(

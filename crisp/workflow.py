@@ -353,14 +353,8 @@ class Workflow:
         if exit_code != 0:
             # TODO: proper log parsing
             print(logs.decode())
-        print(
-            "c2rust process %s with code %d:\n%s"
-            % (
-                "succeeded" if n_op.exit_code == 0 else "failed",
-                n_op.exit_code,
-                n_op.cmd,
-            )
-        )
+        outcome = "succeeded" if n_op.exit_code == 0 else "failed"
+        print(f"c2rust process {outcome} with code {n_op.exit_code}:\n{n_op.cmd}")
 
         return n_op
 

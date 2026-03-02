@@ -243,9 +243,10 @@ class Workflow:
                     rel_d = os.path.relpath(d, sb_dir)
                     sb.checkout_file(os.path.join(rel_d, '.empty'), n_empty)
 
+            c2rust_cmd = []
             # Run c2rust-transpile
             if not hayroll:
-                c2rust_cmd = [
+                c2rust_cmd += [
                     "c2rust",
                     "transpile",
                     sb.join(COMPILE_COMMANDS_PATH),
@@ -258,12 +259,6 @@ class Workflow:
                         "--reorganize-definitions",
                         "--disable-refactoring",
                     ]
-                if cfg.transpile.bin_main is not None:
-                    c2rust_cmd += [
-                        "--binary",
-                        cfg.transpile.bin_main,
-                    ]
-                exit_code, logs = sb.run(c2rust_cmd)
             else:
                 c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
@@ -272,7 +267,7 @@ class Workflow:
                 # modules.  We want it to translate `src/lib.c` to `src/lib.rs`
                 # rather than `foo/bar/baz/src/lib.rs` because overly long file
                 # paths sometimes confuse weaker LLMs.
-                c2rust_cmd = [
+                c2rust_cmd += [
                     "hayroll",
                     sb.join(COMPILE_COMMANDS_PATH),
                     sb.join(output_path),
@@ -283,24 +278,24 @@ class Workflow:
                     c2rust_cmd += [
                         "--keep-src-loc",
                     ]
-                if cfg.transpile.bin_main is not None:
-                    c2rust_cmd += [
-                        "--binary",
-                        cfg.transpile.bin_main,
-                    ]
-                exit_code, logs = sb.run(c2rust_cmd)
+            if cfg.transpile.bin_main is not None:
+                c2rust_cmd += [
+                    "--binary",
+                    cfg.transpile.bin_main,
+                ]
+            exit_code, logs = sb.run(c2rust_cmd)
 
-                if exit_code == 0:
-                    exit_code, logs2 = sb.run(
-                        [
-                            "find",
-                            sb.join(output_path),
-                            "-name",
-                            "*.*.*",
-                            "-delete",
-                        ]
-                    )
-                    logs = b"\n\n".join((logs, logs2))
+            if hayroll and exit_code == 0:
+                exit_code, logs2 = sb.run(
+                    [
+                        "find",
+                        sb.join(output_path),
+                        "-name",
+                        "*.*.*",
+                        "-delete",
+                    ]
+                )
+                logs = b"\n\n".join((logs, logs2))
 
             for transform in refactor_transforms:
                 if exit_code == 0:

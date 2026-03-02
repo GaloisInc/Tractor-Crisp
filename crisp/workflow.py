@@ -477,11 +477,12 @@ class Workflow:
             for d in cc_dirs:
                 sb.run(['mkdir', '-p', d])
 
+            c2rust_cmd = []
             # Run c2rust-transpile
             if not hayroll:
                 sb.run(['mkdir', '-p', output_path])
 
-                c2rust_cmd = [
+                c2rust_cmd += [
                     "c2rust",
                     "transpile",
                     sb.join(COMPILE_COMMANDS_PATH),
@@ -494,12 +495,6 @@ class Workflow:
                         "--reorganize-definitions",
                         "--disable-refactoring",
                     ]
-                if art_cfg.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', art_cfg.bin_main,
-                        '--thin-binaries',
-                        ))
-                exit_code, logs = sb.run(c2rust_cmd)
             else:
                 project_dir_rel = cfg.relative_path(art_cfg.hayroll_project_dir)
 
@@ -508,7 +503,7 @@ class Workflow:
                 # modules.  We want it to translate `src/lib.c` to `src/lib.rs`
                 # rather than `foo/bar/baz/src/lib.rs` because overly long file
                 # paths sometimes confuse weaker LLMs.
-                c2rust_cmd = [
+                c2rust_cmd += [
                         'hayroll',
                         sb.join(COMPILE_COMMANDS_PATH),
                         sb.join(output_path),
@@ -516,18 +511,19 @@ class Workflow:
                         ]
                 if src_loc_annotations:
                     c2rust_cmd.append('--keep-src-loc')
-                if art_cfg.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', art_cfg.bin_main,
-                        '--thin-binaries',
-                        ))
-                exit_code, logs = sb.run(c2rust_cmd)
 
-                if exit_code == 0:
-                    exit_code, logs2 = sb.run([
-                        'find', sb.join(output_path), '-name', '*.*.*', '-delete',
-                    ])
-                    logs = b'\n\n'.join((logs, logs2))
+            if art_cfg.bin_main is not None:
+                c2rust_cmd.extend((
+                    '--binary', art_cfg.bin_main,
+                    '--thin-binaries',
+                    ))
+            exit_code, logs = sb.run(c2rust_cmd)
+
+            if hayroll and exit_code == 0:
+                exit_code, logs2 = sb.run([
+                    'find', sb.join(output_path), '-name', '*.*.*', '-delete',
+                ])
+                logs = b'\n\n'.join((logs, logs2))
 
             for transform in refactor_transforms:
                 if exit_code == 0:

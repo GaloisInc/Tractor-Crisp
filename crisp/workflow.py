@@ -3,7 +3,6 @@ from datetime import datetime
 import functools
 import inspect
 import os
-import subprocess
 import sys
 import toml
 import typing
@@ -21,8 +20,6 @@ from .mvir import (
     WorkflowStepNode,
 )
 from .sandbox import run_sandbox
-from .work_dir import lock_work_dir
-
 
 # Whether to cache the results of workflow steps.  This is more aggressive than
 # the built-in caching of the `analysis` module because it will even cache the

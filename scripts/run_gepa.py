@@ -6,11 +6,14 @@ The model is then run using the Python package, so `pip install`ing llama-cpp-py
 """
 
 import gepa
+import litellm
+from llama_cpp import Llama
 from pathlib import Path
 import random
 import os
+from tqdm import tqdm
 
-from crisp.gepa_po import RustAdapter
+from crisp.gepa_po import RustAdapter, ResponseEvaluator
 
 
 # Set environment variable in the way GEPA expects
@@ -106,7 +109,65 @@ def run_rust(
     print("==================== END GEPA OPTIMIZED PROMPT ====================")
 
 
+def evaluate_rust(
+    dataset_path: str | Path,
+    prompt: str,
+    model: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf')
+):
+    """
+    Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
+
+    Inputs:
+    - dataset_path: Path to a folder containing unsafe Rust projects and .rs files inside.
+    - prompt: The prompt to use for evaluating.
+    - lm: The LM to run the prompt on. Either a string, or the path to a GGUF file.
+    """
+
+    # Process dataset path and get source filepaths
+    dataset_path = Path(dataset_path).resolve()
+    source_filepaths = list(dataset_path.rglob('*.rs'))
+
+    # Load model
+    is_llama_model = False
+    if model.endswith('.gguf'):
+        model = Llama(
+            model_path = model,
+            n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
+            n_ctx = 0 # 0 = model's default
+        )
+        is_llama_model = True
+
+    # Load response evaluator and create scores dict
+    response_evaluator = ResponseEvaluator()
+    scores = {}
+
+    # Iterate
+    for source_filepath in tqdm(source_filepaths):
+        with open(source_filepath, 'r', encoding='utf-8') as f:
+            messages = [
+                {'role': 'system', 'content': prompt},
+                {'role': 'user', 'content': f"<code>\n{f.read()}\n</code>"}
+            ]
+
+        if is_llama_model:
+            response = model.create_chat_completion(messages = messages)
+            response = response['choices'][0]['message']['content']
+        else:
+            response = litellm.completion(model = model, messages = messages)
+            response = response.choices[0].message.content
+
+        score = response_evaluator(response).score
+        print(f"====================\nObtained score {score} for file {source_filepath}\n====================")
+        scores[str(source_filepath.relative_to(dataset_path))] = score
+
+    # Final outputs
+    print(scores)
+
+
 if __name__ == "__main__":
-    run_rust(
-        dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
+    with open(Path(__file__).resolve().parent / 'gepa_found_prompts/20260227_gptoss20b_gpt5.txt', 'r', encoding='utf-8') as f:
+        prompt = f.read()
+    evaluate_rust(
+        dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic',
+        prompt = prompt
     )

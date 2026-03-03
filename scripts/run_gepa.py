@@ -112,11 +112,19 @@ def run_rust(
     print("==================== END GEPA OPTIMIZED PROMPT ====================")
 
 
+def get_num_characters(filepath: str | Path) -> int:
+    """Count the number of characters in the file read from `filepath`."""
+    with open(filepath, 'r', encoding='utf-8') as f:
+        contents = f.read()
+    return len(contents)
+
+
 def evaluate_rust(
     dataset_path: str | Path,
     prompt: str,
     model: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
-    output_csv_path: Optional[Path] = None
+    output_csv_path: Optional[Path] = None,
+    sort_by_num_characters: bool = True
 ):
     """
     Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
@@ -127,11 +135,17 @@ def evaluate_rust(
     - model: The LM to run the prompt on. Either a string, or the path to a GGUF file.
     - output_csv_path: Save results to this CSV.
         - If None, set to `<dataset_path>/gepa_eval.csv`
+    - sort_by_num_characters: If set, sort the .rs files by size of their contents in terms of number of characters from smallest to largest.
+        - This is useful for running on the smallest files first and getting more results quickly.
     """
 
     # Process dataset path and get source filepaths
     dataset_path = Path(dataset_path).resolve()
     source_filepaths = list(dataset_path.rglob('*.rs'))
+
+    # Sort source filepaths by the size of their contents
+    if sort_by_num_characters:
+        source_filepaths = sorted(source_filepaths, key = get_num_characters)
 
     # Load model
     is_llama_model = False

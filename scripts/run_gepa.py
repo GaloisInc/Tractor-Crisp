@@ -5,13 +5,16 @@ Note: If using the gpt-oss-20b model using Llama CPP, it has to first be downloa
 The model is then run using the Python package, so `pip install`ing llama-cpp-python is required.
 """
 
+import csv
 import gepa
 import litellm
 from llama_cpp import Llama
+import pandas as pd
 from pathlib import Path
 import random
 import os
 from tqdm import tqdm
+from typing import Optional
 
 from crisp.gepa_po import RustAdapter, ResponseEvaluator
 
@@ -112,7 +115,8 @@ def run_rust(
 def evaluate_rust(
     dataset_path: str | Path,
     prompt: str,
-    model: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf')
+    model: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
+    output_csv_path: Optional[Path] = None
 ):
     """
     Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
@@ -120,7 +124,9 @@ def evaluate_rust(
     Inputs:
     - dataset_path: Path to a folder containing unsafe Rust projects and .rs files inside.
     - prompt: The prompt to use for evaluating.
-    - lm: The LM to run the prompt on. Either a string, or the path to a GGUF file.
+    - model: The LM to run the prompt on. Either a string, or the path to a GGUF file.
+    - output_csv_path: Save results to this CSV.
+        - If None, set to `<dataset_path>/gepa_eval.csv`
     """
 
     # Process dataset path and get source filepaths
@@ -137,37 +143,73 @@ def evaluate_rust(
         )
         is_llama_model = True
 
-    # Load response evaluator and create scores dict
+    # Load response evaluator
     response_evaluator = ResponseEvaluator()
-    scores = {}
 
-    # Iterate
-    for source_filepath in tqdm(source_filepaths):
-        with open(source_filepath, 'r', encoding='utf-8') as f:
-            messages = [
-                {'role': 'system', 'content': prompt},
-                {'role': 'user', 'content': f"<code>\n{f.read()}\n</code>"}
-            ]
+    # If it exists, read output CSV and get done files
+    if output_csv_path is None:
+        output_csv_path = dataset_path / 'gepa_eval.csv'
+    output_csv_existed = False
+    done_filepaths = set()
+    if output_csv_path.exists():
+        output_csv_existed = True
+        output_csv = pd.read_csv(output_csv_path)
+        done_filepaths = set(output_csv['filepath'])
+        del output_csv
 
-        if is_llama_model:
-            response = model.create_chat_completion(messages = messages)
-            response = response['choices'][0]['message']['content']
-        else:
-            response = litellm.completion(model = model, messages = messages)
-            response = response.choices[0].message.content
+    # Write to output CSV
+    with open(output_csv_path, 'a', encoding='utf-8') as csvfile:
+        csvwriter = csv.writer(csvfile)
 
-        score = response_evaluator(response).score
-        print(f"====================\nObtained score {score} for file {source_filepath}\n====================")
-        scores[str(source_filepath.relative_to(dataset_path))] = score
+        # Write header if this is the first time output CSV is being written to
+        if not output_csv_existed:
+            csvwriter.writerow([
+                'filepath',
+                'score'
+            ])
 
-    # Final outputs
-    print(scores)
+        # Iterate
+        for source_filepath in tqdm(source_filepaths):
+            relative_filepath = str(source_filepath.relative_to(dataset_path))
+            print(f"Running on {relative_filepath}")
+
+            # Check if already done
+            if relative_filepath in done_filepaths:
+                continue
+
+            # Get full prompt
+            with open(source_filepath, 'r', encoding='utf-8') as f:
+                messages = [
+                    {'role': 'system', 'content': prompt},
+                    {'role': 'user', 'content': f"<code>\n{f.read()}\n</code>"}
+                ]
+
+            # Run model
+            if is_llama_model:
+                response = model.create_chat_completion(messages = messages)
+                response = response['choices'][0]['message']['content']
+            else:
+                response = litellm.completion(model = model, messages = messages)
+                response = response.choices[0].message.content
+
+            # Get score
+            score = response_evaluator(response).score
+
+            # Write results
+            csvwriter.writerow([
+                relative_filepath,
+                score
+            ])
 
 
 if __name__ == "__main__":
-    with open(Path(__file__).resolve().parent / 'gepa_found_prompts/20260227_gptoss20b_gpt5.txt', 'r', encoding='utf-8') as f:
+    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/20260227_gptoss20b_gpt5.txt'
+    dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-bench'
+
+    with open(prompt_path, 'r', encoding='utf-8') as f:
         prompt = f.read()
     evaluate_rust(
-        dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic',
-        prompt = prompt
+        dataset_path = dataset_path,
+        prompt = prompt,
+        output_csv_path = dataset_path / f'{prompt_path.stem}_eval.csv',
     )

@@ -688,7 +688,7 @@ class Workflow:
         ffi_defs = self.extract_ffi_defs(orig_code)
         new_ffi_defs = self.llm_repair_call_sites(ffi_defs, orig_sigs, main_sigs)
 
-        code = self.unerase_ffi(orig_code, new_main_code, new_ffi_defs)
+        code = self.unerase_ffi(main_code, new_main_code, new_ffi_defs)
         return code
 
     @step

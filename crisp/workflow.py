@@ -9,7 +9,7 @@ import toml
 import typing
 from typing import Any, Callable
 
-from . import analysis, llm
+from . import agent, analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
@@ -99,6 +99,16 @@ New signatures:
 {input_files}
 '''
 
+AGENT_SAFETY_PROMPT = '''
+Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.  First, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fileds) that uses `unsafe`, and plan how you would refactor it to make it safe.  Write this plan to `SAFETY_PLAN.md`.  Then carry out the refactor as planned.
+
+HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+
+After refactoring, make sure the code still passes the tests.  Run the tests using this script:
+```sh
+{test_cmd}
+```
+'''
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -738,3 +748,21 @@ class Workflow:
         new_ffi_defs = CrateNode.new(mvir, defs = new_ffi_defs_dct)
 
         return new_ffi_defs
+
+    @step
+    def agent_safety(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        prompt: str = AGENT_SAFETY_PROMPT,
+    ) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        prompt = prompt.format(
+            cargo_dir_path = cargo_dir,
+            test_cmd = cfg.test_command,
+        )
+        return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
+            clean_cmds = [
+                ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
+            ])

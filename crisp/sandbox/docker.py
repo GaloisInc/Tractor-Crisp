@@ -122,7 +122,8 @@ class WorkContainer:
 
         if not stream:
             exit_code, logs = self.container.exec_run(
-                cmd, workdir=self.join(cwd), stream=stream
+                cmd, workdir=self.join(cwd), stream=stream,
+                environment = {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
             )
             sys.stdout.flush()
             sys.stdout.buffer.write(logs)
@@ -132,7 +133,8 @@ class WorkContainer:
         # High-level `exec_run` API doesn't return the exit code when streaming
         # is enabled, so use the low-level API instead.
         exec_info = self.client.api.exec_create(
-            self.container.id, cmd, workdir=self.join(cwd)
+            self.container.id, cmd, workdir=self.join(cwd),
+            environment = {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
         )
         exec_id = exec_info['Id']
         stream = self.client.api.exec_start(exec_id, stream=True)

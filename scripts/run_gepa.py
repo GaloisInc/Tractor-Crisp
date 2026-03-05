@@ -217,8 +217,8 @@ def evaluate_rust(
 
 
 if __name__ == "__main__":
-    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/20260227_gptoss20b_gpt5.txt'
-    dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-bench'
+    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
+    dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
 
     with open(prompt_path, 'r', encoding='utf-8') as f:
         prompt = f.read()

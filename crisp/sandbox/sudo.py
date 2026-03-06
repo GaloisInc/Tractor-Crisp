@@ -110,6 +110,8 @@ class SudoSandbox:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
 
+        print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
+
         cmd = 'cd {dir_path} && {cmd}'.format(
             dir_path=shlex.quote(self.join(cwd)),
             cmd=shlex.join(cmd),

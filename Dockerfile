@@ -1,7 +1,7 @@
 # Need gcc-13 for hayroll.
 # Debian bookworm (12) only has gcc-12.
 # Debian trixie (13) has gcc-13.
-FROM docker.io/rust:trixie
+FROM docker.io/rust:trixie AS tractor-crisp-user
 
 # rust-analyzer (required by hayroll)'s deps require Rust 1.89
 RUN rustup default 1.90.0
@@ -29,46 +29,64 @@ ENV CARGO_HOME=/usr/local/cargo
 RUN mkdir -p $CARGO_HOME
 COPY .cargo/config.toml $CARGO_HOME/config.toml
 
-# `uv` is required for building c2rust-refactor
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+COPY scripts/cargo-docker-clean.sh /usr/local/bin/
+
+# `uv` is required for building `c2rust-refactor` and crisp scripts.
+# Make sure things are installed not under `/root/`
+# so that they are accessible by other users with `sudo`.
+# `uv` installs binaries in `$XDG_BIN_HOME`.
+ENV XDG_BIN_HOME=/usr/local/bin
+# `uv` installs data (like libraries) in `$XDG_DATA_HOME/uv`.
+ENV XDG_DATA_HOME=/usr/local
+# We pin the `uv` version because using directories not owned by the user
+# may not be supported by `uv` in the future,
+# but it works in the current version.
+RUN curl -LsSf https://astral.sh/uv/0.9.29/install.sh | sh
 RUN uv python install
 
 # Install c2rust
-RUN cd /opt \
-    && git clone --depth 1 https://github.com/immunant/c2rust \
-    && cd c2rust \
-    && git fetch --depth 1 origin e8d55cdc311912889ea82db6979c3709c7c8c4b2 \
-    && git checkout FETCH_HEAD
+COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
-RUN cargo install --locked --path /opt/c2rust/c2rust
+RUN cargo-docker-clean.sh cargo install --locked --path /opt/c2rust/c2rust
 # `cd` to resolve the `rust-toolchain.toml`.
-RUN cd /opt/c2rust && cargo install --locked --path c2rust-refactor
+RUN cd /opt/c2rust \
+    && cargo-docker-clean.sh cargo install --locked --path c2rust-refactor
 
 # Install hayroll
 #
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-RUN mkdir -p /opt/hayroll \
-    && cd /opt/hayroll \
-    && git clone --depth 1 https://github.com/UW-HARVEST/Hayroll \
-    && cd Hayroll \
-    && git fetch --depth 1 origin fed1474939fe0dd161ad30413d5225252a8fe471 \
-    && git checkout FETCH_HEAD
+COPY deps/hayroll /opt/hayroll/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
-RUN cd /opt/hayroll/Hayroll \
-    && ./prerequisites.bash --no-sudo --llvm-version 19
-RUN cd /opt/hayroll/Hayroll \
-    && ./build.bash --release
-RUN ln -s /opt/hayroll/Hayroll/build/hayroll /usr/local/bin/hayroll
+RUN cd /opt/hayroll/hayroll \
+    && ./prerequisites.bash --no-sudo --llvm-version 19 \
+    && rm -rf ../z3/build/src/ \
+    && mv ../Maki/build/lib/libcpp2c.so . \
+    && mv ../Maki/build/bin/cpp2c . \
+    && rm -rf ../Maki/build/ \
+    && mkdir -p ../Maki/build/lib \
+    && mkdir -p ../Maki/build/bin \
+    && mv libcpp2c.so ../Maki/build/lib/ \
+    && mv cpp2c ../Maki/build/bin/
+RUN cd /opt/hayroll/hayroll \
+    && cargo-docker-clean.sh ./build.bash --release \
+    && ln -f build/hayroll . \
+    && ln -f build/release/reaper . \
+    && ln -f build/release/merger . \
+    && ln -f build/release/inliner . \
+    && ln -f build/release/cleaner . \
+    && rm -rf build/
+RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
-COPY tools/split_ffi_entry_points/Cargo.toml tools/split_ffi_entry_points/Cargo.lock /opt/crisp-tools/split_ffi_entry_points/
-COPY tools/split_ffi_entry_points/src/ /opt/crisp-tools/split_ffi_entry_points/src/
-RUN cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+COPY tools/rust_util/ /opt/crisp-tools/rust_util/
+COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
+RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+
+FROM tractor-crisp-user AS tractor-crisp
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -99,6 +117,5 @@ RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
 
-COPY tools/find_unsafe/Cargo.toml tools/find_unsafe/Cargo.lock ./tools/find_unsafe/
-COPY tools/find_unsafe/src/ ./tools/find_unsafe/src/
-RUN cargo install --locked --path tools/find_unsafe
+COPY tools/find_unsafe/ ./tools/find_unsafe/
+RUN cargo-docker-clean.sh cargo install --locked --path tools/find_unsafe

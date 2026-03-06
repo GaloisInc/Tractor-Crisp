@@ -22,6 +22,7 @@ from typing import Any
 
 @dataclass
 class TaskInput:
+    #TODO replace fields here with Workflow (in workflow.py) containing the C project which is being run
     input: str
     filepath: Path
 
@@ -53,7 +54,7 @@ class ResponseEvaluator:
         self.score_compiles_but_unsafe = score_compiles_but_unsafe
         self.score_failure = score_failure
 
-    def __call__(self, response: str) -> EvaluationResult:
+    def __call__(self, response: str) -> EvaluationResult: #TODO consider passing a tree node here instead of `response`, since the tree node can then be passed to compilation and unsafety finding functions
         m = re.search(r'<code>\n(?P<code>.*)</code>', response, flags=re.DOTALL)
         code = m.group('code') if m else ''
 
@@ -97,6 +98,8 @@ class ResponseEvaluator:
     @staticmethod
     def compile(filepath: str) -> tuple[bool, str]:
 
+        #TODO do this using `workflow.cargo_check_json(treenode)`
+
         # Create a temporary directory to hold the rlib file
         with tempfile.TemporaryDirectory() as out_dir:
             out_dir = Path(out_dir)
@@ -125,6 +128,9 @@ class ResponseEvaluator:
 
     @staticmethod
     def is_safe(filepath: str) -> tuple[bool, str]:
+
+        #TODO do this using `workflow.find_unsafe_op(treenode).body_json()`
+
         with open(filepath, 'rb') as f:
             r = subprocess.run(
                 ["cargo", "run", "--", "--single-file"],
@@ -179,6 +185,13 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 {'role': 'system', 'content': candidate['system_prompt']},
                 {'role': 'user', 'content': task['input']}
             ]
+
+            # TODO once TaskInput contains Workflow, consider the following code
+            # input_node_id = task.workflow.mvir.tag('current')
+            # input_node: TreeNode = task.workflow.mvir.node(input_node_id)
+            # output_node = task.workflow.llm_safety(input_node, candidate_prompt)
+            # and then `output_node` can be passed to `self.evaluator`
+            # Alternatively, get the contents of the unsafe Rust file from `output_node.files`, then pass that to `self.evaluator()`
 
             # If the Llama CPP model exists (i.e. self.model is GGUF), run that
             if self.llama_cpp_model is not None:

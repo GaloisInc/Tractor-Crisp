@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import io
 import os
+from pathspec.pathspec import PathSpec
 import pwd
 import shlex
 import subprocess
@@ -73,7 +74,7 @@ class SudoSandbox:
         )
         self._run_sudo(('sh', '-c', cmd), input=n_file.body())
 
-    def commit_dir(self, rel_path):
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
         assert not os.path.isabs(rel_path)
         p = self._run_sudo(('tar', '-C', self.join(rel_path), '-c', '.'), stdout=subprocess.PIPE)
         tar_bytes = p.stdout
@@ -91,6 +92,8 @@ class SudoSandbox:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))

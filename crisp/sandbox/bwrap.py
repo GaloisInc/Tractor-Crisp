@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import os
 from pathlib import Path
+from pathspec.pathspec import PathSpec
 import shlex
 import subprocess
 import toml
@@ -75,8 +76,8 @@ class BwrapSandbox:
     def checkout_file(self, rel_path, n_file: FileNode):
         self.work_dir.checkout_file(rel_path, n_file)
 
-    def commit_dir(self, rel_path) -> TreeNode:
-        return self.work_dir.commit_dir(rel_path)
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None) -> TreeNode:
+        return self.work_dir.commit_dir(rel_path, ignore_spec)
 
     def commit_file(self, rel_path) -> FileNode:
         return self.work_dir.commit_file(rel_path)

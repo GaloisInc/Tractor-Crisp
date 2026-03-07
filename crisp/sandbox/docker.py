@@ -81,10 +81,13 @@ class WorkContainer:
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
+                    case tarfile.LNKTYPE:
+                        # Extract hard links for now, cargo creates some
+                        pass
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
+                        raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path

@@ -84,10 +84,13 @@ class SudoSandbox:
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
+                    case tarfile.LNKTYPE:
+                        # Extract hard links for now, cargo creates some
+                        pass
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
+                        raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))

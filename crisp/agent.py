@@ -2,6 +2,8 @@
 Rewrite operations using AI agent tools, such as codex-cli
 """
 
+from pathspec.pathspec import PathSpec
+
 from . import llm
 from .config import Config
 from .error import CrispError
@@ -59,8 +61,14 @@ def run_rewrite(
             if exit_code != 0:
                 raise CrispError(f'codex-cli failed: exit code {exit_code}')
 
-        # TODO: new sandbox method to extract files according to a filter
-        all_output_code = sb.commit_dir('.')
+        ignore_lines = [
+            '__pycache__/',
+            'build/',
+            'build-ninja/',
+            'target/',
+        ]
+        ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
+        all_output_code = sb.commit_dir('.', ignore_spec=ignore_spec)
 
         # TODO: also extract json logs produced by codex-cli
 

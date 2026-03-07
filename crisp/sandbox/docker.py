@@ -64,7 +64,7 @@ class WorkContainer:
             t.addfile(info, io.BytesIO(n_file.body()))
         self._checkout_tar_file(tar_io.getvalue())
 
-    def commit_dir(self, rel_path):
+    def commit_dir(self, rel_path, ignore_spec=None):
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -88,6 +88,8 @@ class WorkContainer:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path

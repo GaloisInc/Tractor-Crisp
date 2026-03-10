@@ -114,7 +114,7 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -128,7 +128,7 @@ class WorkContainer:
         if not stream:
             exit_code, logs = self.container.exec_run(
                 cmd, workdir=self.join(cwd), stream=stream,
-                environment = {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
+                environment = env | {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
             )
             sys.stdout.flush()
             sys.stdout.buffer.write(logs)
@@ -139,7 +139,7 @@ class WorkContainer:
         # is enabled, so use the low-level API instead.
         exec_info = self.client.api.exec_create(
             self.container.id, cmd, workdir=self.join(cwd),
-            environment = {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
+            environment = env | {'CRISP_API_KEY': os.environ['CRISP_API_KEY']},
         )
         exec_id = exec_info['Id']
         stream = self.client.api.exec_start(exec_id, stream=True)

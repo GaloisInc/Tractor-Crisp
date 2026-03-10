@@ -27,16 +27,17 @@ class SudoSandbox:
         dir_name = 'crisp_sandbox_%d' % entry.pw_uid
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
-    def _sudo_cmd(self, cmd):
-        return ('sudo', '-u', self.user, *cmd)
+    def _sudo_cmd(self, cmd, env):
+        env_args = (f"{k}={v}" for (k, v) in env.items())
+        return ('sudo', '-u', self.user, *env_args, *cmd)
 
-    def _run_sudo(self, cmd, check=True, **kwargs) -> CompletedProcess[str]:
-        sudo_cmd = self._sudo_cmd(cmd)
+    def _run_sudo(self, cmd, check=True, env={}, **kwargs) -> CompletedProcess[str]:
+        sudo_cmd = self._sudo_cmd(cmd, env)
         p = subprocess.run(sudo_cmd, check=check, **kwargs)
         return p
 
-    def _popen_sudo(self, cmd, **kwargs) -> Popen[str]:
-        sudo_cmd = self._sudo_cmd(cmd)
+    def _popen_sudo(self, cmd, env={}, **kwargs) -> Popen[str]:
+        sudo_cmd = self._sudo_cmd(cmd, env)
         p = subprocess.Popen(sudo_cmd, **kwargs)
         return p
 
@@ -110,7 +111,7 @@ class SudoSandbox:
     def join(self, *args, **kwargs):
         return os.path.join(self.dir_path, *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -124,11 +125,11 @@ class SudoSandbox:
         cmd = ('sh', '-c', cmd)
 
         if not stream:
-            p = self._run_sudo(cmd, check=False,
+            p = self._run_sudo(cmd, check=False, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             return p.returncode, p.stdout
 
-        p = self._popen_sudo(cmd,
+        p = self._popen_sudo(cmd, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         printer = ChunkPrinter()

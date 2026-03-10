@@ -42,18 +42,22 @@ def run_rewrite(
         sb.checkout(input_code)
         sb.checkout(test_code)
 
+        codex_dir = sb.join(".codex")
+        mkdir_codex = ['mkdir', '-p', codex_dir]
+
         codex_cmd = _codex_command('exec', [
             '--dangerously-bypass-approvals-and-sandbox',
             '--skip-git-repo-check',
             prompt,
         ])
         print(codex_cmd)
-        all_cmds = [codex_cmd] + clean_cmds
+        all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 
         exit_code = 0
         logs = b''
         for cmd in all_cmds:
-            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True)
+            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True,
+                                      env={"CODEX_HOME": codex_dir})
             logs += logs2
 
             # TODO: produce an `AgentOpNode`
@@ -66,11 +70,12 @@ def run_rewrite(
             'build/',
             'build-ninja/',
             'target/',
+            '.codex/',
+            '!.codex/log/',
+            '!.codex/sessions/',
         ]
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
         all_output_code = sb.commit_dir('.', ignore_spec=ignore_spec)
-
-        # TODO: also extract json logs produced by codex-cli
 
     # Take all the files from `all_output_code` except for ones that came from
     # `test_code`.  This allows the agent to add, modify, or remove files from

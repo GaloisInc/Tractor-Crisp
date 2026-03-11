@@ -138,11 +138,14 @@ def step(f):
     def g(self, *args, **kwargs):
         bound = sig.bind(self, *args, **kwargs)
         if self._step_depth == 0:
-            print(' ** ' + name)
-            for arg_name, val in bound.arguments.items():
-                if isinstance(val, Workflow):
-                    continue
-                _print_step_value(arg_name, val)
+            print(f' ** {name}')
+        else:
+            spaces = ' ' * self._step_depth
+            print(f' {spaces}* {name}')
+        for arg_name, val in bound.arguments.items():
+            if isinstance(val, Workflow):
+                continue
+            _print_step_value(arg_name, val)
 
         mvir = self.mvir
         n_step = None

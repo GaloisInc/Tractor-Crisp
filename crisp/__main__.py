@@ -56,7 +56,7 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
-    main.add_argument('--llm-mode', choices=('default', 'no_ffi'), default='default',
+    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
         help='which style of LLM-based rewriting to use')
 
     repl = sub.add_parser('repl')
@@ -238,10 +238,22 @@ def do_main(args, cfg):
 
         try:
             match args.llm_mode:
+                case 'agent':
+                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    n_op_test = w.test_op(n_new_code, n_c_code)
+                    if n_op_test.exit_code == 0:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+
+                    continue
+
                 case 'default':
                     n_new_code = w.llm_safety(n_code)
                 case 'no_ffi':
                     n_new_code = w.llm_safety_no_ffi(n_code)
+                case mode:
+                    # `--llm-mode agent` should be handled at a higher level.
+                    assert False, f'unexpected llm_mode {mode!r}'
 
             for repair_try in range(3):
                 try:
@@ -266,8 +278,9 @@ def do_main(args, cfg):
                 except CrispError as e:
                     print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
                     traceback.print_exc()
+
         except CrispError as e:
-            print(f'safety attempt {safety_try} failed: {e}')
+            print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
             traceback.print_exc()
 
     print('\n\n')

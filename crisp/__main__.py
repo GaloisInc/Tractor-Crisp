@@ -269,7 +269,8 @@ def do_main(args, cfg):
 
         if args.agent:
             try:
-                n_new_code = w.agent_safety_no_ffi(n_code, n_c_code)
+                # TODO: switch to agent_safety_no_ffi?
+                n_new_code = w.agent_safety(n_code, n_c_code)
                 n_op_test = w.test_op(n_new_code, n_c_code)
                 if n_op_test.exit_code == 0:
                     w.accept(n_new_code, ('main', 'safety', safety_try))

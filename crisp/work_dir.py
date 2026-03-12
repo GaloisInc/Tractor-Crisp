@@ -53,6 +53,19 @@ class WorkDir:
             dct[rel_path] = self.commit_file(rel_path).node_id()
         return TreeNode.new(self.mvir, files=dct)
 
+    def commit_dir(self, rel_path):
+        assert not os.path.isabs(rel_path)
+        path = os.path.join(self.path, rel_path)
+        files = {}
+        if os.path.exists(path):
+            for (dir_path, dir_names, file_names) in os.walk(path):
+                dir_path_rel = os.path.relpath(dir_path, self.path)
+                for file_name in file_names:
+                    file_path = os.path.join(dir_path_rel, file_name)
+                    assert file_path not in files
+                    files[file_path] = self.commit_file(file_path).node_id()
+        return TreeNode.new(self.mvir, files=files)
+
     def commit_file(self, rel_path):
         assert not os.path.isabs(rel_path)
         path = os.path.join(self.path, rel_path)

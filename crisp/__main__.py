@@ -93,7 +93,7 @@ def parse_args():
     git.add_argument('-n', '--node', default='current')
     git.add_argument('args', nargs='*')
 
-    sandbox_run = sub.add_parser('sandbox_run')
+    sandbox_run = sub.add_parser('sandbox-run')
     sandbox_run.add_argument('run_cmd', nargs='*')
 
     return ap.parse_args()
@@ -444,7 +444,7 @@ def main():
         do_checkout(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
-    elif args.cmd == 'sandbox_run':
+    elif args.cmd == 'sandbox-run':
         do_sandbox_run(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))

@@ -142,8 +142,6 @@ class BwrapSandbox:
         ))
         bwrap_cmd.extend(cmd)
 
-        bwrap_cmd = [str(x) for x in bwrap_cmd]
-
         if not stream:
             p = subprocess.run(bwrap_cmd, check=False,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

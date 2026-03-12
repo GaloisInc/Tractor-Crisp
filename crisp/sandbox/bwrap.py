@@ -38,7 +38,7 @@ class BwrapConfig(ConfigBase):
     dirs: dict[str, DirMode] = field(default_factory = dict)
     # Extra entries to add to `$PATH` within the sandbox.  This list is
     # prepended to the current `$PATH`.
-    extra_path: list[str] = field(default_factory = list)
+    extra_search_path: list[str] = field(default_factory = list)
 
 CRISP_DIR = Path(__file__).parent.parent.parent
 
@@ -111,7 +111,7 @@ class BwrapSandbox:
         ]
 
         # Add more `bind` entries based on config settings.
-        extra_path = self.bwrap_cfg.extra_path.copy()
+        extra_search_path = self.bwrap_cfg.extra_search_path.copy()
         for path, mode in self.bwrap_cfg.dirs.items():
             path = CRISP_DIR / Path(path).expanduser()
             match mode:
@@ -123,7 +123,7 @@ class BwrapSandbox:
                     bwrap_cmd.extend((
                         '--ro-bind', path, path,
                     ))
-                    extra_path.append(path)
+                    extra_search_path.append(path)
                 case DirMode.SANDBOX:
                     sandbox_dir = CRISP_DIR / 'bwrap-sandbox' / str(path).replace('/', '__')
                     sandbox_dir.mkdir(parents = True, exist_ok = True)
@@ -133,8 +133,8 @@ class BwrapSandbox:
                 case _:
                     raise ValueError(f'unknown DirMode {mode!r}')
 
-        extra_path = [str(x) for x in extra_path]
-        search_path = ':'.join(extra_path + [os.environ['PATH']])
+        extra_search_path = [str(x) for x in extra_search_path]
+        search_path = ':'.join(extra_search_path + [os.environ['PATH']])
         bwrap_cmd.extend((
             '--chdir', self.join(cwd),
             '--',

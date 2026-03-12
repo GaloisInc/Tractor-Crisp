@@ -435,8 +435,6 @@ def _merge_rust_impl(
 
     n_op = MergeOpNode.new(
         mvir,
-        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
-        # output in the successful case.
         body = logs,
         cmd = cmd,
         exit_code = exit_code,

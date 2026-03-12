@@ -34,7 +34,7 @@ class BwrapConfig(ConfigBase):
     # `$HOME`, you can expose the directories containing those tools to the
     # sandbox by setting `dirs."~/path/to/c2rust" = "expose"`.
     #
-    # Paths are run through `expanduser()`, but otherwise must be absolute.
+    # Paths are run through `expanduser()`, which expands `~`/`~user`, but otherwise must be absolute.
     dirs: dict[str, DirMode] = field(default_factory = dict)
     # Extra entries to add to `$PATH` within the sandbox.  This list is
     # prepended to the current `$PATH`.
@@ -66,7 +66,7 @@ class BwrapSandbox:
         self.mvir = mvir
         self.work_dir = work_dir
 
-        self.bwrap_cfg = BwrapConfig.from_toml_file(CRISP_DIR.joinpath('crisp-bwrap.toml'))
+        self.bwrap_cfg = BwrapConfig.from_toml_file(CRISP_DIR / 'crisp-bwrap.toml')
 
     def checkout(self, n_tree: TreeNode):
         self.work_dir.checkout(n_tree)
@@ -80,8 +80,8 @@ class BwrapSandbox:
     def commit_file(self, rel_path) -> FileNode:
         return self.work_dir.commit_file(rel_path)
 
-    def join(self, *args, **kwargs):
-        return str(WORK_DIR_INSIDE.joinpath(*args, **kwargs))
+    def join(self, *other: StrPath) -> str:
+        return str(WORK_DIR_INSIDE.joinpath(*other))
 
     def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
         if shell:
@@ -113,7 +113,7 @@ class BwrapSandbox:
         # Add more `bind` entries based on config settings.
         extra_path = self.bwrap_cfg.extra_path.copy()
         for path, mode in self.bwrap_cfg.dirs.items():
-            path = CRISP_DIR.joinpath(Path(path).expanduser())
+            path = CRISP_DIR / Path(path).expanduser()
             match mode:
                 case DirMode.EXPOSE:
                     bwrap_cmd.extend((
@@ -125,8 +125,7 @@ class BwrapSandbox:
                     ))
                     extra_path.append(path)
                 case DirMode.SANDBOX:
-                    sandbox_dir = CRISP_DIR.joinpath(
-                            'bwrap-sandbox', str(path).replace('/', '__'))
+                    sandbox_dir = CRISP_DIR / 'bwrap-sandbox' / str(path).replace('/', '__')
                     sandbox_dir.mkdir(parents = True, exist_ok = True)
                     bwrap_cmd.extend((
                         '--bind', sandbox_dir, path,

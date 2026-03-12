@@ -82,9 +82,9 @@ RUN cd /opt/hayroll/hayroll \
 RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 
 # Install CRISP tool binaries
-COPY tools/rust_util/ /opt/crisp-tools/rust_util/
-COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
-RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+COPY tools/ /opt/crisp-tools/
+RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
+
 
 FROM tractor-crisp-user AS tractor-crisp
 
@@ -116,6 +116,3 @@ RUN uv sync
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
-
-COPY tools/find_unsafe/ ./tools/find_unsafe/
-RUN cargo-docker-clean.sh cargo install --locked --path tools/find_unsafe

@@ -58,9 +58,10 @@ class BwrapSandbox:
     they have the right versions of these tools installed.
 
     The user must write a `crisp-bwrap.toml` config file and put it in their
-    `tractor-crisp` directory.  See `BwrapConfig` for the available options.
-    The user is responsible for configuring this in a way that does not expose
-    sensitive information to untrusted code.
+    `tractor-crisp` directory.  See `BwrapConfig` for the available options,
+    and see `crisp-bwrap.toml.example` for an example config you can customize
+    to your liking.  The user is responsible for configuring this in a way that
+    does not expose sensitive information to untrusted code.
     """
     def __init__(self, mvir, work_dir):
         self.mvir = mvir

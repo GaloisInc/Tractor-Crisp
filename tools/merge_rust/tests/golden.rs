@@ -63,10 +63,7 @@ fn test(file_name: &str) -> io::Result<()> {
     write_tree(&output_dir, &input)?;
     drop(input);
 
-    let status = Command::new(env::var_os("CARGO").unwrap())
-        .arg("run")
-        .arg("--manifest-path").arg(env::var_os("CARGO_MANIFEST_PATH").unwrap())
-        .arg("--")
+    let status = Command::new(env!("CARGO_BIN_EXE_merge_rust"))
         .arg(output_dir.join("lib.rs"))
         .arg(test_dir.join("snippets.json"))
         .status()?;

@@ -491,6 +491,20 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     // Sort shorter ranges first, so that we examine inner items before their parents
     items_by_range.sort_by_key(|(text_range, _item)| text_range.value.len());
 
+    // Visit the crate root, which is not included in the traversal above.
+    {
+        let path = "$crate";
+        let mod_ = krate.root_module();
+        let module_def = ModuleDef::Module(mod_);
+        if let Some(path) = unfound_paths.take(path) {
+            log::debug!("found queried path for root module: {path}");
+            found_items.insert(path.to_owned(), module_def);
+        } else if args.all {
+            log::debug!("found path for root module: {path}");
+            found_items.insert(path.to_owned(), module_def);
+        }
+    }
+
     for path in &unfound_paths {
         eprintln!("did not find item {path} in crate");
     }

@@ -99,6 +99,9 @@ RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
+COPY tools/find_unsafe/ ./tools/find_unsafe/
+RUN cargo-docker-clean.sh cargo install --locked --path tools/find_unsafe
+
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 

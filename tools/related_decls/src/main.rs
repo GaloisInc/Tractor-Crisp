@@ -572,6 +572,8 @@ fn test_example_input() {
             "synthetic_usages".into(),
             "TGE".into(),
         ],
+        output_path: None,
+        all: false,
     })
     .unwrap();
 

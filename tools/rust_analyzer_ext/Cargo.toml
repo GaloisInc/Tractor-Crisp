@@ -1,0 +1,11 @@
+[package]
+name = "rust_analyzer_ext"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = "0.4.28"
+ra_ap_ide_db = "=0.0.301"
+ra_ap_hir = "=0.0.301"
+ra_ap_vfs = "=0.0.301"
+ra_ap_base_db = "=0.0.301"

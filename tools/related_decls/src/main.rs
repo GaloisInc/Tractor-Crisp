@@ -549,7 +549,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
         }
 
         if let Some(ModuleDefId::ModuleId(mod_id)) = id {
-            // For modules, output a list of child paths.
+            // For modules, output a list of child paths and info about the file.
             let mod_ = Module::from(mod_id);
             let decls = mod_.declarations(&db);
             let mod_file_id = mod_.definition_source_file_id(&db);
@@ -561,6 +561,17 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
                 paths.push(path);
             }
             path_info.insert("child_items".to_owned(), paths.into());
+
+            let file_path = mod_file_id.file_id()
+                .map(|efid| efid.file_id(&db))
+                .map(|fid| vfs.file_path(fid))
+                .and_then(|vp| vp.as_path())
+                .map(|ap| ap.as_str());
+            path_info.insert("file_path".to_owned(), file_path.into());
+
+            // If `is_inline` is set, then the file may contain other modules as well.  Each file
+            // should usually contain exactly one non-inline module and zero or more inline ones.
+            path_info.insert("is_inline".to_owned(), mod_.is_inline(&db).into());
         }
 
         output.insert(path, path_info.into());

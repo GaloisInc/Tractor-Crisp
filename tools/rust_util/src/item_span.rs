@@ -44,6 +44,30 @@ impl Visit<'_> for ItemSpanVisitor {
                 let name = im.ident.to_string();
                 self.enter(name, im.span(), |v| v.visit_item_mod(im));
             }
+            syn::Item::Type(ref it) => {
+                let name = it.ident.to_string();
+                self.enter(name, it.span(), |v| v.visit_item_type(it));
+            }
+            syn::Item::Struct(ref is) => {
+                let name = is.ident.to_string();
+                self.enter(name, is.span(), |v| v.visit_item_struct(is));
+            }
+            syn::Item::Enum(ref ie) => {
+                let name = ie.ident.to_string();
+                self.enter(name, ie.span(), |v| v.visit_item_enum(ie));
+            }
+            syn::Item::Union(ref iu) => {
+                let name = iu.ident.to_string();
+                self.enter(name, iu.span(), |v| v.visit_item_union(iu));
+            }
+            syn::Item::Const(ref ic) => {
+                let name = ic.ident.to_string();
+                self.enter(name, ic.span(), |v| v.visit_item_const(ic));
+            }
+            syn::Item::Static(ref is) => {
+                let name = is.ident.to_string();
+                self.enter(name, is.span(), |v| v.visit_item_static(is));
+            }
             // TODO: handle other items that can contain nested items.  Note that any expr or type
             // can contain items, e.g. `type T = [u8; { fn f(){} 10 }];`
             _ => {

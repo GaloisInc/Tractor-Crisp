@@ -125,6 +125,8 @@ jobs:
           - find_unsafe
           - merge_rust
           - related_decls
+          - rust_analyzer_ext
+          - rust_util
           - split_ffi_entry_points
           - split_rust
 

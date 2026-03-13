@@ -3,11 +3,12 @@ from datetime import datetime
 import functools
 import inspect
 import os
-import subprocess
 import sys
 import toml
 import typing
 from typing import Any
+import json
+import shlex
 
 from . import analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
@@ -19,8 +20,6 @@ from .mvir import (
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode,
 )
 from .sandbox import run_sandbox
-from .work_dir import lock_work_dir
-
 
 # Whether to cache the results of workflow steps.  This is more aggressive than
 # the built-in caching of the `analysis` module because it will even cache the
@@ -217,14 +216,9 @@ class Workflow:
             assert src_loc_annotations, (
                 "reorganize_definitions requires src loc annotations"
             )
-        if hayroll:
-            assert len(refactor_transforms) == 0, (
-                "refactor_transforms are not supported with hayroll yet"
-            )
 
         if hayroll:
             # Hack: edit compile_commands.json to include `arguments` field
-            import json, shlex
             j = n_cc.body_json()
             for x in j:
                 if 'command' in x and 'arguments' not in x:
@@ -249,9 +243,10 @@ class Workflow:
                     rel_d = os.path.relpath(d, sb_dir)
                     sb.checkout_file(os.path.join(rel_d, '.empty'), n_empty)
 
+            c2rust_cmd = []
             # Run c2rust-transpile
             if not hayroll:
-                c2rust_cmd = [
+                c2rust_cmd += [
                     "c2rust",
                     "transpile",
                     sb.join(COMPILE_COMMANDS_PATH),
@@ -264,33 +259,6 @@ class Workflow:
                         "--reorganize-definitions",
                         "--disable-refactoring",
                     ]
-                if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
-                        ))
-                exit_code, logs = sb.run(c2rust_cmd)
-
-                for transform in refactor_transforms:
-                    if exit_code == 0:
-                        c2rust_refactor_cmd = [
-                            "c2rust",
-                            "refactor",
-                            "--cargo",
-                            "--rewrite-mode",
-                            "inplace",
-                            transform,
-                        ]
-                        new_exit_code, new_logs = sb.run(
-                            c2rust_refactor_cmd, cwd=output_path
-                        )
-                        exit_code = new_exit_code
-                        logs += new_logs
-
-                if exit_code == 0:
-                    new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
-                    exit_code = new_exit_code
-                    logs += new_logs
-
             else:
                 c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
 
@@ -299,24 +267,58 @@ class Workflow:
                 # modules.  We want it to translate `src/lib.c` to `src/lib.rs`
                 # rather than `foo/bar/baz/src/lib.rs` because overly long file
                 # paths sometimes confuse weaker LLMs.
-                c2rust_cmd = [
-                        'hayroll',
-                        sb.join(COMPILE_COMMANDS_PATH),
-                        sb.join(output_path),
-                        '--project-dir', os.path.join(c_path_rel, 'src'),
-                        ]
-                # hayroll already has c2rust-transpile emit src loc annotations.
-                if cfg.transpile.bin_main is not None:
-                    c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
-                        ))
-                exit_code, logs = sb.run(c2rust_cmd)
+                c2rust_cmd += [
+                    "hayroll",
+                    sb.join(COMPILE_COMMANDS_PATH),
+                    sb.join(output_path),
+                    "--project-dir",
+                    os.path.join(c_path_rel, "src"),
+                ]
+                if src_loc_annotations:
+                    c2rust_cmd += [
+                        "--keep-src-loc",
+                    ]
+            if cfg.transpile.bin_main is not None:
+                c2rust_cmd += [
+                    "--binary",
+                    cfg.transpile.bin_main,
+                ]
+            exit_code, logs = sb.run(c2rust_cmd)
 
+            if hayroll and exit_code == 0:
+                exit_code, logs2 = sb.run(
+                    [
+                        "find",
+                        sb.join(output_path),
+                        "-name",
+                        "*.*.*",
+                        "-delete",
+                    ]
+                )
+                logs = b"\n\n".join((logs, logs2))
+
+            for transform in refactor_transforms:
                 if exit_code == 0:
-                    exit_code, logs2 = sb.run([
-                        'find', sb.join(output_path), '-name', '*.*.*', '-delete',
-                    ])
-                    logs = b'\n\n'.join((logs, logs2))
+                    c2rust_refactor_cmd = [
+                        "c2rust",
+                        "refactor",
+                        "--cargo",
+                        "--rewrite-mode",
+                        "inplace",
+                        transform,
+                    ]
+                    new_exit_code, new_logs = sb.run(
+                        c2rust_refactor_cmd, cwd=output_path
+                    )
+                    exit_code = new_exit_code
+                    logs += new_logs
+
+            if exit_code == 0:
+                new_exit_code, new_logs = sb.run(
+                    ["cargo", "clean"], cwd=output_path
+                )
+                exit_code = new_exit_code
+                logs += new_logs
 
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)
@@ -326,20 +328,20 @@ class Workflow:
 
         n_op = TranspileOpNode.new(
             mvir,
-            body = logs,
-            compile_commands = n_cc.node_id(),
-            c_code = n_c_code.node_id(),
-            cmd = c2rust_cmd,
-            exit_code = exit_code,
-            rust_code = n_rust_code_id,
-            )
+            body=logs,
+            compile_commands=n_cc.node_id(),
+            c_code=n_c_code.node_id(),
+            cmd=c2rust_cmd,
+            exit_code=exit_code,
+            rust_code=n_rust_code_id,
+        )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         if exit_code != 0:
             # TODO: proper log parsing
             print(logs.decode())
-        print('c2rust process %s with code %d:\n%s' % (
-            'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
+        outcome = "succeeded" if n_op.exit_code == 0 else "failed"
+        print(f"c2rust process {outcome} with code {n_op.exit_code}:\n{n_op.cmd}")
 
         return n_op
 

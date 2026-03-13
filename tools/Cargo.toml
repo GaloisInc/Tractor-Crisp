@@ -36,4 +36,5 @@ ra_ap_project_model = "=0.0.301"
 ra_ap_syntax = "=0.0.301"
 ra_ap_vfs = "=0.0.301"
 
+rust_analyzer_ext = { path = "rust_analyzer_ext" }
 rust_util = { path = "rust_util" }

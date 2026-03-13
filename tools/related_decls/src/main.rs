@@ -10,6 +10,7 @@ use ra_ap_ide_db::{RootDatabase, defs::Definition};
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::{AstNode, Edition, NodeOrToken, TextRange, WalkEvent};
+use rust_analyzer_ext::crates;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::ops::Index;
@@ -405,17 +406,26 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
     log::info!("loaded crate");
 
-    let cargo_dir_vfspath: ra_ap_vfs::VfsPath =
-        ra_ap_vfs::AbsPathBuf::assert_utf8(cargo_dir_path.to_owned()).into();
-    // Find the first file in `vfs` under the cargo dir, which we use to find the target crate
-    let (first_file_id, _) = vfs
-        .iter()
-        .find(|(_id, path)| path.starts_with(&cargo_dir_vfspath))
-        .expect("could not find first file in crate");
-
     let sema = Semantics::new(&db);
 
-    let krate = sema.first_crate(first_file_id).unwrap();
+    let krate = match crates::find_in_dir(&sema, &vfs, cargo_dir_path).as_slice()
+    {
+        &[] => {
+            return Err(format!(
+                "no crates found in directory {:?}",
+                cargo_dir_path.display()
+            ));
+        }
+        &[krate] => krate,
+        _ => {
+            // At present, this tool only supports a single crate because it resolves paths without
+            // a crate name relative to that crate.
+            return Err(format!(
+                "multiple crates found in directory {:?}",
+                cargo_dir_path.display()
+            ));
+        }
+    };
 
     let mut files = Vec::new();
     for m in krate.modules(&db) {

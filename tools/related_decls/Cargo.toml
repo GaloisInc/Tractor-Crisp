@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 clap.workspace = true
 log.workspace = true
+rust_analyzer_ext.workspace = true
 
 ra_ap_hir.workspace = true
 ra_ap_hir_def.workspace = true

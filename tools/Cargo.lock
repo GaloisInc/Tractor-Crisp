@@ -1641,6 +1641,7 @@ dependencies = [
  "ra_ap_project_model",
  "ra_ap_syntax",
  "ra_ap_vfs",
+ "rust_analyzer_ext",
  "serde_json",
 ]
 
@@ -1655,6 +1656,17 @@ dependencies = [
  "memoffset",
  "rustc-hash 1.1.0",
  "text-size",
+]
+
+[[package]]
+name = "rust_analyzer_ext"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "ra_ap_base_db",
+ "ra_ap_hir",
+ "ra_ap_ide_db",
+ "ra_ap_vfs",
 ]
 
 [[package]]
@@ -1889,6 +1901,7 @@ dependencies = [
  "ra_ap_load-cargo",
  "ra_ap_project_model",
  "ra_ap_syntax",
+ "rust_analyzer_ext",
  "rust_util",
  "syn",
 ]

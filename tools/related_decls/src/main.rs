@@ -539,6 +539,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
         // Record the kind of the item.  This allows consumers to know which additional fields to
         // expect.  For now we just emit "other" for kinds with no kind-specific fields.
         let kind = match id {
+            Some(ModuleDefId::ModuleId(..)) => "module",
             Some(ModuleDefId::FunctionId(..)) => "function",
             _ => "other",
         };
@@ -555,6 +556,21 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
                 "written_signature".to_owned(),
                 function_signature_as_written(&sema, func_id.into()).into(),
             );
+        }
+
+        if let Some(ModuleDefId::ModuleId(mod_id)) = id {
+            // For modules, output a list of child paths.
+            let mod_ = Module::from(mod_id);
+            let decls = mod_.declarations(&db);
+            let mod_file_id = mod_.definition_source_file_id(&db);
+            let edition = mod_file_id.edition(&db);
+            let mut paths = Vec::with_capacity(decls.len());
+            for decl in decls {
+                let path = canonical_item_path(&decl, &db, edition)
+                    .unwrap_or_else(|| absolute_item_path(&db, decl, edition));
+                paths.push(path);
+            }
+            path_info.insert("child_items".to_owned(), paths.into());
         }
 
         output.insert(path, path_info.into());
@@ -588,6 +604,7 @@ fn test_example_input() {
         cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
         item_paths: vec![
             "main".into(),
+            "another".into(),
             "another::bar::CONSTANT".into(),
             "synthetic_usages".into(),
             "TGE".into(),
@@ -628,5 +645,18 @@ fn test_example_input() {
     );
 
     assert_eq!(info["main"]["kind"], serde_json::Value::from("function"));
+    assert_eq!(info["another"]["kind"], serde_json::Value::from("module"));
     assert_eq!(info["another::bar::CONSTANT"]["kind"], serde_json::Value::from("other"));
+
+    assert_eq!(
+        info["another"]["child_items"].as_array().unwrap(),
+        &vec![
+            serde_json::Value::from("another::MAX"),
+            serde_json::Value::from("another::X"),
+            serde_json::Value::from("another::EnumWithBodiedVariant"),
+            serde_json::Value::from("another::EnumWithFieldedVariant"),
+            serde_json::Value::from("another::foo"),
+            serde_json::Value::from("another::bar"),
+        ]
+    );
 }

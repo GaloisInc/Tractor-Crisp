@@ -526,12 +526,26 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     for (path, module_def) in found_items {
         let mut path_info = serde_json::Map::new();
         log::info!("processing {path}");
+
+        let mod_def_path = |module_def: ModuleDef| {
+            let is_local = match module_def.module(&db) {
+                Some(m) => m.krate() == krate,
+                None => false,
+            };
+            if is_local {
+                canonical_item_path(&module_def, &db, Edition::DEFAULT)
+                    .unwrap_or_else(|| absolute_item_path(&db, module_def, Edition::DEFAULT))
+            } else {
+                absolute_item_path(&db, module_def, Edition::DEFAULT)
+            }
+        };
+
         // Find uses of the item
         {
             let using_items = item_uses(&sema, &items_by_range, module_def);
             let mut paths = using_items
                 .into_iter()
-                .map(|module_def| absolute_item_path(&db, module_def, Edition::DEFAULT))
+                .map(|module_def| mod_def_path(module_def))
                 .collect::<Vec<_>>();
             paths.sort();
             path_info.insert("uses".to_owned(), paths.into());
@@ -541,7 +555,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
             let used_items = items_used_by(&sema, module_def);
             let mut paths = used_items
                 .into_iter()
-                .map(|module_def| absolute_item_path(&db, module_def, Edition::DEFAULT))
+                .map(|module_def| mod_def_path(module_def))
                 .collect::<Vec<_>>();
             paths.sort();
             path_info.insert("used_items".to_owned(), paths.into());
@@ -641,26 +655,26 @@ fn test_example_input() {
 
     assert_eq!(
         info["main"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::example_input::synthetic_usages")]
+        &vec![serde_json::Value::from("synthetic_usages")]
     );
 
     assert_eq!(
         info["another::bar::CONSTANT"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::example_input::synthetic_usages")]
+        &vec![serde_json::Value::from("synthetic_usages")]
     );
 
     assert_eq!(
         info["synthetic_usages"]["used_items"].as_array().unwrap(),
         &vec![
             serde_json::Value::from("::core"),
-            serde_json::Value::from("::example_input::another"),
-            serde_json::Value::from("::example_input::another::bar"),
-            serde_json::Value::from("::example_input::another::bar::CONSTANT"),
-            serde_json::Value::from("::example_input::another::foo"),
-            serde_json::Value::from("::example_input::another::foo::CONSTANT"),
-            serde_json::Value::from("::example_input::another::foo::OTHER_CONSTANT"),
-            serde_json::Value::from("::example_input::main"),
             serde_json::Value::from("::std::macros::eprintln"),
+            serde_json::Value::from("another"),
+            serde_json::Value::from("another::bar"),
+            serde_json::Value::from("another::bar::CONSTANT"),
+            serde_json::Value::from("another::foo"),
+            serde_json::Value::from("another::foo::CONSTANT"),
+            serde_json::Value::from("another::foo::OTHER_CONSTANT"),
+            serde_json::Value::from("main"),
         ]
     );
 

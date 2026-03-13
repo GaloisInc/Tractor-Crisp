@@ -522,21 +522,31 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
             paths.sort();
             path_info.insert("used_items".to_owned(), paths.into());
         }
-        // Output signature for functions
-        {
-            let id: Option<ModuleDefId> = module_def.try_into().ok();
-            if let Some(ModuleDefId::FunctionId(func_id)) = id {
-                let sig = db.function_signature(func_id);
-                path_info.insert(
-                    "signature".to_owned(),
-                    pp_function_signature(&db, &*sig).into(),
-                );
-                path_info.insert(
-                    "written_signature".to_owned(),
-                    function_signature_as_written(&sema, func_id.into()).into(),
-                );
-            }
+
+        // Output additional info for specific item kinds.
+        let id: Option<ModuleDefId> = module_def.try_into().ok();
+
+        // Record the kind of the item.  This allows consumers to know which additional fields to
+        // expect.  For now we just emit "other" for kinds with no kind-specific fields.
+        let kind = match id {
+            Some(ModuleDefId::FunctionId(..)) => "function",
+            _ => "other",
+        };
+        path_info.insert("kind".to_owned(), kind.into());
+
+        if let Some(ModuleDefId::FunctionId(func_id)) = id {
+            // For functions, output the signature.
+            let sig = db.function_signature(func_id);
+            path_info.insert(
+                "signature".to_owned(),
+                pp_function_signature(&db, &*sig).into(),
+            );
+            path_info.insert(
+                "written_signature".to_owned(),
+                function_signature_as_written(&sema, func_id.into()).into(),
+            );
         }
+
         output.insert(path, path_info.into());
     }
     Ok(output)

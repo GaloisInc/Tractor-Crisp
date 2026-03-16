@@ -1,0 +1,9 @@
+---
+source: remove_empty_mods/src/main.rs
+expression: new_src
+---
+
+            mod interesting {
+                use std::clone::Clone;
+                fn f() {
+                } }

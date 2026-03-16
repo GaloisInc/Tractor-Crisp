@@ -1,0 +1,15 @@
+---
+source: remove_empty_mods/src/main.rs
+expression: deleted_modules
+---
+[
+    ModPath(
+        "interesting::uninteresting_nested",
+    ),
+    ModPath(
+        "uninteresting::uninteresting_nested",
+    ),
+    ModPath(
+        "uninteresting",
+    ),
+]

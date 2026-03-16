@@ -1,4 +1,5 @@
 use proc_macro2::{Delimiter, Spacing, Span, TokenStream, TokenTree};
+use quote::ToTokens;
 use std::collections::BTreeSet;
 
 pub struct FlatTokens {
@@ -237,3 +238,20 @@ pub fn render_output(
         buf.emit(&orig[end_pos..orig.len()], Spacing::Joint);
     }
 }
+
+pub fn rewrite_file(
+    orig: &str,
+    orig_ast: &syn::File,
+    new_ast: &syn::File,
+) -> String {
+    let orig_ts = orig_ast.to_token_stream();
+    let orig_tokens = FlatTokens::new(orig_ts.clone()).collect::<Vec<_>>();
+    let ti = TokenIndex::new(&orig_tokens);
+
+    let new_ts = new_ast.to_token_stream();
+
+    let mut buf = OutputBuffer::new();
+    render_output(orig, &orig_tokens, &ti, new_ts, &mut buf);
+    buf.finish()
+}
+

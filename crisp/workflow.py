@@ -18,7 +18,7 @@ from .mvir import (
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
-    RelatedDeclsOpNode,
+    RelatedDeclsOpNode, EditToolOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -626,6 +626,15 @@ class Workflow:
     ) -> RelatedDeclsOpNode:
         return analysis.related_decls(self.cfg, self.mvir, n_code,
             query_def_names = query_def_names)
+
+    @step
+    def remove_empty_mods(self, n_code: TreeNode) -> TreeNode:
+        n_op = self.remove_empty_mods_op(n_code)
+        return self.mvir.node(n_op.new_code)
+
+    @step
+    def remove_empty_mods_op(self, n_code: TreeNode) -> EditToolOpNode:
+        return analysis.remove_empty_mods(self.cfg, self.mvir, n_code)
 
     def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
         mvir = self.mvir

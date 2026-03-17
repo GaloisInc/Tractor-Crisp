@@ -14,7 +14,7 @@ from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
-    RelatedDeclsOpNode,
+    RelatedDeclsOpNode, EditToolOpNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -547,6 +547,46 @@ def related_decls(
             cmd += ['--all']
             query_def_names = []
         n_op = _related_decls_impl(cfg, mvir, sb, n_code, query_def_names, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def _remove_empty_mods_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox, old_code: TreeNode, cmd: list[str],
+) -> EditToolOpNode:
+    sb.checkout(old_code)
+
+    exit_code, logs = sb.run(cmd)
+
+    if exit_code == 0:
+        new_code = sb.commit_dir('.')
+    else:
+        new_code = TreeNode.new(mvir, files = {})
+
+    n_op = EditToolOpNode.new(
+        mvir,
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        old_code = old_code.node_id(),
+        new_code = new_code.node_id(),
+    )
+    if exit_code != 0:
+        raise CrispError('remove_empty_mods failed', n_op)
+    return n_op
+
+def remove_empty_mods(
+    cfg: Config,
+    mvir: MVIR,
+    n_code: TreeNode,
+) -> EditToolOpNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    root_file_rel = detect_root_file(cfg, mvir, n_code)
+    root_file = os.path.join(cargo_dir, root_file_rel)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['remove_empty_mods', sb.join(root_file)]
+        n_op = _remove_empty_mods_impl(cfg, mvir, sb, n_code, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     return n_op

@@ -751,6 +751,18 @@ class EditOpNode(Node):
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
 
+class EditToolOpNode(Node):
+    KIND = 'edit_tool_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    # `body` stores the log output from the command
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
 
 class DefNode(Node):
     KIND = 'def'
@@ -863,6 +875,7 @@ NODE_CLASSES = [
     # Edit ops
     LlmOpNode,
     EditOpNode,
+    EditToolOpNode,
     CompileCommandsOpNode,
     TranspileOpNode,
     SplitFfiOpNode,

@@ -209,6 +209,10 @@ def main():
     commit_files = [
         base_dir / "Cargo.toml",
     ]
+    commit_files_if_exists = [
+        args.project_dir / "CMakeLists.txt",
+        args.project_dir / "CMakePresets.json",
+    ]
     commit_dirs = [
         args.project_dir / "runner",
         args.project_dir / "test_case",
@@ -217,7 +221,12 @@ def main():
         base_dir / "tools",
     ]
 
-    src_files = [relpath(path, args.project_dir) for path in commit_files]
+    src_files = []
+    for path in commit_files:
+        src_files.append(relpath(path, args.project_dir))
+    for path in commit_files_if_exists:
+        if path.exists():
+            src_files.append(relpath(path, args.project_dir))
     for start_dir in commit_dirs:
         for root, dirs, files in start_dir.walk():
             for f in files:

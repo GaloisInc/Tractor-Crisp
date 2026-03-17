@@ -859,22 +859,28 @@ class WorkflowStepNode(Node):
 NODE_CLASSES = [
     FileNode,
     TreeNode,
+
+    # Edit ops
+    LlmOpNode,
+    EditOpNode,
     CompileCommandsOpNode,
     TranspileOpNode,
     SplitFfiOpNode,
-    LlmOpNode,
-    TestResultNode,
-    CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
-    FindUnsafeAnalysisNode,
-    EditOpNode,
 
+    # Analysis ops
+    CargoCheckJsonAnalysisNode,
+    TestResultNode,
+    FindUnsafeAnalysisNode,
+
+    # Split/merge ops and related nodes
     DefNode,
     CrateNode,
     SplitOpNode,
     MergeOpNode,
     RelatedDeclsOpNode,
 
+    # Workflow caching nodes
     WorkflowStepInputsNode,
     WorkflowStepNode,
 ]

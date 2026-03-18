@@ -225,5 +225,5 @@ if __name__ == "__main__":
     evaluate_rust(
         dataset_path = dataset_path,
         prompt = prompt,
-        output_csv_path = dataset_path / f'{prompt_path.stem}_eval.csv',
+        output_csv_path = dataset_path / f'results_gepa_{prompt_path.stem}.csv',
     )

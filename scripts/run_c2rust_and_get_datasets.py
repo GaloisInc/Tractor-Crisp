@@ -219,13 +219,13 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
 def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
     """
     Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_synthetic' in the test corpus repo.
-    Create a results.csv file documenting successes and failures.
+    Create a results_transpilation.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_synthetic').iterdir() if f.is_dir()])
     rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_synthetic'
     rust_projects_parent_folder.mkdir(exist_ok = False)
 
-    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
 
@@ -243,13 +243,13 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
 def run_on_test_corpus_organic(test_corpus_repo_path: Path):
     """
     Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_organic' in the test corpus repo.
-    Create a results.csv file documenting successes and failures.
+    Create a results_transpilation.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_organic').iterdir() if f.is_dir()])
     rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_organic'
     rust_projects_parent_folder.mkdir(exist_ok = False)
 
-    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
 
@@ -267,13 +267,13 @@ def run_on_test_corpus_organic(test_corpus_repo_path: Path):
 def run_on_crust_bench(crust_bench_repo_path: Path):
     """
     Run the complete workflow for C2Rust transpilation on all projects inside 'datasets/CBench' in the CRUST-Bench repo.
-    Create a results.csv file documenting successes and failures.
+    Create a results_transpilation.csv file documenting successes and failures.
     """
     c_project_folders = sorted([f for f in (crust_bench_repo_path / 'datasets/CBench').iterdir() if f.is_dir()])
     rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_CRUST-Bench'
     rust_projects_parent_folder.mkdir(exist_ok = False)
 
-    with open(rust_projects_parent_folder / 'results.csv', 'w', encoding='utf-8') as f:
+    with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
     

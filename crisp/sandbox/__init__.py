@@ -7,6 +7,7 @@ import os
 
 from . import docker as sandbox_docker
 from . import sudo as sandbox_sudo
+from . import bwrap as sandbox_bwrap
 
 match os.environ.get('CRISP_SANDBOX', 'docker'):
     case 'docker':
@@ -17,6 +18,11 @@ match os.environ.get('CRISP_SANDBOX', 'docker'):
         run_sandbox = sandbox_sudo.run_sandbox
         Sandbox = sandbox_sudo.SudoSandbox
         set_keep = sandbox_sudo.set_keep_temp_dir
+    case 'bwrap':
+        run_sandbox = sandbox_bwrap.run_sandbox
+        Sandbox = sandbox_bwrap.BwrapSandbox
+        set_keep = sandbox_bwrap.set_keep_work_dir
     case x:
-        raise ValueError('bad value %r for $CRISP_SANDBOX: expected "docker" or "sudo"' % (x,))
+        raise ValueError(f'bad value {x!r} for $CRISP_SANDBOX: '
+            'expected "docker", "sudo", or "bwrap"')
 

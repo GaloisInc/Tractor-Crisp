@@ -686,6 +686,30 @@ class LlmOpNode(Node):
     request = property(lambda self: self._metadata['request'])
     response = property(lambda self: self._metadata['response'])
 
+class CodexAgentOpNode(Node):
+    KIND = 'codex_agent_op'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    raw_prompt: Metadata[NodeId]
+    exit_code: Metadata[int]
+    # `TreeNode` of all potentially-interesting output files.  We save this in
+    # case our logic for filtering the output misses something.
+    raw_output_files: Metadata[NodeId]
+    # JSON-formatted session log, e.g. `.codex/sessions/xxx/rollout-xxx.jsonl`
+    json_session: Metadata[NodeId]
+    # Additional files created by the agent that might be interesting.  In
+    # particular, if it writes a plan to a `.md` file, we capture that here.
+    extra_files: Metadata[NodeId]
+    # `body` stores the log output
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    raw_output_files = property(lambda self: self._metadata['raw_output_files'])
+    json_session = property(lambda self: self._metadata['json_session'])
+    extra_files = property(lambda self: self._metadata['extra_files'])
+
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -863,6 +887,7 @@ NODE_CLASSES = [
     TranspileOpNode,
     SplitFfiOpNode,
     LlmOpNode,
+    CodexAgentOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,

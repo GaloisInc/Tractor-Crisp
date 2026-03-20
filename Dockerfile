@@ -95,6 +95,11 @@ RUN mkdir /opt/codex-cli \
     && ln -s "$PWD/codex-x86_64-unknown-linux-gnu" /usr/local/bin/codex \
     && rm "$(basename "$codex_url")"
 
+# Append the location of the Rust binaries to PATH
+# since `sh -l` overwrites that variable with the value
+# from /etc/profile and Codex uses `bash -lc` a lot
+RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
+
 
 FROM tractor-crisp-user AS tractor-crisp
 
@@ -126,8 +131,3 @@ RUN uv sync
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
-
-# Append the location of the Rust binaries to PATH
-# since `sh -l` overwrites that variable with the value
-# from /etc/profile and Codex uses `bash -lc` a lot
-RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile

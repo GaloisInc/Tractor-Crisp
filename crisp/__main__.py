@@ -59,6 +59,12 @@ def parse_args():
     main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
         help='which style of LLM-based rewriting to use')
 
+    safety_loop = sub.add_parser('safety-loop')
+    safety_loop.add_argument('--c-code', default='c_code')
+    safety_loop.add_argument('node', nargs='?', default='current')
+    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
+        help='which style of LLM-based rewriting to use')
+
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
         help='store NODE in local variable NAME (default: `n`) before starting repl')
@@ -230,6 +236,9 @@ def do_main(args, cfg):
         return None
     w.accept(n_code, ('main', 'split_ffi'))
 
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+
+def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     def llm_safety_try_one(n_code, safety_try):
         try:
             match args.llm_mode:
@@ -297,6 +306,18 @@ def do_main(args, cfg):
     unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def do_safety_loop(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
+    n_c_code = mvir.node(c_code_node_id)
+
+    code_node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(code_node_id)
+
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 def repl_locals(args, cfg, mvir, w):
     dct = dict(
@@ -462,6 +483,8 @@ def main():
 
     if args.cmd == 'main':
         do_main(args, cfg)
+    elif args.cmd == 'safety-loop':
+        do_safety_loop(args, cfg)
     elif args.cmd == 'repl':
         do_repl(args, cfg)
     elif args.cmd == 'eval':

@@ -91,6 +91,8 @@ class BwrapSandbox:
         else:
             assert not isinstance(cmd, str)
 
+        print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
+
         bwrap_cmd = [
             'bwrap',
             '--unshare-all', '--share-net',

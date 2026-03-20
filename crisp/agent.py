@@ -7,7 +7,7 @@ from pathspec.pathspec import PathSpec
 from . import llm
 from .config import Config
 from .error import CrispError
-from .mvir import MVIR, TreeNode
+from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
 def _codex_command(subcmd: str, args: list[str]) -> list[str]:
@@ -74,14 +74,45 @@ def run_rewrite(
             '!.codex/sessions/',
         ]
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
-        all_output_code = sb.commit_dir('.', ignore_spec=ignore_spec)
+        raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
 
-    # Take all the files from `all_output_code` except for ones that came from
-    # `test_code`.  This allows the agent to add, modify, or remove files from
-    # `input_code`.
-    # TODO: allow limiting this to specific file extensions or glob patterns
-    output_files = {k: v for k,v in all_output_code.files.items()
-        if k not in test_code.files}
+    output_files = {}
+    json_session_files = []
+    for path, node_id in raw_output_files.files.items():
+        if path in test_code.files:
+            # This file came from the C code used for testing.  Ignore it.
+            pass
+        elif path in input_code.files:
+            # This is a modified copy of an original input file.
+            output_files[path] = node_id
+        elif path.endswith('.rs'):
+            # In some cases the agent might create a new Rust file, such as
+            # when refactoring to create a new module.  Add these files to the
+            # main output.
+            output_files[path] = node_id
+        elif path.startswith('.codex/sessions/') and path.endswith('.jsonl'):
+            # This is a Codex session log file.
+            json_session_files.append(node_id)
+
+    # Set the `json_session` metadata field to the session file only if it's
+    # unique.  In case of ambiguity, we leave this blank, but any files that
+    # were created will be available in `raw_output_files` if needed.
+    if len(json_session_files) == 1:
+        json_session_node_id = json_session_files[0]
+    else:
+        json_session_node_id = FileNode.new(mvir, '').node_id()
+
     output_code = TreeNode.new(mvir, files=output_files)
+    n_op = CodexAgentOpNode.new(mvir,
+        old_code = input_code.node_id(),
+        new_code = output_code.node_id(),
+        raw_prompt = FileNode.new(mvir, prompt).node_id(),
+        exit_code = exit_code,
+        raw_output_files = raw_output_files.node_id(),
+        json_session = json_session_node_id,
+        body = logs,
+    )
+    # Record operations and timestamps in the `op_history` reflog.
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
     return output_code

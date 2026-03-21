@@ -253,6 +253,8 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
         src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
         build_dir = sb.join("build")
         config_cmd = ["cmake", "-B", build_dir, src_dir]
+        if cfg.transpile.cmake_preset is not None:
+            config_cmd += ['--preset', cfg.transpile.cmake_preset]
         build_cmd = ["bear", "--", "cmake", "--build", build_dir, "--"]
         if cfg.transpile.single_target is not None:
             build_cmd.append(cfg.transpile.single_target)

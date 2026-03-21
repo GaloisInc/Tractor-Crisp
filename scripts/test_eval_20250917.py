@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import toml
 
 
 @dataclass
@@ -131,7 +132,7 @@ python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]
-cmake_src_dir = "test_case"
+{cfg_cmake}
 output_dir = "translated_rust"
 single_target = "{example_name}"
 '''
@@ -155,7 +156,7 @@ python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
 """
 
 [transpile]
-cmake_src_dir = "test_case"
+{cfg_cmake}
 output_dir = "translated_rust"
 bin_main = "{main_compilation_unit}"
 single_target = "{example_name}"
@@ -197,10 +198,21 @@ def main():
         case ty:
             raise ValueError(f"unknown CMake target type {ty!r}")
 
+    cmake_presets_path = args.project_dir / 'CMakePresets.json'
+    cfg_cmake = '''cmake_src_dir = "test_case"'''
+    if cmake_presets_path.exists():
+        j_presets = json.load(cmake_presets_path.open())
+        assert len(j_presets['buildPresets']) == 1, 'expected exactly one entry in buildPresets'
+        cfg_cmake = toml.dumps({
+            'cmake_src_dir': '.',
+            'cmake_preset': j_presets['buildPresets'][0]['name'],
+        }).strip()
+
     cfg_str = cfg_template.format(
         base_dir=str(relpath(base_dir, args.project_dir)),
         example_dir=str(example_dir_rel),
         example_name=target_info["name"],
+        cfg_cmake = cfg_cmake,
         main_compilation_unit=main_compilation_unit,
     )
     (args.project_dir / "crisp.toml").write_text(cfg_str)
@@ -208,6 +220,10 @@ def main():
     # Collect source files
     commit_files = [
         base_dir / "Cargo.toml",
+    ]
+    commit_files_if_exists = [
+        args.project_dir / "CMakeLists.txt",
+        args.project_dir / "CMakePresets.json",
     ]
     commit_dirs = [
         args.project_dir / "runner",
@@ -217,7 +233,12 @@ def main():
         base_dir / "tools",
     ]
 
-    src_files = [relpath(path, args.project_dir) for path in commit_files]
+    src_files = []
+    for path in commit_files:
+        src_files.append(relpath(path, args.project_dir))
+    for path in commit_files_if_exists:
+        if path.exists():
+            src_files.append(relpath(path, args.project_dir))
     for start_dir in commit_dirs:
         for root, dirs, files in start_dir.walk():
             for f in files:

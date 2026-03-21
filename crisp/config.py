@@ -88,6 +88,10 @@ class TranspileConfig(ConfigBase):
     config_path: str
     cmake_src_dir: str
     output_dir: str
+
+    # If set, run cmake with `--preset foo` to pick up settings from
+    # `CMakePresets.json`.
+    cmake_preset: str | None = None
     # Basename (without extension) of the compilation unit that contains the
     # `main` entry point, if the project produces a binary.  For example, if
     # `main` is defined in `driver.c`, this should be set to `driver`.

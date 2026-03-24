@@ -340,7 +340,7 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR,
         for name, node_id in code.files.items()
         if name.endswith('.rs')
     })
-    p = subprocess.run(('cargo', 'run', '--release'),
+    p = subprocess.run(('cargo', 'run', '--release', '--', '--stdin-cbor'),
         cwd=find_unsafe_dir,
         input=input_cbor_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

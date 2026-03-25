@@ -188,7 +188,6 @@ fn main() {
 
         let mut v = Visitor::default();
         v.visit_file(&ast);
-        eprintln!("{:?}", v);
         outputs.insert(file_name, v.out);
     }
 

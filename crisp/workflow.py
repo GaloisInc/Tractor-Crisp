@@ -639,9 +639,14 @@ class Workflow:
     @step
     def erase_ffi(self, code: TreeNode) -> TreeNode:
         """
-        Erase all function definitions named `*_ffi` from `code`.  They can be
-        handled separately and re-inserted using `unerase_ffi`.
+        Erase all FFI functions introduced by `split_ffi` from `code`.  They
+        can be handled separately and re-inserted using `unerase_ffi`.
         """
+        # For now, we assume any function whose name ends with `_ffi` is an FFI
+        # entry point introduced by `split_ffi`.  It should be fairly rare for
+        # the original C code to use such names itself, since FFI logic is
+        # usually in a language-specific adapter rather than the core C
+        # library.
         crate_erased = self._filter_defs(code, lambda k: not k.endswith('_ffi'))
         code_erased = self.merge(code, crate_erased)
         return code_erased

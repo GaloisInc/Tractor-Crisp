@@ -506,6 +506,9 @@ def _related_decls_impl(
         j = json_out.body_json()
         assert isinstance(j, dict)
         sig_defs = {}
+        # related_decls currently gives the signature up through the end of the
+        # return type.  We add a placeholder body after this so it will look
+        # more familiar to the LLM.
         for def_id, j_def in j.items():
             if (sig := j_def.get('written_signature')) is not None:
                 sig += ' {\n' \

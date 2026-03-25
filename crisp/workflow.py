@@ -109,7 +109,12 @@ After refactoring, make sure the code still passes the tests.  Run the tests usi
 {test_cmd}
 ```
 
-Remember, your overall goal is to reduce the amount of unsafe code in this codebase.  In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
+You can measure the amount of unsafe code remaining using this command:
+```sh
+find-unsafe --dir {cargo_dir_path} \
+    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
+```
+This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
 '''
 
 AGENT_SAFETY_PROMPT_NO_TESTS = '''
@@ -777,6 +782,7 @@ class Workflow:
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
         prompt = prompt.format(
             cargo_dir_path = cargo_dir,
+            initial_unsafe_count = self.count_unsafe(n_code),
             test_cmd = cfg.test_command,
         )
         return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,

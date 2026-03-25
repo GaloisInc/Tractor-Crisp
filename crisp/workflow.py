@@ -108,6 +108,8 @@ After refactoring, make sure the code still passes the tests.  Run the tests usi
 ```sh
 {test_cmd}
 ```
+
+Remember, your overall goal is to reduce the amount of unsafe code in this codebase.  In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
 '''
 
 

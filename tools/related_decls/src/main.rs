@@ -1,4 +1,5 @@
 use clap::Parser;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use ra_ap_hir::{
     Adt, Function, HasCrate, HasSource, InFile, Module, ModuleDef, ModuleDefId, Name, Semantics,
@@ -11,7 +12,7 @@ use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::{AstNode, Edition, NodeOrToken, TextRange, WalkEvent};
 use rust_analyzer_ext::crates;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::fs::File;
 use std::io::BufWriter;
@@ -449,7 +450,8 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
     // Iterate all items, constructing map of their text ranges and finding any in `args.item_paths`
     let mut unfound_paths: HashSet<_> = args.item_paths.into_iter().collect();
-    let mut found_items: HashMap<_, _> = Default::default();
+    // Use `IndexMap` here to provide deterministic ordering required by snapshot tests.
+    let mut found_items: IndexMap<_, _> = Default::default();
 
     let mut items_by_range = Vec::new();
     for file in &files {
@@ -641,71 +643,147 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn test_example_input() {
-    let info = find_related_decls(Args {
-        cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
-        item_paths: vec![
-            "main".into(),
-            "another".into(),
-            "another::bar::CONSTANT".into(),
-            "synthetic_usages".into(),
-            "TGE".into(),
-        ],
-        output_path: None,
-        all: false,
-    })
-    .unwrap();
 
-    assert_eq!(
-        info["main"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("synthetic_usages")]
-    );
+#[cfg(test)]
+mod test {
+    use super::*;
+    use insta::assert_json_snapshot;
 
-    assert_eq!(
-        info["another::bar::CONSTANT"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("synthetic_usages")]
-    );
+    fn clean_paths(v: &mut serde_json::Value) {
+        match *v {
+            serde_json::Value::String(ref mut s) => {
+                // Trim path components leading up to `example-input/`, since these may vary
+                // depending on the build environment.
+                if let Some(idx) = s.find("example-input/") {
+                    *s = s[idx..].to_owned();
+                }
+            },
+            serde_json::Value::Array(ref mut a) => {
+                for v in a {
+                    clean_paths(v);
+                }
+            },
+            serde_json::Value::Object(ref mut m) => {
+                clean_map_paths(m);
+            },
+            serde_json::Value::Null |
+            serde_json::Value::Bool(_) |
+            serde_json::Value::Number(_) => {},
+        }
+    }
 
-    assert_eq!(
-        info["synthetic_usages"]["used_items"].as_array().unwrap(),
-        &vec![
-            serde_json::Value::from("::core"),
-            serde_json::Value::from("::std::macros::eprintln"),
-            serde_json::Value::from("another"),
-            serde_json::Value::from("another::bar"),
-            serde_json::Value::from("another::bar::CONSTANT"),
-            serde_json::Value::from("another::foo"),
-            serde_json::Value::from("another::foo::CONSTANT"),
-            serde_json::Value::from("another::foo::OTHER_CONSTANT"),
-            serde_json::Value::from("main"),
-        ]
-    );
+    fn clean_map_paths(m: &mut serde_json::Map<String, serde_json::Value>) {
+        for (_k, v) in m {
+            clean_paths(v)
+        }
+    }
 
-    assert_eq!(
-        info["TGE"]["used_items"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::bytes::TryGetError")]
-    );
+    /// Assert that specific key/value pairs exist in `info`.  This requires that at least the
+    /// items requested by `test_item_paths` be present.  Also, the paths in `info` must have been
+    /// cleaned by `clean_map_paths` to make them environment-independent.
+    fn common_asserts(info: &serde_json::Map<String, serde_json::Value>) {
+        assert_eq!(
+            info["main"]["uses"].as_array().unwrap(),
+            &vec![serde_json::Value::from("synthetic_usages")]
+        );
 
-    assert_eq!(info["main"]["kind"], serde_json::Value::from("function"));
-    assert_eq!(info["another"]["kind"], serde_json::Value::from("module"));
-    assert_eq!(info["another::bar::CONSTANT"]["kind"], serde_json::Value::from("other"));
+        assert_eq!(
+            info["another::bar::CONSTANT"]["uses"].as_array().unwrap(),
+            &vec![serde_json::Value::from("synthetic_usages")]
+        );
 
-    assert_eq!(
-        info["another"]["child_items"].as_array().unwrap(),
-        &vec![
-            serde_json::Value::from("another::MAX"),
-            serde_json::Value::from("another::X"),
-            serde_json::Value::from("another::EnumWithBodiedVariant"),
-            serde_json::Value::from("another::EnumWithFieldedVariant"),
-            serde_json::Value::from("another::foo"),
-            serde_json::Value::from("another::bar"),
-        ]
-    );
+        assert_eq!(
+            info["synthetic_usages"]["used_items"].as_array().unwrap(),
+            &vec![
+                serde_json::Value::from("::core"),
+                serde_json::Value::from("::std::macros::eprintln"),
+                serde_json::Value::from("another"),
+                serde_json::Value::from("another::bar"),
+                serde_json::Value::from("another::bar::CONSTANT"),
+                serde_json::Value::from("another::foo"),
+                serde_json::Value::from("another::foo::CONSTANT"),
+                serde_json::Value::from("another::foo::OTHER_CONSTANT"),
+                serde_json::Value::from("main"),
+            ]
+        );
 
-    let example_main_rs_path = std::env::current_dir().unwrap()
-        .join("example-input").join("src").join("main.rs");
-    let example_main_rs_path_str = example_main_rs_path.display().to_string();
-    assert_eq!(info["another"]["file_path"], serde_json::Value::from(example_main_rs_path_str));
-    assert_eq!(info["another"]["is_inline"], serde_json::Value::from(true));
+        assert_eq!(
+            info["TGE"]["used_items"].as_array().unwrap(),
+            &vec![serde_json::Value::from("::bytes::TryGetError")]
+        );
+
+        assert_eq!(info["main"]["kind"], serde_json::Value::from("function"));
+        assert_eq!(info["another"]["kind"], serde_json::Value::from("module"));
+        assert_eq!(info["another::bar::CONSTANT"]["kind"], serde_json::Value::from("other"));
+
+        assert_eq!(
+            info["another"]["child_items"].as_array().unwrap(),
+            &vec![
+                serde_json::Value::from("another::MAX"),
+                serde_json::Value::from("another::X"),
+                serde_json::Value::from("another::EnumWithBodiedVariant"),
+                serde_json::Value::from("another::EnumWithFieldedVariant"),
+                serde_json::Value::from("another::foo"),
+                serde_json::Value::from("another::bar"),
+            ]
+        );
+
+        assert_eq!(info["foo"]["file_path"],
+            serde_json::Value::from("example-input/src/foo.rs"));
+        assert_eq!(info["foo"]["is_inline"], serde_json::Value::from(false));
+
+        assert_eq!(info["another"]["file_path"],
+            serde_json::Value::from("example-input/src/main.rs"));
+        assert_eq!(info["another"]["is_inline"], serde_json::Value::from(true));
+    }
+
+    #[test]
+    fn test_item_paths() {
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![
+                "main".into(),
+                "foo".into(),
+                "another".into(),
+                "another::bar::CONSTANT".into(),
+                "synthetic_usages".into(),
+                "TGE".into(),
+            ],
+            output_path: None,
+            all: false,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        common_asserts(&info);
+        assert_json_snapshot!(info);
+    }
+
+    #[test]
+    fn test_all() {
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![],
+            output_path: None,
+            all: true,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        common_asserts(&info);
+        assert_json_snapshot!(info);
+    }
+
+    #[test]
+    fn test_crate_root() {
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![
+                "$crate".into(),
+            ],
+            output_path: None,
+            all: false,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        assert_json_snapshot!(info);
+    }
 }

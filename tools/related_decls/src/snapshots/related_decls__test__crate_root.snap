@@ -1,0 +1,24 @@
+---
+source: related_decls/src/main.rs
+expression: info
+---
+{
+  "$crate": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "main",
+      "foo",
+      "another",
+      "returns_pathbuf",
+      "synthetic_usages",
+      "ERR",
+      "TGE"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": false,
+    "kind": "module"
+  }
+}

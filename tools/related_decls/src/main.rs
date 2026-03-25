@@ -564,53 +564,57 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
         // Output additional info for specific item kinds.
         let id: Option<ModuleDefId> = module_def.try_into().ok();
 
-        // Record the kind of the item.  This allows consumers to know which additional fields to
-        // expect.  For now we just emit "other" for kinds with no kind-specific fields.
-        let kind = match id {
-            Some(ModuleDefId::ModuleId(..)) => "module",
-            Some(ModuleDefId::FunctionId(..)) => "function",
-            _ => "other",
+        // Record the kind of the item and any special fields for that kind.  For now we just emit
+        // "other" for kinds with no kind-specific fields.
+        let kind;
+        match id {
+            Some(ModuleDefId::ModuleId(mod_id)) => {
+                kind = "module";
+
+                // For modules, output a list of child paths and info about the file.
+                let mod_ = Module::from(mod_id);
+                let decls = mod_.declarations(&db);
+                let mod_file_id = mod_.definition_source_file_id(&db);
+                let edition = mod_file_id.edition(&db);
+                let mut paths = Vec::with_capacity(decls.len());
+                for decl in decls {
+                    let path = canonical_item_path(&decl, &db, edition)
+                        .unwrap_or_else(|| absolute_item_path(&db, decl, edition));
+                    paths.push(path);
+                }
+                path_info.insert("child_items".to_owned(), paths.into());
+
+                let file_path = mod_file_id.file_id()
+                    .map(|efid| efid.file_id(&db))
+                    .map(|fid| vfs.file_path(fid))
+                    .and_then(|vp| vp.as_path())
+                    .map(|ap| ap.as_str());
+                path_info.insert("file_path".to_owned(), file_path.into());
+
+                // If `is_inline` is set, then the file may contain other modules as well.  Each
+                // file should usually contain exactly one non-inline module and zero or more
+                // inline ones.
+                path_info.insert("is_inline".to_owned(), mod_.is_inline(&db).into());
+            },
+            Some(ModuleDefId::FunctionId(func_id)) => {
+                kind = "function";
+
+                // For functions, output the signature.
+                let sig = db.function_signature(func_id);
+                path_info.insert(
+                    "signature".to_owned(),
+                    pp_function_signature(&db, &*sig).into(),
+                );
+                path_info.insert(
+                    "written_signature".to_owned(),
+                    function_signature_as_written(&sema, func_id.into()).into(),
+                );
+            }
+            _ => {
+                kind = "other";
+            },
         };
         path_info.insert("kind".to_owned(), kind.into());
-
-        if let Some(ModuleDefId::FunctionId(func_id)) = id {
-            // For functions, output the signature.
-            let sig = db.function_signature(func_id);
-            path_info.insert(
-                "signature".to_owned(),
-                pp_function_signature(&db, &*sig).into(),
-            );
-            path_info.insert(
-                "written_signature".to_owned(),
-                function_signature_as_written(&sema, func_id.into()).into(),
-            );
-        }
-
-        if let Some(ModuleDefId::ModuleId(mod_id)) = id {
-            // For modules, output a list of child paths and info about the file.
-            let mod_ = Module::from(mod_id);
-            let decls = mod_.declarations(&db);
-            let mod_file_id = mod_.definition_source_file_id(&db);
-            let edition = mod_file_id.edition(&db);
-            let mut paths = Vec::with_capacity(decls.len());
-            for decl in decls {
-                let path = canonical_item_path(&decl, &db, edition)
-                    .unwrap_or_else(|| absolute_item_path(&db, decl, edition));
-                paths.push(path);
-            }
-            path_info.insert("child_items".to_owned(), paths.into());
-
-            let file_path = mod_file_id.file_id()
-                .map(|efid| efid.file_id(&db))
-                .map(|fid| vfs.file_path(fid))
-                .and_then(|vp| vp.as_path())
-                .map(|ap| ap.as_str());
-            path_info.insert("file_path".to_owned(), file_path.into());
-
-            // If `is_inline` is set, then the file may contain other modules as well.  Each file
-            // should usually contain exactly one non-inline module and zero or more inline ones.
-            path_info.insert("is_inline".to_owned(), mod_.is_inline(&db).into());
-        }
 
         output.insert(path, path_info.into());
     }

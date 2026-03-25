@@ -153,7 +153,11 @@ fn read_dir_into(
         if entry.file_type()?.is_dir() {
             read_dir_into(&entry.path(), dest)?;
         } else {
-            read_file_into(&entry.path(), dest)?;
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".rs") && !name.starts_with('.') {
+                    read_file_into(&entry.path(), dest)?;
+                }
+            }
         }
     }
     Ok(())

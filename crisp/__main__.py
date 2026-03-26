@@ -107,6 +107,8 @@ def parse_args():
 
     sandbox_run = sub.add_parser('sandbox-run')
     sandbox_run.add_argument('run_cmd', nargs='*')
+    sandbox_run.add_argument('--checkout', action='append', default=[], metavar='NODE',
+        help='check out files from this node into the sandbox')
 
     return ap.parse_args()
 
@@ -483,6 +485,9 @@ def do_sandbox_run(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
     with run_sandbox(cfg, mvir) as sb:
+        for node_id_str in args.checkout:
+            node_id = parse_node_id_arg(mvir, node_id_str)
+            sb.checkout(mvir.node(node_id))
         sb.run(args.run_cmd, stream = True)
 
 def main():

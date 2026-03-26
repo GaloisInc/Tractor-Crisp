@@ -66,9 +66,10 @@ def run_aime_example():
 
 def run_rust(
     dataset_path: str | Path,
+    seed_prompt: str,
+    task_lm: str,
+    reflection_lm: str,
     trainset_frac: float = 0.5,
-    task_lm: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
-    reflection_lm: str = 'openai/gpt-5',
     max_metric_calls: int = 150
 ):
     """
@@ -76,9 +77,10 @@ def run_rust(
 
     Inputs:
     - dataset_path: Path to a folder containing unsafe Rust projects and .rs files inside.
-    - trainset_frac: The fraction of .rs files inside `dataset_path` that will be used for training. The rest will be used for validation.
+    - seed_prompt: The seed prompt to start optimization from.
     - task_lm: The LM being optimized. Either a string, or the path to a GGUF file.
     - reflection_lm: The (usually more powerful) LM being used for reflection. Either a string, or the path to a GGUF file.
+    - trainset_frac: The fraction of .rs files inside `dataset_path` that will be used for training. The rest will be used for validation.
     - max_metric_calls: Required for gepa.optimize().
     """
 
@@ -97,9 +99,7 @@ def run_rust(
     adapter = RustAdapter(model = task_lm)
 
     gepa_result = gepa.optimize(
-        seed_candidate = {
-            'system_prompt': "You are an expert at converting code from unsafe Rust to safe Rust. You'll be given unsafe Rust code inside tags like this:\n<code>\nUnsafe Rust code\n</code>\nYou'll have to convert this to safe Rust. In your response, put the safe Rust code within tags as follows:\n<code>\nSafe Rust code\n</code>."
-        },
+        seed_candidate = {'system_prompt': seed_prompt},
         trainset = trainset,
         valset = valset,
         adapter = adapter,
@@ -122,7 +122,7 @@ def get_num_characters(filepath: str | Path) -> int:
 def evaluate_rust(
     dataset_path: str | Path,
     prompt: str,
-    model: str = str(Path.home() / 'Library/Caches/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'),
+    model: str,
     output_csv_path: Optional[Path] = None,
     sort_by_num_characters: bool = True
 ):
@@ -217,13 +217,27 @@ def evaluate_rust(
 
 
 if __name__ == "__main__":
-    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
-    dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
 
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        prompt = f.read()
-    evaluate_rust(
-        dataset_path = dataset_path,
-        prompt = prompt,
-        output_csv_path = dataset_path / f'results_gepa_{prompt_path.stem}.csv',
+    ## Run ##
+    seed_prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
+    with open(seed_prompt_path, 'r', encoding='utf-8') as f:
+        seed_prompt = f.read()
+    run_rust(
+        dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic',
+        seed_prompt = seed_prompt,
+        task_lm = 'openai/gpt-5.4',
+        reflection_lm = 'openai/gpt-5.4',
+        trainset_frac = 0.5,
+        max_metric_calls = 150
     )
+
+    ## Evaluate ##
+    # prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
+    # dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
+    # with open(prompt_path, 'r', encoding='utf-8') as f:
+    #     prompt = f.read()
+    # evaluate_rust(
+    #     dataset_path = dataset_path,
+    #     prompt = prompt,
+    #     output_csv_path = dataset_path / f'results_gepa_{prompt_path.stem}.csv',
+    # )

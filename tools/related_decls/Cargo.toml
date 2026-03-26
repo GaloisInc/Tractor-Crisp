@@ -18,4 +18,8 @@ ra_ap_vfs.workspace = true
 
 env_logger.workspace = true
 serde_json.workspace = true
+indexmap.workspace = true
 itertools.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

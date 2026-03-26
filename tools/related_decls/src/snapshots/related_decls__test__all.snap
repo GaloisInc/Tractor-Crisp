@@ -1,0 +1,199 @@
+---
+source: related_decls/src/main.rs
+expression: info
+---
+{
+  "main": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [
+      "::std::macros::println"
+    ],
+    "signature": "fn main()",
+    "written_signature": "fn main()",
+    "kind": "function"
+  },
+  "foo": {
+    "uses": [],
+    "used_items": [],
+    "child_items": [
+      "foo::f"
+    ],
+    "file_path": "example-input/src/foo.rs",
+    "is_inline": false,
+    "kind": "module"
+  },
+  "another": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "another::MAX",
+      "another::X",
+      "another::EnumWithBodiedVariant",
+      "another::EnumWithFieldedVariant",
+      "another::foo",
+      "another::bar"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": true,
+    "kind": "module"
+  },
+  "returns_pathbuf": {
+    "uses": [],
+    "used_items": [
+      "::std::path::PathBuf",
+      "::std::path::new"
+    ],
+    "signature": "fn returns_pathbuf() -> Path(BarePath(ModPath { kind: Plain, segments: [Name { symbol: \"std\", ctx: () }, Name { symbol: \"path\", ctx: () }, Name { symbol: \"PathBuf\", ctx: () }] }))",
+    "written_signature": "#[allow(unused)]\nfn returns_pathbuf() -> std::path::PathBuf",
+    "kind": "function"
+  },
+  "synthetic_usages": {
+    "uses": [],
+    "used_items": [
+      "::core",
+      "::std::macros::eprintln",
+      "another",
+      "another::bar",
+      "another::bar::CONSTANT",
+      "another::foo",
+      "another::foo::CONSTANT",
+      "another::foo::OTHER_CONSTANT",
+      "main"
+    ],
+    "signature": "fn synthetic_usages()",
+    "written_signature": "#[allow(unused)]\nfn synthetic_usages()",
+    "kind": "function"
+  },
+  "ERR": {
+    "uses": [],
+    "used_items": [
+      "::core",
+      "::std::io",
+      "::std::io::error::ErrorKind",
+      "::std::io::error::ErrorKind::NotFound"
+    ],
+    "kind": "other"
+  },
+  "TGE": {
+    "uses": [],
+    "used_items": [
+      "::bytes::TryGetError"
+    ],
+    "kind": "other"
+  },
+  "another::MAX": {
+    "uses": [],
+    "used_items": [
+      "::core::num::MAX",
+      "::core::usize"
+    ],
+    "kind": "other"
+  },
+  "another::X": {
+    "uses": [
+      "another::EnumWithFieldedVariant::Variant"
+    ],
+    "used_items": [
+      "::std::path::PathBuf"
+    ],
+    "kind": "other"
+  },
+  "another::EnumWithBodiedVariant::Variant": {
+    "uses": [],
+    "used_items": [
+      "::core::isize",
+      "::core::num::MIN"
+    ],
+    "kind": "other"
+  },
+  "another::EnumWithBodiedVariant": {
+    "uses": [],
+    "used_items": [],
+    "kind": "other"
+  },
+  "another::EnumWithFieldedVariant::Variant": {
+    "uses": [],
+    "used_items": [
+      "another::X"
+    ],
+    "kind": "other"
+  },
+  "another::EnumWithFieldedVariant": {
+    "uses": [],
+    "used_items": [],
+    "kind": "other"
+  },
+  "another::foo": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "another::foo::CONSTANT",
+      "another::foo::OTHER_CONSTANT"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": true,
+    "kind": "module"
+  },
+  "another::bar": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "another::bar::CONSTANT"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": true,
+    "kind": "module"
+  },
+  "another::foo::CONSTANT": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "kind": "other"
+  },
+  "another::foo::OTHER_CONSTANT": {
+    "uses": [],
+    "used_items": [],
+    "kind": "other"
+  },
+  "another::bar::CONSTANT": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "kind": "other"
+  },
+  "foo::f": {
+    "uses": [],
+    "used_items": [],
+    "signature": "fn f()",
+    "written_signature": "fn f()",
+    "kind": "function"
+  },
+  "$crate": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "main",
+      "foo",
+      "another",
+      "returns_pathbuf",
+      "synthetic_usages",
+      "ERR",
+      "TGE"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": false,
+    "kind": "module"
+  }
+}

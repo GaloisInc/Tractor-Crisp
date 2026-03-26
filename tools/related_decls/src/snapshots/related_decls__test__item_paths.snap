@@ -1,0 +1,75 @@
+---
+source: related_decls/src/main.rs
+expression: info
+---
+{
+  "main": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [
+      "::std::macros::println"
+    ],
+    "signature": "fn main()",
+    "written_signature": "fn main()",
+    "kind": "function"
+  },
+  "foo": {
+    "uses": [],
+    "used_items": [],
+    "child_items": [
+      "foo::f"
+    ],
+    "file_path": "example-input/src/foo.rs",
+    "is_inline": false,
+    "kind": "module"
+  },
+  "another": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "child_items": [
+      "another::MAX",
+      "another::X",
+      "another::EnumWithBodiedVariant",
+      "another::EnumWithFieldedVariant",
+      "another::foo",
+      "another::bar"
+    ],
+    "file_path": "example-input/src/main.rs",
+    "is_inline": true,
+    "kind": "module"
+  },
+  "synthetic_usages": {
+    "uses": [],
+    "used_items": [
+      "::core",
+      "::std::macros::eprintln",
+      "another",
+      "another::bar",
+      "another::bar::CONSTANT",
+      "another::foo",
+      "another::foo::CONSTANT",
+      "another::foo::OTHER_CONSTANT",
+      "main"
+    ],
+    "signature": "fn synthetic_usages()",
+    "written_signature": "#[allow(unused)]\nfn synthetic_usages()",
+    "kind": "function"
+  },
+  "TGE": {
+    "uses": [],
+    "used_items": [
+      "::bytes::TryGetError"
+    ],
+    "kind": "other"
+  },
+  "another::bar::CONSTANT": {
+    "uses": [
+      "synthetic_usages"
+    ],
+    "used_items": [],
+    "kind": "other"
+  }
+}

@@ -807,6 +807,36 @@ class MergeOpNode(Node):
     crate_in = property(lambda self: self._metadata['crate_in'])
     code_out = property(lambda self: self._metadata['code_out'])
 
+class RelatedDeclsOpNode(Node):
+    '''
+    Process Rust code to identify all declarations that are related to
+    `query_def_names`.
+    '''
+    KIND = 'related_decls_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` (a collection of files)
+    code: Metadata[NodeId]
+    # List of defs to retrieve information for.  If this is `None`, information
+    # is retrieved for all defs.
+    #
+    # Note it's actually the `cmd` that determines what defs are retrieved.
+    # This field is for informational purposes only.  The two fields are kept
+    # in sync by the logic in `analysis.related_decls`.
+    query_def_names: Metadata[list[str] | None]
+    # The complete JSON output as a `FileNode`.
+    json_out: Metadata[NodeId]
+    # Output `CrateNode` containing defs reduced to just their signatures.
+    sigs_out: Metadata[NodeId]
+    # `body` stores stdout/stderr logging output from `related_decls`.
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code = property(lambda self: self._metadata['code'])
+    query_def_names = property(lambda self: self._metadata['query_def_names'])
+    json_out = property(lambda self: self._metadata['json_out'])
+    sigs_out = property(lambda self: self._metadata['sigs_out'])
+
 
 class WorkflowStepInputsNode(Node):
     KIND = 'workflow_step_inputs'
@@ -843,6 +873,7 @@ NODE_CLASSES = [
     CrateNode,
     SplitOpNode,
     MergeOpNode,
+    RelatedDeclsOpNode,
 
     WorkflowStepInputsNode,
     WorkflowStepNode,

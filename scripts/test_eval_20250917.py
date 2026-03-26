@@ -15,6 +15,7 @@ import toml
 class Args:
     project_dir: Path
     main_compilation_unit: str | None
+    main_args: list[str]
 
 
 def parse_args() -> Args:
@@ -24,6 +25,8 @@ def parse_args() -> Args:
         "--main-compilation-unit",
         help="name of the compilation unit that defines `main`",
     )
+    ap.add_argument("main_args", nargs='*',
+        help='extra arguments to pass to `crisp main`')
     return Args(**ap.parse_args().__dict__)
 
 
@@ -104,11 +107,9 @@ def find_git_root(path: Path) -> Path:
 
 def run_crisp(cli_args: Args, args: Sequence[str | Path]):
     crisp_dir = Path(__file__).parent.parent.absolute()
-    return subprocess.run(
-        ["uv", "run", "--project", crisp_dir, "crisp", *args],
-        cwd=cli_args.project_dir,
-        check=True,
-    )
+    cmd = ["uv", "run", "--project", crisp_dir, "crisp", *args]
+    print(f'running {cmd!r}')
+    return subprocess.run(cmd, cwd=cli_args.project_dir, check=True)
 
 
 LIB_CONFIG_STR = r'''
@@ -250,7 +251,7 @@ def main():
                     del dirs[i]
 
     run_crisp(args, ["commit", "-t", "c_code", *src_files])
-    run_crisp(args, ["main"])
+    run_crisp(args, ["main"] + args.main_args)
 
 
 if __name__ == "__main__":

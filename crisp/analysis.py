@@ -13,6 +13,7 @@ from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
+    RelatedDeclsOpNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -429,10 +430,12 @@ def split_rust(
     cfg: Config,
     mvir: MVIR,
     n_code: TreeNode,
+    root_file: str | None = None,
 ) -> SplitOpNode:
-    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-    root_file_rel = detect_root_file(cfg, mvir, n_code)
-    root_file = os.path.join(cargo_dir, root_file_rel)
+    if root_file is None:
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = detect_root_file(cfg, mvir, n_code)
+        root_file = os.path.join(cargo_dir, root_file_rel)
     with run_sandbox(cfg, mvir) as sb:
         cmd = ['split_rust', sb.join(root_file), '--output-path', sb.join("out.json")]
         n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
@@ -482,6 +485,69 @@ def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) ->
     with run_sandbox(cfg, mvir) as sb:
         cmd = ['merge_rust', sb.join(root_file), sb.join("in.json")]
         n_op = _merge_rust_impl(cfg, mvir, sb, n_code, n_crate, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def _related_decls_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox,
+    code: TreeNode, query_def_names: list[str], cmd: list[str],
+) -> RelatedDeclsOpNode:
+    sb.checkout(code)
+
+    exit_code, logs = sb.run(cmd, stream=True)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        json_out = sb.commit_file('out.json')
+        j = json_out.body_json()
+        assert isinstance(j, dict)
+        sig_defs = {}
+        # related_decls currently gives the signature up through the end of the
+        # return type.  We add a placeholder body after this so it will look
+        # more familiar to the LLM.
+        for def_id, j_def in j.items():
+            if (sig := j_def.get('written_signature')) is not None:
+                sig += ' {\n' \
+                    '    // ...\n' \
+                    '}\n'
+                sig_defs[def_id] = DefNode.new(mvir, body = sig).node_id()
+        sigs_out = CrateNode.new(mvir, defs = sig_defs)
+    else:
+        assert False
+        json_out = FileNode.new(mvir, b'')
+        sigs_out = CrateNode.new(mvir, defs = {})
+
+    n_op = RelatedDeclsOpNode.new(
+        mvir,
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code = code.node_id(),
+        query_def_names = query_def_names.copy(),
+        json_out = json_out.node_id(),
+        sigs_out = sigs_out.node_id(),
+    )
+    return n_op
+
+def related_decls(
+    cfg: Config,
+    mvir: MVIR,
+    n_code: TreeNode,
+    query_def_names: list[str] | None = None,
+) -> RelatedDeclsOpNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['related_decls', sb.join(cargo_dir), '--output-path', sb.join("out.json")]
+        if query_def_names is not None:
+            cmd += query_def_names
+        else:
+            cmd += ['--all']
+            query_def_names = []
+        n_op = _related_decls_impl(cfg, mvir, sb, n_code, query_def_names, cmd)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     return n_op

@@ -54,6 +54,8 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
+    main.add_argument('--llm-mode', choices=('default', 'no_ffi'), default='default',
+        help='which style of LLM-based rewriting to use')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -232,7 +234,11 @@ def do_main(args, cfg):
         if unsafe_count == 0:
             break
 
-        n_new_code = w.llm_safety(n_code)
+        match args.llm_mode:
+            case 'default':
+                n_new_code = w.llm_safety(n_code)
+            case 'no_ffi':
+                n_new_code = w.llm_safety_no_ffi(n_code)
 
         for repair_try in range(3):
             n_op_check = w.cargo_check_json_op(n_new_code)

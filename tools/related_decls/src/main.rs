@@ -647,7 +647,12 @@ fn main() -> Result<(), String> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::sync::Mutex;
     use insta::assert_json_snapshot;
+
+    /// Parallel calls to rust-analyzer will try to use the same cache files and race with each
+    /// other.  We use a mutex to prevent this from happening.
+    static RUST_ANALYZER_MUTEX: Mutex<()> = Mutex::new(());
 
     fn clean_paths(v: &mut serde_json::Value) {
         match *v {
@@ -739,6 +744,7 @@ mod test {
 
     #[test]
     fn test_item_paths() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
         let mut info = find_related_decls(Args {
             cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
             item_paths: vec![
@@ -760,6 +766,7 @@ mod test {
 
     #[test]
     fn test_all() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
         let mut info = find_related_decls(Args {
             cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
             item_paths: vec![],
@@ -774,6 +781,7 @@ mod test {
 
     #[test]
     fn test_crate_root() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
         let mut info = find_related_decls(Args {
             cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
             item_paths: vec![

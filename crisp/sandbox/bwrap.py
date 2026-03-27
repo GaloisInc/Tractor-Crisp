@@ -149,6 +149,11 @@ class BwrapSandbox:
         ))
         bwrap_cmd.extend(cmd)
 
+        # Copy the API key into the sandbox only if already set outside
+        api_key = os.environ.get('CRISP_API_KEY')
+        if api_key is not None:
+            env['CRISP_API_KEY'] = api_key
+
         if not stream:
             p = subprocess.run(bwrap_cmd, check=False,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

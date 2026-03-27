@@ -257,9 +257,14 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
         config_cmd = ["cmake", "-B", build_dir, src_dir]
         if cfg.transpile.cmake_preset is not None:
             config_cmd += ['--preset', cfg.transpile.cmake_preset]
-        build_cmd = ["bear", "--", "cmake", "--build", build_dir, "--"]
+        build_cmake_cmd = ["cmake", "--build", build_dir, "--"]
         if cfg.transpile.single_target is not None:
-            build_cmd.append(cfg.transpile.single_target)
+            build_cmake_cmd.append(cfg.transpile.single_target)
+        # We wrap the inner cmake command in `sh -c "cmake ..."` because
+        # the bear command line parser strips the second `--`, e.g.
+        # `bear -- cmake --build <build_dir> -- <target>` becomes
+        # `cmake --build <build_dir> <target>` which is incorrect.
+        build_cmd = ["bear", "--", "sh", "-c", " ".join(build_cmake_cmd)]
         cmds = [config_cmd, build_cmd]
         n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
 

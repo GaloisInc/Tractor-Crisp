@@ -124,6 +124,13 @@ class SudoSandbox:
         )
         cmd = ('sh', '-c', cmd)
 
+        # Copy the API key into the sandbox only if already set outside,
+        # but do not override the value from env.
+        if 'CRISP_API_KEY' not in env:
+            api_key = os.environ.get('CRISP_API_KEY')
+            if api_key is not None:
+                env['CRISP_API_KEY'] = api_key
+
         if not stream:
             p = self._run_sudo(cmd, check=False, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

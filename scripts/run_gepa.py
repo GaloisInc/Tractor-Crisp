@@ -231,13 +231,21 @@ if __name__ == "__main__":
         max_metric_calls = 150
     )
 
+    ## Save prompt ##
+    # At the moment, done manually by copy-pasting from CLI
+
     ## Evaluate ##
-    # prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
-    # dataset_path = Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic'
-    # with open(prompt_path, 'r', encoding='utf-8') as f:
-    #     prompt = f.read()
-    # evaluate_rust(
-    #     dataset_path = dataset_path,
-    #     prompt = prompt,
-    #     output_csv_path = dataset_path / f'results_gepa_{prompt_path.stem}.csv',
-    # )
+    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/20260326_gpt5p4_gpt5p4.txt'
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        prompt = f.read()
+    for dataset_path in [
+        Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic',
+        Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_synthetic',
+        Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-bench'
+    ]:
+        evaluate_rust(
+            dataset_path = dataset_path,
+            prompt = prompt,
+            model = 'openai/gpt-5.4',
+            output_csv_path = dataset_path / f'results_gepa_{prompt_path.stem}.csv',
+        )

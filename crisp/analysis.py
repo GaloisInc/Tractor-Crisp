@@ -6,9 +6,11 @@ import os
 import subprocess
 import typing
 
+from . import inline_errors as inline_errors_module
 from .config import Config
-from .mvir import MVIR, NodeId, Node, TreeNode, TestResultNode, \
-        CompileCommandsOpNode, FindUnsafeAnalysisNode
+from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
+        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode, \
+        InlineErrorsOpNode
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -135,15 +137,97 @@ def run_tests(cfg: Config, mvir: MVIR,
         mvir.set_tag('test_passed', n.node_id(), None)
     return n
 
-# We always check out the compile_commands.json at a consistent path, in case
-# it contains relative paths.
-COMPILE_COMMANDS_PATH = 'build/compile_commands.json'
+@analysis
+def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+    """
+    Run `cargo check --message-format json` and capture the JSONL output.
+    """
+
+    rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(code)
+        exit_code, logs = sb.run(
+                'cd %s && cargo check --message-format=json' % rust_path_rel,
+                shell=True, stream=True)
+
+    j = []
+    for line in logs.splitlines():
+        if line.startswith(b'{'):
+            # Print the human-readable version of the message for the logs
+            j_line = json.loads(line)
+            if isinstance(j_line, dict) and (j_msg := j_line.get('message')) is not None:
+                if (j_rendered := j_msg.get('rendered')) is not None:
+                    print(j_rendered, end='')
+            j.append(j_line)
+    n_json = FileNode.new(mvir, json.dumps(j))
+
+    n_op = CargoCheckJsonAnalysisNode.new(
+            mvir,
+            code = code.node_id(),
+            exit_code = exit_code,
+            json = n_json.node_id(),
+            body = logs,
+            )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
 
 @analysis
-def _cc_cmake_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
-        c_code: TreeNode, cmd: list[str]) -> CompileCommandsOpNode:
+def inline_errors(
+    cfg: Config,
+    mvir: MVIR,
+    old_code: TreeNode,
+    check_json: FileNode,
+) -> InlineErrorsOpNode:
+    """
+    Take error messages from `check_json` and inline them into `old_code` as
+    comments.
+    """
+    json_errors = check_json.body_json()
+
+    errors_by_file, stderr_text = inline_errors_module.extract_diagnostics(json_errors)
+
+    rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
+
+    new_files = old_code.files.copy()
+    for name, src_node_id in new_files.items():
+        rel_name = os.path.relpath(name, rust_path_rel)
+        if rel_name not in errors_by_file:
+            continue
+        errors = errors_by_file[rel_name]
+        old_src = mvir.node(src_node_id).body_str()
+        new_src = inline_errors_module.insert_inline_error_comments(
+                old_src, errors, stderr_text)
+        new_files[name] = FileNode.new(mvir, new_src).node_id()
+
+    new_code = TreeNode.new(mvir, files = new_files)
+    n_op = InlineErrorsOpNode.new(
+            mvir,
+            old_code = old_code.node_id(),
+            new_code = new_code.node_id(),
+            check_json = check_json.node_id(),
+            )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+# We always check out the compile_commands.json at a consistent path, in case
+# it contains relative paths.
+COMPILE_COMMANDS_PATH = "compile_commands.json"
+
+@analysis
+def _cc_cmake_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode, cmds: list[list[str]]
+) -> CompileCommandsOpNode:
     sb.checkout(c_code)
-    exit_code, logs = sb.run(cmd)
+
+    exit_code = 0
+    logs = []
+    for cmd in cmds:
+        if exit_code != 0:
+            break
+        exit_code, new_logs = sb.run(cmd)
+        logs.append(new_logs)
+    logs = b"\n\n".join(logs)
 
     if exit_code == 0:
         n_cc = sb.commit_file(COMPILE_COMMANDS_PATH)
@@ -153,20 +237,24 @@ def _cc_cmake_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
 
     n_op = CompileCommandsOpNode.new(
         mvir,
-        body = logs,
-        c_code = c_code.node_id(),
-        cmd = cmd,
-        exit_code = exit_code,
-        compile_commands = n_cc_id,
-        )
+        body=logs,
+        c_code=c_code.node_id(),
+        cmds=cmds,
+        exit_code=exit_code,
+        compile_commands=n_cc_id,
+    )
     return n_op
 
 def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
     with run_sandbox(cfg, mvir) as sb:
         src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = sb.join(os.path.dirname(COMPILE_COMMANDS_PATH))
-        cmd = ['cmake', '-B', build_dir, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', src_dir]
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmd)
+        build_dir = sb.join("build")
+        config_cmd = ["cmake", "-B", build_dir, src_dir]
+        build_cmd = ["bear", "--", "cmake", "--build", build_dir, "--"]
+        if cfg.transpile.single_target is not None:
+            build_cmd.append(cfg.transpile.single_target)
+        cmds = [config_cmd, build_cmd]
+        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:

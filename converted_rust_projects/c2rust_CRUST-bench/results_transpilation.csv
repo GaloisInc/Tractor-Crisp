@@ -1,0 +1,101 @@
+c_project_folder,c_build_status,rust_project_folder,rust_transpile_status
+datasets/CBench/2DPartInt,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/42-Kocaeli-Printf,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/CircularBuffer,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/FastHamming,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/Genetic-neural-network-for-simple-control,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/Graph-recogniser,OK,Graph-recogniser,OK
+datasets/CBench/Holdem-Odds,OK,Holdem-Odds,OK
+datasets/CBench/LTRE,OK,LTRE,OK
+datasets/CBench/Linear-Algebra-C,OK,Linear-Algebra-C,OK
+datasets/CBench/Math-Library-in-C,OK,Math-Library-in-C,OK
+datasets/CBench/Megalania,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/NandC,OK,NandC,OK
+datasets/CBench/Phills_DHT,"Build failed, 'compile_commands.json' not created in /Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/Phills_DHT/build/",,
+datasets/CBench/Remimu,Invalid C build system,,
+datasets/CBench/Simple-Config,OK,Simple-Config,OK
+datasets/CBench/Simple-Sparsehash,OK,Simple-Sparsehash,OK
+datasets/CBench/SimpleXML,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/SlothLang,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/VaultSync,OK,VaultSync,"Command '['c2rust', 'transpile', '-o', PosixPath('/Users/sourya/work/Tractor/converted_rust_projects/c2rust_CRUST-Bench/VaultSync'), '--overwrite-existing', PosixPath('/Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/VaultSync/build/compile_commands.json')]' returned non-zero exit status 101."
+datasets/CBench/XOpt,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/aes128-SIMD,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/amp,OK,amp,OK
+datasets/CBench/approxidate,OK,approxidate,OK
+datasets/CBench/avalanche,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/bhshell,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/bigint,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/bitset,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/blt,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/bostree,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/btree-map,OK,btree-map,OK
+datasets/CBench/c-aces,OK,c-aces,OK
+datasets/CBench/c-blind-rsa-signatures,OK,c-blind-rsa-signatures,OK
+datasets/CBench/c-string,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/cJSON,OK,cJSON,OK
+datasets/CBench/carrays,OK,carrays,OK
+datasets/CBench/cfsm,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/chtrie,OK,chtrie,OK
+datasets/CBench/cissy,OK,cissy,OK
+datasets/CBench/clhash,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/clog,OK,clog,OK
+datasets/CBench/coroutine,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/cset,OK,cset,OK
+datasets/CBench/csyncmers,OK,csyncmers,OK
+datasets/CBench/dict,OK,dict,"Command '['c2rust', 'transpile', '-o', PosixPath('/Users/sourya/work/Tractor/converted_rust_projects/c2rust_CRUST-Bench/dict'), '--overwrite-existing', PosixPath('/Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/dict/build/compile_commands.json')]' returned non-zero exit status 101."
+datasets/CBench/emlang,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/expr,OK,expr,OK
+datasets/CBench/fft,OK,fft,"Command '['c2rust', 'transpile', '-o', PosixPath('/Users/sourya/work/Tractor/converted_rust_projects/c2rust_CRUST-Bench/fft'), '--overwrite-existing', PosixPath('/Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/fft/build/compile_commands.json')]' returned non-zero exit status 101."
+datasets/CBench/file2str,OK,file2str,OK
+datasets/CBench/fleur,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/fs_c,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/fslib,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/geofence,OK,geofence,OK
+datasets/CBench/gfc,OK,gfc,"Command '['c2rust', 'transpile', '-o', PosixPath('/Users/sourya/work/Tractor/converted_rust_projects/c2rust_CRUST-Bench/gfc'), '--overwrite-existing', PosixPath('/Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/gfc/build/compile_commands.json')]' returned non-zero exit status 101."
+datasets/CBench/gorilla-paper-encode,OK,gorilla-paper-encode,OK
+datasets/CBench/hamta,OK,hamta,OK
+datasets/CBench/hydra,OK,hydra,OK
+datasets/CBench/impcheck,OK,impcheck,OK
+datasets/CBench/inversion_list,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/jccc,OK,jccc,OK
+datasets/CBench/kairoCompiler,OK,kairoCompiler,OK
+datasets/CBench/kd3,OK,kd3,OK
+datasets/CBench/lambda-calculus-eval,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/leftpad,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/lib2bit,OK,lib2bit,OK
+datasets/CBench/libbase122,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/libbeaufort,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/libfor,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/libm17,OK,libm17,OK
+datasets/CBench/libpgn,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/libpsbt,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/libqueue,OK,libqueue,OK
+datasets/CBench/libtinyfseq,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/libutf,OK,libutf,OK
+datasets/CBench/libvcd,OK,libvcd,OK
+datasets/CBench/libwecan,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/ljmm,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/matrix_multiplication,OK,matrix_multiplication,"Command '['c2rust', 'transpile', '-o', PosixPath('/Users/sourya/work/Tractor/converted_rust_projects/c2rust_CRUST-Bench/matrix_multiplication'), '--overwrite-existing', PosixPath('/Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/matrix_multiplication/build/compile_commands.json')]' returned non-zero exit status 101."
+datasets/CBench/mdb,"Command '['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']' returned non-zero exit status 1.",,
+datasets/CBench/merkle-tree-c,OK,merkle-tree-c,OK
+datasets/CBench/morton,OK,morton,OK
+datasets/CBench/murmurhash_c,OK,murmurhash_c,OK
+datasets/CBench/mvptree,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/quadtree,OK,quadtree,OK
+datasets/CBench/razz_simulation,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/rbtree-lab,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/recordManager,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/rect_pack_h,"Build failed, 'compile_commands.json' not created in /Users/sourya/work/Tractor/CRUST-bench/datasets/CBench/rect_pack_h/build/",,
+datasets/CBench/rhbloom,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/roaring-bitmap,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/rubiksolver,OK,rubiksolver,OK
+datasets/CBench/satc,OK,satc,OK
+datasets/CBench/simple_lang,OK,simple_lang,OK
+datasets/CBench/skp,"Command '['bear', '--', 'make', '-C', '..']' timed out after 10 seconds",,
+datasets/CBench/ted,OK,ted,OK
+datasets/CBench/tisp,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/totp,OK,totp,OK
+datasets/CBench/ulidgen,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/utf8,OK,utf8,OK
+datasets/CBench/vec,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,
+datasets/CBench/worsp,"Command '['bear', '--', 'make', '-C', '..']' returned non-zero exit status 2.",,

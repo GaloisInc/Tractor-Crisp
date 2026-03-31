@@ -33,7 +33,7 @@ fn is_link_attr_meta(meta: &Meta) -> bool {
 fn is_link_attr_path(path: &Path) -> bool {
     match path.get_ident() {
         Some(i) => {
-            i == "no_mangle" || i == "link_name"
+            i == "no_mangle" || i == "export_name"
         },
         None => false,
     }
@@ -64,8 +64,13 @@ struct Visitor {
 impl<'ast> Visit<'ast> for Visitor {
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
         let name = item_fn.sig.ident.to_string();
-        if !fn_is_exported(item_fn) && item_fn.sig.unsafety.is_some() {
-            self.out.internal_unsafe_fns.push(name.clone());
+        if item_fn.sig.unsafety.is_some() {
+            if fn_is_exported(item_fn) {
+                // Ignore unsafety inside of FFI entry points, as it's often unavoidable.
+                return;
+            } else {
+                self.out.internal_unsafe_fns.push(name.clone());
+            }
         }
 
         let old = self.current_fn.replace(name);
@@ -138,14 +143,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_link_attr_link_name() {
-        let attr: Attribute = parse_quote!(#[link_name = "some_name"]);
+    fn test_is_link_attr_export_name() {
+        let attr: Attribute = parse_quote!(#[export_name = "some_name"]);
         assert!(is_link_attr(&attr));
     }
 
     #[test]
     fn test_is_link_attr_unsafe() {
-        let attr: Attribute = parse_quote!(#[unsafe(link_name = "some_name")]);
+        let attr: Attribute = parse_quote!(#[unsafe(export_name = "some_name")]);
         assert!(is_link_attr(&attr));
     }
 

@@ -7,21 +7,101 @@ on:
   pull_request:
 
 jobs:
-  docker-build-crisp:
+  docker-build:
     runs-on: ubuntu-latest
+    
+    env:
+      LLM_SAFETY_TRIES: 0
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Tractor-Crisp w/o submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: false
 
-      - name: Build tractor-crisp
-        run: docker build . -t tractor-crisp
+      # This HTTPS Deploy Token was generated at
+      # <https://gitlab-ext.galois.com/tractor/Test-Corpus-Mirror/-/settings/repository#js-deploy-keys-settings>.
+      # The username is `gitlab-deploy-token-for-tractor-crisp-ci`
+      # and the password is saved as a GitHub secret in this repo
+      # at <https://github.com/GaloisInc/Tractor-Crisp/settings/secrets/actions>
+      # with the name `DEPLOY_TOKEN_READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR`.
+      - name: Configure git for private GitLab submodule
+        run: |
+          DEPLOY_TOKEN="${{ secrets.DEPLOY_TOKEN_READ_GITLAB_EXT_GALOIS_COM_TRACTOR_TEST_CORPUS_MIRROR }}"
+          git config --global url."https://gitlab-deploy-token-for-tractor-crisp-ci:${DEPLOY_TOKEN}@gitlab-ext.galois.com/".insteadOf "https://gitlab-ext.galois.com/"
 
-  docker-build-crisp-user:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Update submodules
+        run: |
+          # `--checkout` ensures we check out the `update = none` submodules, too.
+          git submodule update --init --checkout --depth 1
 
-      - name: Build tractor-crisp-user
-        run: docker build . -f Dockerfile.work -t tractor-crisp-user
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            universal-ctags
+      
+      # `--push` instead of `--load` so that everything is cached first
+      # and so we don't accidentally run out of storage.
+
+      - name: Set $IMAGE_PREFIX
+        run: |
+          OWNER=${{ github.repository_owner }}
+          IMAGE_PREFIX=ghcr.io/${OWNER,,}
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> $GITHUB_ENV
+      
+      - name: docker build tractor-crisp-user
+        run: |
+          TARGET=tractor-crisp-user
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
+          docker buildx build \
+            --cache-from type=registry,ref=${IMAGE_NAME}:cache \
+            --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
+            --target ${TARGET} \
+            --tag ${IMAGE_NAME}:latest \
+            .
+      
+      - name: docker build tractor-crisp
+        run: |
+          TARGET=tractor-crisp
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
+          docker buildx build \
+            --cache-from type=registry,ref=${IMAGE_NAME}:cache \
+            --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
+            --target ${TARGET} \
+            --tag ${IMAGE_NAME}:latest \
+            .
+
+      - name: docker pull and docker tag tractor-crisp-user
+        run: |
+          TARGET=tractor-crisp-user
+          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
+          docker pull ${IMAGE_NAME}:latest
+          docker tag ${IMAGE_NAME}:latest ${TARGET}:latest
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync
+
+      - name: Test on Test-Corpus (library, runs hayroll)
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+      
+      - name: Test on Test-Corpus (binary, runs c2rust transpile)
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
+      
+      - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
+      
+      - name: Test on Test-Corpus (uses c2rust-bitfields)
+        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/P01_sphincs_plus/005_sphincs_PQCgenKAT_sign_blake_128f_simple/
 
   build-crisp:
     runs-on: ubuntu-latest
@@ -31,3 +111,46 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - run: uv sync
+
+      - run: |
+          uv tool install .
+          which crisp
+  
+  build-tools:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        crate:
+          - find_unsafe
+          - merge_rust
+          - related_decls
+          - split_ffi_entry_points
+          - split_rust
+
+    env:
+      RUSTFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings"
+
+    defaults:
+      run:
+        working-directory: tools/${{ matrix.crate }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/${{ matrix.crate }}
+
+      - run: cargo check --release
+
+      - run: cargo build --release
+
+      - run: cargo test --release --all-features
+
+      - run: cargo doc --all-features --document-private-items --no-deps

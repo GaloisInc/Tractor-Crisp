@@ -1,0 +1,38 @@
+# git
+**/.git/
+
+# cargo
+**/target/
+
+# python
+**/.venv/
+**/__pycache__/
+**/*.egg-info/
+
+# ruff
+**/.ruff_cache/
+
+# mypy
+**/.mypy_cache/
+
+# clangd
+**/.cache/clangd/
+
+# vscode
+**/.vscode/
+*.code-workspace
+
+# c2rust-analyze
+*.rlib
+*.analysis.txt
+**/polonius_cache/
+
+# c2rust-instrument
+**/instrument.target/
+
+# c2rust submodules
+/deps/c2rust/tests/
+/deps/c2rust/examples/
+
+# hayroll build dir
+/deps/hayroll/build/

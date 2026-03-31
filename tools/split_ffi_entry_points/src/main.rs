@@ -1,254 +1,21 @@
-use std::collections::BTreeSet;
-use std::env;
-use std::fs;
-use std::iter;
-use std::mem;
-use std::path::Path;
-use std::str::FromStr;
-use proc_macro2::{TokenStream, TokenTree, Delimiter, Spacing, Span};
+use clap::Parser;
+use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
+use ra_ap_base_db::RootQueryDb;
 use ra_ap_hir::Semantics;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::SyntaxNode;
+use rust_util::rewrite::{FlatTokens, OutputBuffer, TokenIndex, render_output};
+use std::fs;
+use std::iter;
+use std::mem;
+use std::path::PathBuf;
+use std::str::FromStr;
 use syn;
 use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
-
-
-struct FlatTokens {
-    stack: Vec<(proc_macro2::token_stream::IntoIter, Delimiter, Span)>,
-}
-
-impl FlatTokens {
-    pub fn new(ts: TokenStream) -> FlatTokens {
-        FlatTokens {
-            stack: vec![(ts.into_iter(), Delimiter::None, Span::call_site())],
-        }
-    }
-}
-
-impl Iterator for FlatTokens {
-    type Item = Token;
-    fn next(&mut self) -> Option<Token> {
-        while let Some(&mut (ref mut it, delim, span_close)) = self.stack.last_mut() {
-            match it.next() {
-                Some(TokenTree::Group(g)) => {
-                    // Return the open delimiter and continue with the contents of the group.
-                    self.stack.push((g.stream().into_iter(), g.delimiter(), g.span_close()));
-                    let open_ch = match g.delimiter() {
-                        Delimiter::Parenthesis => '(',
-                        Delimiter::Bracket => '[',
-                        Delimiter::Brace => '{',
-                        // Skip over `Delimiter::None`, and `continue` to try the next available
-                        // token.
-                        Delimiter::None => continue,
-                    };
-                    let range = g.span_open().byte_range();
-                    return Some(Token {
-                        text: open_ch.to_string().into(),
-                        spacing: Spacing::Alone,
-                        span: (range.start, range.end),
-                    });
-                },
-                Some(tt@TokenTree::Ident(_)) |
-                Some(tt@TokenTree::Punct(_)) |
-                Some(tt@TokenTree::Literal(_)) => return Some(Token::from_token_tree(tt)),
-                None => {
-                    // Pop the now-empty group and return the close delimiter.
-                    self.stack.pop();
-                    let close_ch = match delim {
-                        Delimiter::Parenthesis => ')',
-                        Delimiter::Bracket => ']',
-                        Delimiter::Brace => '}',
-                        // Skip over `Delimiter::None`, and `continue` to try the next available
-                        // token.
-                        Delimiter::None => continue,
-                    };
-                    let range = span_close.byte_range();
-                    return Some(Token {
-                        text: close_ch.to_string().into(),
-                        spacing: Spacing::Alone,
-                        span: (range.start, range.end),
-                    });
-                },
-            }
-        }
-        None
-    }
-}
-
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct Token {
-    text: Box<str>,
-    /// Spacing, for punctuation tokens.  This is `Spacing::Alone` for all non-`Punct` tokens.
-    spacing: Spacing,
-    span: (usize, usize),
-}
-
-impl Token {
-    pub fn from_token_tree(tt: TokenTree) -> Token {
-        let text = tt.to_string().into_boxed_str();
-        let spacing = match tt {
-            TokenTree::Punct(ref p) => p.spacing(),
-            _ => Spacing::Alone,
-        };
-        let range = tt.span().byte_range();
-        let start = range.start;
-        let end = range.end;
-        Token { text, spacing, span: (start, end) }
-    }
-}
-
-
-struct TokenIndex<'a> {
-    tokens: &'a [Token],
-    /// Multi-map mapping `(start, end)` to indexes in `tokens` that have that span.
-    index: BTreeSet<((usize, usize), usize)>,
-}
-
-impl<'a> TokenIndex<'a> {
-    pub fn new(tokens: &'a [Token]) -> TokenIndex<'a> {
-        let mut index = BTreeSet::new();
-        for (i, t) in tokens.iter().enumerate() {
-            index.insert((t.span, i));
-        }
-        TokenIndex { tokens, index }
-    }
-
-    pub fn find<'b>(&'b self, t: &Token) -> Option<usize> {
-        let (start, end) = t.span;
-        let lo = ((start, end), 0);
-        let hi = ((start, end), usize::MAX);
-        let mut found = None;
-        for &(_, i) in self.index.range(lo ..= hi) {
-            if self.tokens[i] == *t {
-                if found.is_none() {
-                    found = Some(i);
-                } else {
-                    // Found multiple identical tokens.  This is ambiguous.
-                    return None;
-                }
-            }
-        }
-        found
-    }
-}
-
-
-struct OutputBuffer {
-    s: String,
-    /// Whether the most recently emitted chunk had `Spacing::Joint`.
-    prev_was_joint: bool,
-    /// Index in `s` of the start of the most recent line.
-    prev_bol: usize,
-}
-
-impl OutputBuffer {
-    pub fn new() -> OutputBuffer {
-        OutputBuffer {
-            s: String::new(),
-            prev_was_joint: true,
-            prev_bol: 0,
-        }
-    }
-
-    /// Emit a token or a group of tokens.
-    ///
-    /// This assumes that the start of `chunk` is the start of a token (not whitespace or a non-doc
-    /// comment) and that the end of `chunk` is the end of a token.
-    pub fn emit(&mut self, chunk: &str, spacing: Spacing) {
-        let cur_line = &self.s[self.prev_bol..];
-        if self.prev_was_joint {
-            // No whitespace is allowed between a `Joint` token and the subsequent token.
-        } else {
-            if cur_line.contains("//") {
-                // Note this can throw false positives, such as if `//` appears inside a string
-                // literal.  But it's legal to replace any `' '` with `'\n'`; `rustfmt` will fix it
-                // if needed.
-                self.s.push('\n');
-                self.prev_bol = self.s.len();
-            } else {
-                self.s.push(' ');
-            }
-        }
-
-        // If `chunk` contains a newline, update the beginning-of-line position.
-        if let Some(i) = chunk.bytes().rposition(|b| b == b'\n') {
-            self.prev_bol = self.s.len() + i + 1;
-        }
-
-        self.s.push_str(chunk);
-        self.prev_was_joint = matches!(spacing, Spacing::Joint);
-    }
-
-    pub fn finish(self) -> String {
-        self.s
-    }
-}
-
-fn render_output(
-    orig: &str,
-    orig_tokens: &[Token],
-    ti: &TokenIndex,
-    ts: TokenStream,
-    buf: &mut OutputBuffer,
-) {
-    if let Some(t) = orig_tokens.get(0) {
-        let (start_pos, _) = t.span;
-        buf.emit(&orig[0 .. start_pos], Spacing::Joint);
-    }
-
-    struct Run {
-        /// Byte offset of the start of the first token in the run.
-        start_pos: usize,
-        /// Index in `orig_tokens` of the last token in the run.
-        end_idx: usize,
-    }
-    let mut current_run: Option<Run> = None;
-    for t in FlatTokens::new(ts) {
-        // Try to continue the current run.
-        if let Some(ref mut run) = current_run {
-            if orig_tokens.get(run.end_idx + 1) == Some(&t) {
-                run.end_idx += 1;
-                continue;
-            } else {
-                // End the current run.
-                let end_token = &orig_tokens[run.end_idx];
-                let start_pos = run.start_pos;
-                let (_, end_pos) = end_token.span;
-                buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
-                current_run = None;
-            }
-        }
-
-        // Try to start a new run.
-        debug_assert!(current_run.is_none());
-        if let Some(idx) = ti.find(&t) {
-            let (start_pos, _) = t.span;
-            current_run = Some(Run { start_pos, end_idx: idx });
-            continue;
-        }
-
-        // This token is not part of a run.  Emit it directly.
-        buf.emit(&t.text, t.spacing);
-    }
-
-    if let Some(run) = current_run {
-        let end_token = &orig_tokens[run.end_idx];
-        let start_pos = run.start_pos;
-        let (_, end_pos) = end_token.span;
-        buf.emit(&orig[start_pos .. end_pos], end_token.spacing);
-    }
-
-    if let Some(t) = orig_tokens.last() {
-        let (_, end_pos) = t.span;
-        buf.emit(&orig[end_pos .. orig.len()], Spacing::Joint);
-    }
-}
-
 
 struct AddDerivedItemVisitor<F>(F);
 
@@ -321,21 +88,19 @@ fn add_ffi_wrapper(
         let mut pm = ParsedMeta::from(attr.meta);
 
         let mut move_to_wrapper = false;
-        pm.with_innermost_mut(&mut |pm| {
-            match pm {
-                ParsedMeta::NoMangle(..) => {
-                    move_to_wrapper = true;
-                    *pm = ParsedMeta::ExportName(ParsedMetaExportName {
-                        ident: syn::Ident::new("export_name", Span::call_site()),
-                        eq: syn::Token![=](Span::call_site()),
-                        name: syn::LitStr::new(&fn_name, Span::call_site()),
-                    });
-                },
-                ParsedMeta::ExportName(..) => {
-                    move_to_wrapper = true;
-                },
-                _ => {},
+        pm.with_innermost_mut(&mut |pm| match pm {
+            ParsedMeta::NoMangle(..) => {
+                move_to_wrapper = true;
+                *pm = ParsedMeta::ExportName(ParsedMetaExportName {
+                    ident: syn::Ident::new("export_name", Span::call_site()),
+                    eq: syn::Token![=](Span::call_site()),
+                    name: syn::LitStr::new(&fn_name, Span::call_site()),
+                });
             }
+            ParsedMeta::ExportName(..) => {
+                move_to_wrapper = true;
+            }
+            _ => {}
         });
 
         attr.meta = pm.into();
@@ -370,20 +135,18 @@ fn add_ffi_wrapper(
     for (i, arg) in fn_wrapper.sig.inputs.iter_mut().enumerate() {
         let ident = match *arg {
             syn::FnArg::Receiver(_) => syn::Ident::new("self", Span::call_site()),
-            syn::FnArg::Typed(ref mut pt) => {
-                match *pt.pat {
-                    syn::Pat::Ident(ref pi) => pi.ident.clone(),
-                    _ => {
-                        let ident = syn::Ident::new(&format!("arg{i}"), Span::call_site());
-                        *pt.pat = syn::Pat::Ident(syn::PatIdent {
-                            attrs: Vec::new(),
-                            by_ref: None,
-                            mutability: None,
-                            ident: ident.clone(),
-                            subpat: None,
-                        });
-                        ident
-                    },
+            syn::FnArg::Typed(ref mut pt) => match *pt.pat {
+                syn::Pat::Ident(ref pi) => pi.ident.clone(),
+                _ => {
+                    let ident = syn::Ident::new(&format!("arg{i}"), Span::call_site());
+                    *pt.pat = syn::Pat::Ident(syn::PatIdent {
+                        attrs: Vec::new(),
+                        by_ref: None,
+                        mutability: None,
+                        ident: ident.clone(),
+                        subpat: None,
+                    });
+                    ident
                 }
             },
         };
@@ -419,7 +182,6 @@ fn span_to_text_range(span: Span) -> TextRange {
     TextRange::new(lo, hi)
 }
 */
-
 
 // Helpers for dealing with nested meta items in attrs, like `#[unsafe(no_mangle)]`
 
@@ -460,18 +222,26 @@ impl ParsedMeta {
                 let ident = ml.path.require_ident()?.clone();
                 let paren = match ml.delimiter {
                     syn::MacroDelimiter::Paren(p) => p,
-                    _ => return Err(
-                        syn::Error::new(ml.delimiter.span().open(), "expected parens")),
+                    _ => {
+                        return Err(syn::Error::new(
+                            ml.delimiter.span().open(),
+                            "expected parens",
+                        ));
+                    }
                 };
                 let meta: syn::Meta = syn::parse2(ml.tokens.clone())?;
                 let inner = ParsedMeta::from(meta);
-                Ok(ParsedMeta::Unsafe(Box::new(ParsedMetaUnsafe { ident, paren, inner })))
-            },
+                Ok(ParsedMeta::Unsafe(Box::new(ParsedMetaUnsafe {
+                    ident,
+                    paren,
+                    inner,
+                })))
+            }
             "no_mangle" => {
                 let _ = meta.require_path_only()?;
                 let ident = ident.clone();
                 Ok(ParsedMeta::NoMangle(ParsedMetaNoMangle { ident }))
-            },
+            }
             "export_name" => {
                 let mnv = meta.require_name_value()?;
                 let ident = mnv.path.require_ident()?.clone();
@@ -488,17 +258,19 @@ impl ParsedMeta {
                     syn::Lit::Str(ref ls) => ls.clone(),
                     _ => return Err(syn::Error::new(lit.span(), "expected Str")),
                 };
-                Ok(ParsedMeta::ExportName(ParsedMetaExportName { ident, eq, name }))
-            },
+                Ok(ParsedMeta::ExportName(ParsedMetaExportName {
+                    ident,
+                    eq,
+                    name,
+                }))
+            }
             _ => Ok(ParsedMeta::Meta(meta.clone())),
         }
     }
 
     pub fn with_innermost_mut(&mut self, f: &mut impl FnMut(&mut ParsedMeta)) {
         match *self {
-            ParsedMeta::Meta(..) |
-            ParsedMeta::NoMangle(..) |
-            ParsedMeta::ExportName(..) => f(self),
+            ParsedMeta::Meta(..) | ParsedMeta::NoMangle(..) | ParsedMeta::ExportName(..) => f(self),
             ParsedMeta::Unsafe(ref mut pmu) => pmu.inner.with_innermost_mut(f),
         }
     }
@@ -511,7 +283,7 @@ impl From<syn::Meta> for ParsedMeta {
             Err(e) => {
                 eprintln!("warning: failed to parse `{}`: {e}", meta.to_token_stream());
                 ParsedMeta::Meta(meta)
-            },
+            }
         }
     }
 }
@@ -556,10 +328,17 @@ impl ToTokens for ParsedMetaExportName {
     }
 }
 
+/// Split FFI entrypoints out of a freshly-transpiled Rust codebase.
+#[derive(Parser)]
+struct Args {
+    /// Directory of Rust project to modify. `Cargo.toml` should reside inside this directory.
+    cargo_dir_path: PathBuf,
+}
 
 fn main() {
-    let cargo_dir_path = env::args().nth(1).unwrap();
-    let cargo_dir_path = Path::new(&cargo_dir_path);
+    let args = Args::parse();
+    let cargo_dir_path = fs::canonicalize(&args.cargo_dir_path).unwrap();
+    let cargo_dir_path = cargo_dir_path.as_ref();
 
     let cargo_config = CargoConfig::default();
 
@@ -574,33 +353,55 @@ fn main() {
         &cargo_config,
         &load_cargo_config,
         &|_msg| {},
-    ).unwrap();
-
-    // Assume the first file in `vfs` is the crate root.
-    let (first_file_id, _) = vfs.iter().next().unwrap();
+    )
+    .unwrap();
 
     let sema = Semantics::new(&db);
 
-    eprintln!("processing crate...");
-    let krate = sema.first_crate(first_file_id).unwrap();
+    // Collect all crates whose root files are inside the cargo dir.  The target project may have
+    // multiple crates, such as a library and a binary.
+    let mut crates = Vec::new();
+    for db_crate in db.all_crates().iter() {
+        let file_id = db_crate.data(&db).root_file_id;
+        let vfs_path = vfs.file_path(file_id);
+        let Some(path) = vfs_path.as_path() else {
+            continue;
+        };
+
+        // Only consider crates whose root file is inside the provided cargo dir.  We assume other
+        // files are from dependencies.  This is not 100% accurate, since the `Cargo.toml` can set
+        // `lib.src = "../foo.rs"` and similar, but it should work for the vast majority of
+        // projects, including those generated by `c2rust-transpile`.
+        let mut ancestors = iter::successors(Some(path), |p| p.parent());
+        if !ancestors.any(|a| a == cargo_dir_path) {
+            eprintln!("skip {path:?}: outside cargo dir {cargo_dir_path:?}");
+            continue;
+        }
+
+        eprintln!("found {path:?}");
+        let hir_crate = sema.first_crate(file_id).unwrap();
+        crates.push(hir_crate);
+    }
 
     let mut files = Vec::new();
-    for m in krate.modules(&db) {
-        let src = m.definition_source(&db);
-        let node = src.value.node();
-        if let Some(editioned_file_id) = m.as_source_file_id(&db) {
-            sema.parse(editioned_file_id);
-            let file_id = editioned_file_id.file_id(&db);
-            let vfs_path = vfs.file_path(file_id);
-            if let Some(path) = vfs_path.as_path() {
-                files.push((path.to_path_buf(), node));
+    for &krate in &crates {
+        for m in krate.modules(&db) {
+            let src = m.definition_source(&db);
+            let node = src.value.node();
+            if let Some(editioned_file_id) = m.as_source_file_id(&db) {
+                sema.parse(editioned_file_id);
+                let file_id = editioned_file_id.file_id(&db);
+                let vfs_path = vfs.file_path(file_id);
+                if let Some(path) = vfs_path.as_path() {
+                    files.push((path.to_path_buf(), node));
+                }
             }
         }
     }
 
     for (path, root) in files {
         // Only rewrite files that are inside the provided cargo dir.  If our strategy for finding
-        // the main crate is wrong, this will keep us from overwriting files unexpectedly.
+        // the project crates is wrong, this will keep us from overwriting files unexpectedly.
         let mut ancestors = iter::successors(Some(path.as_path()), |p| p.parent());
         if !ancestors.any(|a| a == cargo_dir_path) {
             eprintln!("skip {path:?}: outside cargo dir {cargo_dir_path:?}");

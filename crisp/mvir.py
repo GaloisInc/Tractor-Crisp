@@ -7,10 +7,20 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, ClassVar, Optional
+from typing import Any, Callable, ClassVar, Optional, Annotated, TypeVar
 from types import NoneType
 from weakref import WeakValueDictionary
 
+
+T = TypeVar("T")
+
+class MetadataTag:
+    pass
+
+Metadata = Annotated[T, MetadataTag]
+"""
+Mark a type as CRISP metadata.
+"""
 
 @dataclass(frozen=True)
 class NodeId:
@@ -116,6 +126,10 @@ def check_type(ty, x):
         for k, v in x.items():
             check_type(key_ty, k)
             check_type(value_ty, v)
+    elif origin is datetime:
+        assert isinstance(x, datetime)
+    elif origin is typing.Any:
+        pass
     elif origin is typing.Union:
         for variant_ty in typing.get_args(ty):
             try:
@@ -126,21 +140,35 @@ def check_type(ty, x):
     else:
         return ty.check_type(x)
 
-def _all_field_types(cls):
-    return typing.get_type_hints(cls)
+def _metadata_field_types(cls: type) -> dict[str, type]:
+    """
+    Get all of the `Metadata[T]` field types of a type.
+    """
+    type_hints = typing.get_type_hints(cls, include_extras=True)
+    field_types: dict[str, type] = {}
+    for field_name, ty in type_hints.items():
+        if typing.get_origin(ty) is typing.get_origin(Metadata):
+            type_args = typing.get_args(ty)
+            if len(type_args) != len(typing.get_args(Metadata)):
+                continue
+            base_ty, tag = type_args
+            if tag is not MetadataTag:
+                continue
+            field_types[field_name] = base_ty
+    return field_types
 
 def _dataclass_to_cbor(x):
     '''Convert `x` to a CBOR-serializable form.  This is a default
     implementation for use in classes that have `dataclass`-style typed
     fields.'''
     cls = x.__class__
-    field_tys = _all_field_types(cls)
+    field_tys = typing.get_type_hints(cls)
     values = tuple(getattr(x, name) for name in field_tys.keys())
     return to_cbor(values)
 
 @classmethod
 def _dataclass_from_cbor(cls, raw):
-    field_tys = _all_field_types(cls)
+    field_tys = typing.get_type_hints(cls)
     expect_ty = tuple[*field_tys.values()]
     values = from_cbor(expect_ty, raw)
     return cls(*values)
@@ -390,7 +418,7 @@ class MVIR:
 
 
 class Node:
-    kind: str
+    kind: Metadata[str]
 
     def __init__(self, mvir, node_id, metadata, body_offset):
         self.__class__._check_metadata(metadata)
@@ -403,7 +431,7 @@ class Node:
 
     @classmethod
     def _check_metadata(cls, metadata):
-        field_tys = _all_field_types(cls)
+        field_tys = _metadata_field_types(cls)
 
         if not isinstance(metadata, dict):
             raise TypeError('metadata should be a dict, but got %r (%r)' %
@@ -498,10 +526,10 @@ class Node:
         return n
 
     @classmethod
-    def _metadata_from_cbor(cls, pairs):
-        field_tys = _all_field_types(cls)
+    def _metadata_from_cbor(cls, dct):
+        field_tys = _metadata_field_types(cls)
         metadata = {}
-        for name, value in pairs:
+        for name, value in dct.items():
             assert name not in metadata
             ty = field_tys[name]
             metadata[name] = from_cbor(ty, value)
@@ -517,12 +545,29 @@ class Node:
             with open(path, 'rb') as f:
                 metadata = cbor.load(f)
                 body_offset = f.tell()
-            for k,v in metadata:
-                if k == 'kind':
-                    cls = NODE_KIND_MAP[v]
-                    break
-            else:
+            metadata = {k: v for k,v in metadata}
+
+            cls_name = metadata.get('kind')
+            if cls_name is None:
                 raise KeyError('missing `kind` in metadata')
+
+            orig_cls_name = cls_name
+            while (cls := NODE_KIND_MAP.get(cls_name)) is None:
+                migration_func = NODE_MIGRATION_MAP.get(cls_name)
+                if migration_func is None:
+                    if cls_name == orig_cls_name:
+                        raise KeyError(f'unknown node kind {cls_name!r}')
+                    else:
+                        raise KeyError(
+                            f'unknown node kind {cls_name!r} (migrated from {orig_cls_name!r})')
+                migration_func(metadata)
+
+                new_cls_name = metadata.get('kind')
+                if new_cls_name is None:
+                    raise KeyError(
+                        f'missing `kind` in metadata, after migration from {cls_name!r}')
+                cls_name = new_cls_name
+
             metadata = cls._metadata_from_cbor(metadata)
             n = cls(mvir, node_id, metadata, body_offset)
             mvir._nodes[node_id] = n
@@ -567,7 +612,7 @@ class FileNode(Node):
 
 class TreeNode(Node):
     KIND = 'tree'
-    files: dict[str, NodeId]
+    files: Metadata[dict[str, NodeId]]
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -585,24 +630,24 @@ class TreeNode(Node):
     files = property(lambda self: self._metadata['files'])
 
 class CompileCommandsOpNode(Node):
-    KIND = 'compile_commands_op'
-    c_code: NodeId
-    cmd: list[str]
-    exit_code: int
-    compile_commands: Optional[NodeId]
+    KIND = 'compile_commands_op_v2'
+    c_code: Metadata[NodeId]
+    cmds: Metadata[list[list[str]]]
+    exit_code: Metadata[int]
+    compile_commands: Metadata[Optional[NodeId]]
 
     c_code = property(lambda self: self._metadata['c_code'])
-    cmd = property(lambda self: self._metadata['cmd'])
+    cmds = property(lambda self: self._metadata['cmds'])
     exit_code = property(lambda self: self._metadata['exit_code'])
     compile_commands = property(lambda self: self._metadata['compile_commands'])
 
 class TranspileOpNode(Node):
     KIND = 'transpile_op'
-    compile_commands: NodeId
-    c_code: NodeId
-    cmd: list[str]
-    exit_code: int
-    rust_code: Optional[NodeId]
+    compile_commands: Metadata[NodeId]
+    c_code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    rust_code: Metadata[Optional[NodeId]]
 
     compile_commands = property(lambda self: self._metadata['compile_commands'])
     c_code = property(lambda self: self._metadata['c_code'])
@@ -611,24 +656,21 @@ class TranspileOpNode(Node):
     rust_code = property(lambda self: self._metadata['rust_code'])
 
 class SplitFfiOpNode(Node):
-    KIND = 'split_ffi_op'
-    old_code: NodeId
-    new_code: NodeId
-    # Commit hash of the `split_ffi_entry_points` version that was used
-    commit: str
+    KIND = 'split_ffi_op_v2'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
     # `body` stores the log output
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
-    commit = property(lambda self: self._metadata['commit'])
 
 class LlmOpNode(Node):
     KIND = 'llm_op'
-    old_code: NodeId
-    new_code: NodeId
-    raw_prompt: NodeId
-    request: NodeId
-    response: NodeId
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    raw_prompt: Metadata[NodeId]
+    request: Metadata[NodeId]
+    response: Metadata[NodeId]
 
     @classmethod
     def _check_metadata(cls, metadata):
@@ -646,12 +688,12 @@ class LlmOpNode(Node):
 
 class TestResultNode(Node):
     KIND = 'test_result_node'
-    code: NodeId
+    code: Metadata[NodeId]
     # `test_code` is a `TreeNode` containing additional code used only for
     # testing (e.g. the code for the test driver).
-    test_code: NodeId
-    cmd: str
-    exit_code: int
+    test_code: Metadata[NodeId]
+    cmd: Metadata[str]
+    exit_code: Metadata[int]
     # `body` stores the test output
 
     code = property(lambda self: self._metadata['code'])
@@ -663,17 +705,70 @@ class TestResultNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class CargoCheckJsonAnalysisNode(Node):
+    KIND = 'cargo_check_json_analysis_node'
+    code: Metadata[NodeId]
+    exit_code: Metadata[int]
+    json: Metadata[NodeId]
+    # `body` stores the complete stdout and stderr logs
+
+    code = property(lambda self: self._metadata['code'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    json = property(lambda self: self._metadata['json'])
+
+    @property
+    def passed(self):
+        return self.exit_code == 0
+
+class InlineErrorsOpNode(Node):
+    KIND = 'inline_errors_op_node'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    check_json: Metadata[NodeId]
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    check_json = property(lambda self: self._metadata['check_json'])
+
 class FindUnsafeAnalysisNode(Node):
     KIND = 'find_unsafe_analysis'
-    code: NodeId
+    code: Metadata[NodeId]
     # Commit hash of the `find_unsafe` version that was used
-    commit: str
-    stderr: str
+    commit: Metadata[str]
+    stderr: Metadata[str]
     # `body` stores the JSON output
 
     code = property(lambda self: self._metadata['code'])
     commit = property(lambda self: self._metadata['commit'])
     stderr = property(lambda self: self._metadata['stderr'])
+
+class EditOpNode(Node):
+    KIND = 'edit_op'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    # `body` stores some kind of description of the edit.
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+
+
+class WorkflowStepInputsNode(Node):
+    KIND = 'workflow_step_inputs'
+    func_name: Metadata[str]
+    # `body` stores the CBOR encoding of the step arguments
+
+    func_name = property(lambda self: self._metadata['func_name'])
+
+class WorkflowStepNode(Node):
+    KIND = 'workflow_step'
+    inputs: Metadata[NodeId]
+    output: Metadata[NodeId]
+    timestamp: Metadata[datetime]
+
+    inputs = property(lambda self: self._metadata['inputs'])
+    output = property(lambda self: self._metadata['output'])
+    timestamp = property(lambda self: self._metadata['timestamp'])
+
 
 NODE_CLASSES = [
     FileNode,
@@ -683,7 +778,13 @@ NODE_CLASSES = [
     SplitFfiOpNode,
     LlmOpNode,
     TestResultNode,
+    CargoCheckJsonAnalysisNode,
+    InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
+    EditOpNode,
+
+    WorkflowStepInputsNode,
+    WorkflowStepNode,
 ]
 
 def _build_node_kind_map(classes):
@@ -693,3 +794,30 @@ def _build_node_kind_map(classes):
         m[cls.KIND] = cls
     return m
 NODE_KIND_MAP = _build_node_kind_map(NODE_CLASSES)
+
+
+# Metadata migrations.  Whenever we make changes to an existing `Node`'s
+# metadata types, we also change the `KIND` and add a migration function that
+# maps the old metadata types to the new ones.  This allows newer versions of
+# CRISP to load older nodes without error.
+
+NODE_MIGRATION_MAP: dict[str, Callable[[dict[str, Any]], None]] = {}
+
+def migration(old_kind: str):
+    def decorate(f: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+        assert old_kind not in NODE_MIGRATION_MAP, f'duplicate migration for {old_kind!r}'
+        NODE_MIGRATION_MAP[old_kind] = f
+        return f
+    return decorate
+
+@migration('compile_commands_op')
+def migrate_compile_commands_op(metadata: dict[str, Any]):
+    metadata['kind'] = 'compile_commands_op_v2'
+    # cmd: list[str]  ->  cmds: list[list[str]]
+    metadata['cmds'] = [metadata.pop('cmd')]
+
+@migration('split_ffi_op')
+def migrate_split_ffi_op(metadata: dict[str, Any]):
+    metadata['kind'] = 'split_ffi_op_v2'
+    # `commit` field was removed
+    del metadata['commit']

@@ -13,5 +13,8 @@ dependencies = [
 [project.scripts]
 crisp = "crisp.__main__:main"
 
+[tool.setuptools]
+packages = ["crisp"]
+
 [tool.uv]
 package = true

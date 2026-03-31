@@ -41,7 +41,13 @@ class Config(ConfigBase):
 
     transpile: 'TranspileConfig'
 
+    project_name: str
     src_globs: list[str]
+    # Shell command to run to test generated code.  This should exit with code
+    # 0 on success (tests passed) and nonzero on failure.  Relative paths in
+    # this command are interpreted relative to `base_dir` (specifically, the
+    # command is run in a sandbox directory where a subset of the files from
+    # `base_dir` have been checked out).
     test_command: str
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
@@ -59,7 +65,16 @@ class Config(ConfigBase):
             object.__setattr__(self, 'src_globs', [self.src_globs])
 
     def relative_path(self, path):
-        """Convert `path` to a relative path based on `self.base_dir`."""
+        """
+        Convert `path` to a relative path based on `self.base_dir`.
+
+        MVIR `TreeNode`s use paths relative to `base_dir`.  So if `base_dir` is
+        `/foo`, we commit `/foo/bar/baz.txt` to build a tree, and we then check
+        out the tree into a sandbox, the path of the file within the sandbox
+        will be `bar/baz.txt`.  This method is useful for converting the
+        outside path to the MVIR/inside path, such as when building commands:
+        `self.relative_path('/foo/bar/baz.txt') == 'bar/baz.txt'`.
+        """
         base_abs = os.path.abspath(self.base_dir)
         path_abs = os.path.abspath(path)
         assert os.path.commonpath((base_abs, path_abs)) == base_abs, \
@@ -77,6 +92,10 @@ class TranspileConfig(ConfigBase):
     # `main` entry point, if the project produces a binary.  For example, if
     # `main` is defined in `driver.c`, this should be set to `driver`.
     bin_main: Optional[str] = None
+    # If set, only this target will be built (via `make foo` or similar) when
+    # generating `compile_commands.json`.  This means only files used in this
+    # target will be included in the generated Rust.
+    single_target: str | None = None
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)
@@ -89,3 +108,10 @@ class TranspileConfig(ConfigBase):
 class ModelConfig(ConfigBase):
     prefill: str = ''
     prefill_think: str = ''
+    # Which mode to use for embedding files into the LLM input/output.  The
+    # options are listed in `llm_format` for options.
+    #
+    # This can be overridden by setting `$CRISP_LLM_FILE_FORMATTER`.  If the
+    # env var is set, the `file_formatter_kwargs` will be ignored.
+    file_formatter: str = 'xml'
+    file_formatter_kwargs: dict = field(default_factory=dict)

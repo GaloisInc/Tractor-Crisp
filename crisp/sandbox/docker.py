@@ -4,6 +4,7 @@ import io
 import os
 import sys
 import tarfile
+import shlex
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -35,10 +36,11 @@ class WorkContainer:
 
     def stop(self):
         if self.container is not None:
-            self.container.stop(timeout=5)
+            self.container.stop(timeout=1)
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
+        self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
     def checkout(self, n_tree):
@@ -82,7 +84,7 @@ class WorkContainer:
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError('expected REGTYPE or DIRTYPE, but got %r' % (t,))
+                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path
@@ -107,17 +109,21 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False):
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
+
+        print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
+
         if isinstance(cmd, tuple):
             # `exec_run` requires either a list or str, not a tuple.
             cmd = list(cmd)
 
         if not stream:
             exit_code, logs = self.container.exec_run(
-                    cmd, workdir='/root/work', stream=stream)
+                cmd, workdir=self.join(cwd), stream=stream
+            )
             sys.stdout.flush()
             sys.stdout.buffer.write(logs)
             sys.stdout.flush()
@@ -126,7 +132,8 @@ class WorkContainer:
         # High-level `exec_run` API doesn't return the exit code when streaming
         # is enabled, so use the low-level API instead.
         exec_info = self.client.api.exec_create(
-                self.container.id, cmd, workdir='/root/work')
+            self.container.id, cmd, workdir=self.join(cwd)
+        )
         exec_id = exec_info['Id']
         stream = self.client.api.exec_start(exec_id, stream=True)
 

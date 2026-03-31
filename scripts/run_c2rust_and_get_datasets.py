@@ -22,6 +22,10 @@ from tqdm import tqdm
 CONVERTED_RUST_PROJECTS_FOLDER = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent / 'converted_rust_projects'
 
 
+############################################################
+# Utils
+############################################################
+
 def run_subprocess_nodisp_check(*args, **kwargs) -> subprocess.CompletedProcess:
     """
     Run subprocess.run() with the defaults `check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL`
@@ -31,6 +35,29 @@ def run_subprocess_nodisp_check(*args, **kwargs) -> subprocess.CompletedProcess:
     kwargs.setdefault("stderr", subprocess.DEVNULL)
     return subprocess.run(*args, **kwargs)
 
+
+def remove_leading_digits_from_project_name(project_name: str) -> str:
+    """
+    If the given input string contains leading digits, remove everything up to the first letter.
+    Examples:
+        - "001_abc" --> "abc" # the underscore is removed as well in this case since it is assumed to be part of the number portion
+        - "_abc" --> "_abc" # the underscore is not removed in this case since it is assumed to be part of the main string
+        - "abc" --> "abc" # nothing to remove
+    This is useful for containing project names like "001_abc" to "abc" since Rust project names cannot start with digits.
+    """
+    if project_name[0].isdigit():
+        letter_idx = 1
+        while not project_name[letter_idx].isalpha():
+            letter_idx += 1
+        project_name = project_name[letter_idx:]
+    return project_name
+
+############################################################
+
+
+############################################################
+# Classes
+############################################################
 
 class CBuilder:
     """Class to build C projects."""
@@ -171,6 +198,12 @@ class RustTranspiler:
                 for path in tmpdir_path.rglob('*'):
                     path.rename(self.rust_project_folder / path.relative_to(tmpdir_path))
 
+############################################################
+
+
+############################################################
+# Main run function
+############################################################
 
 def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
     """
@@ -215,14 +248,20 @@ def run(c_project_folder: Path, rust_project_folder: Path) -> tuple[str, str]:
 
     return (c_build_status, rust_transpile_status)
 
+############################################################
 
-def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
+
+############################################################
+# Specific run functions
+############################################################
+
+def run_on_test_corpus(test_corpus_repo_path: Path, dataset: str):
     """
-    Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_synthetic' in the test corpus repo.
-    Create a results_transpilation.csv file documenting successes and failures.
+    Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/<dataset>/' in the test corpus repo.
+    Create a `results_transpilation.csv` file documenting successes and failures.
     """
-    c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_synthetic').iterdir() if f.is_dir()])
-    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_synthetic'
+    c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests' / dataset).iterdir() if f.is_dir()])
+    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / f'c2rust_Test-Corpus_{dataset}'
     rust_projects_parent_folder.mkdir(exist_ok = False)
 
     with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
@@ -230,31 +269,7 @@ def run_on_test_corpus_synthetic(test_corpus_repo_path: Path):
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
 
         for c_project_folder in tqdm(c_project_folders):
-            rust_project_folder = rust_projects_parent_folder / c_project_folder.parent.name[4:] # [4:] is to remove the leading 0NN_ since Rust project names cannot start with digits
-            c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
-            logger.writerow([
-                c_project_folder.relative_to(test_corpus_repo_path),
-                c_build_status,
-                rust_project_folder.name if c_build_status == CBuilder.C_BUILD_STATUS_OK else None,
-                rust_transpile_status
-            ])
-
-
-def run_on_test_corpus_organic(test_corpus_repo_path: Path):
-    """
-    Run the complete workflow for C2Rust transpilation on all projects inside 'Public-Tests/B01_organic' in the test corpus repo.
-    Create a results_transpilation.csv file documenting successes and failures.
-    """
-    c_project_folders = sorted([f / 'test_case' for f in (test_corpus_repo_path / 'Public-Tests/B01_organic').iterdir() if f.is_dir()])
-    rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_Test-Corpus_B01_organic'
-    rust_projects_parent_folder.mkdir(exist_ok = False)
-
-    with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
-        logger = csv.writer(f)
-        logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
-
-        for c_project_folder in tqdm(c_project_folders):
-            rust_project_folder = rust_projects_parent_folder / c_project_folder.parent.name
+            rust_project_folder = rust_projects_parent_folder / remove_leading_digits_from_project_name(c_project_folder.parent.name)
             c_build_status, rust_transpile_status = run(c_project_folder = c_project_folder, rust_project_folder = rust_project_folder)
             logger.writerow([
                 c_project_folder.relative_to(test_corpus_repo_path),
@@ -291,8 +306,18 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
                 rust_transpile_status
             ])
 
+############################################################
+
 
 if __name__ == "__main__":
-    run_on_test_corpus_synthetic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
-    run_on_test_corpus_organic(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus')
+    for dataset in [
+        'B01_organic',
+        'B01_synthetic',
+        # 'B02_organic',
+        # 'B02_synthetic'
+    ]:
+        run_on_test_corpus(
+            test_corpus_repo_path = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus',
+            dataset = dataset
+        )
     run_on_crust_bench(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'CRUST-bench')

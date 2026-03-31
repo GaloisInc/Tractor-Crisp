@@ -56,13 +56,15 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
-    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
+    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+        default='default',
         help='which style of LLM-based rewriting to use')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
     safety_loop.add_argument('node', nargs='?', default='current')
-    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
+    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+        default='default',
         help='which style of LLM-based rewriting to use')
 
     repl = sub.add_parser('repl')
@@ -253,6 +255,26 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     if n_op_test.exit_code == 0:
                         w.accept(n_new_code, ('main', 'safety', safety_try))
                         n_code = n_new_code
+
+                    continue
+
+                case 'agent_no_tests':
+                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    n_op_check = w.cargo_check_json_op(n_new_code)
+                    if n_op_check.passed:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+
+                    # `agent_no_tests` simulates the mode where no tests are
+                    # available and the only success criteria that CRISP can
+                    # check are whether the code builds or not.  We actually do
+                    # run the tests here, but if the accepted `n_code` ever
+                    # fails the tests, we bail out, on the assumption that
+                    # actually running CRISP with no tests on this input would
+                    # cause it to produce non-working code.
+                    n_op_test = w.test_op(n_code, n_c_code)
+                    assert n_op_test.exit_code == 0, \
+                        f'agent output failed tests: {n_op_test}'
 
                     continue
 

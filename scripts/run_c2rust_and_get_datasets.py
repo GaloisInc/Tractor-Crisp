@@ -282,7 +282,9 @@ def run_on_test_corpus(test_corpus_repo_path: Path, dataset: str):
 def run_on_crust_bench(crust_bench_repo_path: Path):
     """
     Run the complete workflow for C2Rust transpilation on all projects inside 'datasets/CBench' in the CRUST-Bench repo.
-    Create a results_transpilation.csv file documenting successes and failures.
+    Create a `results_transpilation.csv` file documenting successes and failures.
+
+    NOTE: This function has some code in common with `run_on_test_corpus()`, but there are enough differences to merit a separate function.
     """
     c_project_folders = sorted([f for f in (crust_bench_repo_path / 'datasets/CBench').iterdir() if f.is_dir()])
     rust_projects_parent_folder = CONVERTED_RUST_PROJECTS_FOLDER / 'c2rust_CRUST-Bench'
@@ -291,7 +293,7 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
     with open(rust_projects_parent_folder / 'results_transpilation.csv', 'w', encoding='utf-8') as f:
         logger = csv.writer(f)
         logger.writerow(['c_project_folder', 'c_build_status', 'rust_project_folder', 'rust_transpile_status'])
-    
+
         for c_project_folder in tqdm(c_project_folders):
             rust_project_folder = rust_projects_parent_folder / (
                 f'proj_{c_project_folder.name}'
@@ -310,6 +312,8 @@ def run_on_crust_bench(crust_bench_repo_path: Path):
 
 
 if __name__ == "__main__":
+
+    ## Run on Test corpus datasets
     for dataset in [
         'B01_organic',
         'B01_synthetic',
@@ -320,4 +324,6 @@ if __name__ == "__main__":
             test_corpus_repo_path = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus',
             dataset = dataset
         )
+
+    ## Run on other datasets
     run_on_crust_bench(Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'CRUST-bench')

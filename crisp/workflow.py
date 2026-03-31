@@ -319,6 +319,7 @@ class Workflow:
                     "--output-dir",
                     sb.join(output_path),
                     "--emit-build-files",
+                    "--no-split-library",
                 ]
                 if src_loc_annotations:
                     c2rust_cmd += [

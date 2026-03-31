@@ -241,6 +241,8 @@ if __name__ == "__main__":
     for dataset_path in [
         Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_organic',
         Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B01_synthetic',
+        Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B02_organic',
+        Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_Test-Corpus_B02_synthetic',
         Path(__file__).resolve().parent.parent / 'converted_rust_projects/c2rust_CRUST-bench'
     ]:
         evaluate_rust(

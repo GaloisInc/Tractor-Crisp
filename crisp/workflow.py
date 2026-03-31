@@ -258,42 +258,49 @@ class Workflow:
     ) -> TreeNode:
         cfg, mvir = self.cfg, self.mvir
 
-        # Count the number of artifacts to transpile.  If there's only one
-        # transpiled artifact, we put it at the top level of the output
+        # Count the number of artifacts to transpile.  This excludes artifacts
+        # that are generated using `lib_from_bin_artifact`.  If there's only
+        # one transpiled artifact, we put it at the top level of the output
         # directory as a non-virtual workspace root.
-        num_transpiled_artifacts = len(cfg.transpile.artifacts)
+        num_transpiled_artifacts = sum(1 for a in cfg.transpile.artifacts
+            if a.lib_from_bin_artifact is None)
 
         artifact_code = {}
         for i, art_cfg in enumerate(cfg.transpile.artifacts):
             art_name = art_cfg.name
+            if art_cfg.lib_from_bin_artifact is None:
+                compile_commands = self.cc_custom(c_code, artifact = art_name)
+                if num_transpiled_artifacts > 1:
+                    subdir = art_cfg.name
+                else:
+                    subdir = '.'
+                n_op_transpile = self.transpile_cc_op(
+                    c_code,
+                    compile_commands,
+                    artifact=i,
+                    subdir=subdir,
+                    src_loc_annotations=src_loc_annotations,
+                    refactor_transforms=refactor_transforms,
+                    hayroll=hayroll,
+                )
+                if n_op_transpile.rust_code is None:
+                    print(f'error: transpile of {art_name} failed', file=sys.stderr)
+                    return None
+                art_code = mvir.node(n_op_transpile.rust_code)
 
-            compile_commands = self.cc_custom(c_code, artifact = art_name)
-            if num_transpiled_artifacts > 1:
-                subdir = art_cfg.name
+                # Patch Cargo.toml before building and testing.  This makes sure we
+                # test the code that will actually be used, and also gives
+                # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
+                # needed.
+                art_code = self.patch_cargo_toml(art_code, name = art_name)
+
+                # Hack: add -lcrypto, which is required for one test case
+                art_code = self.patch_build_rs(art_code, libs = ['crypto'])
+
             else:
-                subdir = '.'
-            n_op_transpile = self.transpile_cc_op(
-                c_code,
-                compile_commands,
-                artifact=i,
-                subdir=subdir,
-                src_loc_annotations=src_loc_annotations,
-                refactor_transforms=refactor_transforms,
-                hayroll=hayroll,
-            )
-            if n_op_transpile.rust_code is None:
-                print(f'error: transpile of {art_name} failed', file=sys.stderr)
-                return None
-            art_code = mvir.node(n_op_transpile.rust_code)
-
-            # Patch Cargo.toml before building and testing.  This makes sure we
-            # test the code that will actually be used, and also gives
-            # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
-            # needed.
-            art_code = self.patch_cargo_toml(art_code, name = art_name)
-
-            # Hack: add -lcrypto, which is required for one test case
-            art_code = self.patch_build_rs(art_code, libs = ['crypto'])
+                base_code = artifact_code[art_cfg.lib_from_bin_artifact]
+                art_code = self.generate_lib_from_bin_cargo_toml(
+                        base_code, art_name, subdir = art_name)
 
             artifact_code[art_name] = art_code
 
@@ -505,6 +512,60 @@ class Workflow:
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
         return n_op
+
+    @step
+    def generate_lib_from_bin_cargo_toml(
+        self,
+        base_code: TreeNode,
+        name: str,
+        subdir: str,
+    ) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        if name is None:
+            name = cfg.project_name
+
+        base_cargo_toml_paths = [k for k in base_code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+        assert len(base_cargo_toml_paths) == 1, (
+            f'expected only 1 Cargo.toml in transpiler output, but got {base_cargo_toml_paths}')
+        base_cargo_toml_path, = base_cargo_toml_paths
+        base_cargo_dir = os.path.dirname(base_cargo_toml_path)
+        base_cargo_toml = mvir.node(base_code.files[base_cargo_toml_path])
+
+        new_cargo_dir = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
+        new_cargo_toml_path = os.path.join(new_cargo_dir, 'Cargo.toml')
+
+        t = toml.loads(base_cargo_toml.body_str())
+
+        t['package']['name'] = name
+
+        # The base Cargo.toml will have a `lib` containing all the relevant
+        # code, and a `bin` that wraps it and calls `lib::main`.  We discard
+        # the `bin` section, and read out the `lib` so we can create a modified
+        # version of it.
+        t_lib = t['lib']
+        del t['bin']
+
+        # Use the baseline `lib` section to create the `lib` section for the
+        # derived artifact.
+        base_cargo_dir_rel = os.path.relpath(base_cargo_dir, new_cargo_dir)
+        t['lib'] = {
+            'path': os.path.join(base_cargo_dir_rel, t_lib['path']),
+            'name': name,
+            'crate-type': ['cdylib'],
+        }
+
+        new_files = {
+            new_cargo_toml_path: FileNode.new(mvir, toml.dumps(t)).node_id(),
+        }
+        base_build_rs_path = os.path.join(base_cargo_dir, 'build.rs')
+        if base_build_rs_path in base_code.files:
+            new_build_rs_path = os.path.join(new_cargo_dir, 'build.rs')
+            new_files[new_build_rs_path] = base_code.files[base_build_rs_path]
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        return new_code
 
     @step
     def patch_cargo_toml_workspace(self, code: TreeNode) -> TreeNode:

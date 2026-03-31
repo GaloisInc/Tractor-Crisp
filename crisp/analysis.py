@@ -280,6 +280,10 @@ def cc_custom(
     c_code: TreeNode,
     art: TranspileArtifactConfig,
 ) -> CompileCommandsOpNode:
+    assert art.lib_from_bin_artifact is None, \
+            f"can't generate compile_commands for {art.name} " \
+            'because it uses lib_from_bin_artifact'
+
     with run_sandbox(cfg, mvir) as sb:
         work_dir = sb.join(cfg.relative_path('.'))
         cc_path = sb.join(COMPILE_COMMANDS_PATH)

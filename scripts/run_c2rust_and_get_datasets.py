@@ -317,8 +317,8 @@ if __name__ == "__main__":
     for dataset in [
         'B01_organic',
         'B01_synthetic',
-        # 'B02_organic',
-        # 'B02_synthetic'
+        'B02_organic',
+        'B02_synthetic'
     ]:
         run_on_test_corpus(
             test_corpus_repo_path = Path(os.path.dirname(os.path.realpath(__file__))).resolve().parent.parent / 'Test-Corpus',

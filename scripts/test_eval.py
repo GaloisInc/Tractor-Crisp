@@ -6,6 +6,7 @@ from typing import Sequence
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import toml
@@ -14,31 +15,28 @@ import toml
 @dataclass
 class Args:
     project_dir: Path
-    main_compilation_unit: str | None
     main_args: list[str]
 
 
 def parse_args() -> Args:
     ap = argparse.ArgumentParser()
     ap.add_argument("project_dir", type=Path)
-    ap.add_argument(
-        "--main-compilation-unit",
-        help="name of the compilation unit that defines `main`",
-    )
     ap.add_argument("main_args", nargs='*',
         help='extra arguments to pass to `crisp main`')
     return Args(**ap.parse_args().__dict__)
 
 
-def get_target_info(project_dir: Path):
+def get_target_info(project_dir: Path, extra_args: list[str]):
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         query_file = td / ".cmake/api/v1/query/codemodel-v2"
         query_file.parent.mkdir(parents=True)
         query_file.open("w")
 
+        print(["cmake", project_dir.absolute() / 'CMakeLists.txt'] +
+                extra_args)
         subprocess.run(
-            ("cmake", project_dir.absolute() / "test_case/CMakeLists.txt"),
+            ["cmake", project_dir.absolute() / 'CMakeLists.txt', '-B', '.'] + extra_args,
             cwd=td,
             check=True,
         )
@@ -65,12 +63,10 @@ def get_target_info(project_dir: Path):
             for j_cfg in j_cm["configurations"]
             for j_target in j_cfg["targets"]
         ]
-        # Expect one build target per project for now.
-        # assert len(target_jsons) == 1, f"got multiple build targets: {target_jsons!r}"
-        target_json = target_jsons[0]
 
-        j_target = json.loads((reply_dir / target_json).read_text())
-        return j_target
+        j_targets = [json.loads((reply_dir / target_json).read_text())
+                for target_json in target_jsons]
+        return j_targets
 
 
 def file_contains_main(path: Path) -> bool:
@@ -83,11 +79,10 @@ def file_contains_main(path: Path) -> bool:
             return True
     return False
 
-
 def find_file_containing_main(project_dir: Path, j_target) -> str | None:
     for j_source in j_target["sources"]:
         path = Path(j_source["path"])
-        full_path = project_dir / "test_case" / path
+        full_path = project_dir / path
         if file_contains_main(full_path):
             return path.stem
     return None
@@ -112,7 +107,7 @@ def run_crisp(cli_args: Args, args: Sequence[str | Path]):
     return subprocess.run(cmd, cwd=cli_args.project_dir, check=True)
 
 
-LIB_CONFIG_STR = r'''
+CONFIG_TEMPLATE_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
 # Hack: some tests have nested directories; just add enough separate glob
@@ -126,41 +121,14 @@ src_globs = [
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
-cd {example_dir}
+cd {example_dir_quoted}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests.ci --root ../../.. -s {example_dir}
-python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
+python3 -m runtests.ci --root ../../.. -s {example_dir_quoted}
+python3 -m runtests.rust --root ../../.. -s {example_dir_quoted} --verbose
 """
 
 [transpile]
-{cfg_cmake}
 output_dir = "translated_rust"
-single_target = "{example_name}"
-'''
-
-BIN_CONFIG_STR = r'''
-base_dir = "{base_dir}"
-project_name = "{example_name}"
-src_globs = [
-    "translated_rust/src/*.rs",
-    "translated_rust/src/*/*.rs",
-    "translated_rust/src/*/*/*.rs",
-    "translated_rust/src/*/*/*/*.rs",
-]
-test_command = """
-set -e
-export PYTHONPATH=$PWD/deployment/scripts/github-actions
-cd {example_dir}
-# Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests.ci --root ../../.. -s {example_dir}
-python3 -m runtests.rust --root ../../.. -s {example_dir} --verbose
-"""
-
-[transpile]
-{cfg_cmake}
-output_dir = "translated_rust"
-bin_main = "{main_compilation_unit}"
-single_target = "{example_name}"
 '''
 
 
@@ -173,56 +141,120 @@ def relpath(path: Path, start: Path) -> Path:
 def main():
     args = parse_args()
 
+    cmake_dir = 'test_case'
+    cmake_extra_args = []
+
+    cmake_presets_path = args.project_dir / 'CMakePresets.json'
+    if cmake_presets_path.exists():
+        j_presets = json.load(cmake_presets_path.open())
+        assert len(j_presets['buildPresets']) == 1, 'expected exactly one entry in buildPresets'
+        preset_name = j_presets['buildPresets'][0]['name']
+        cmake_dir = '.'
+        cmake_extra_args.extend(('--preset', preset_name))
+
     # Extract CMake target info
-    target_info = get_target_info(args.project_dir)
+    targets = get_target_info(args.project_dir / cmake_dir, cmake_extra_args)
 
     # Write crisp.toml
     base_dir = find_git_root(args.project_dir)
     example_dir_rel = args.project_dir.relative_to(base_dir)
 
-    match target_info["type"]:
-        case "STATIC_LIBRARY" | "SHARED_LIBRARY":
-            cfg_template = LIB_CONFIG_STR
-            main_compilation_unit = None
-        case "EXECUTABLE":
-            cfg_template = BIN_CONFIG_STR
-            main_compilation_unit = args.main_compilation_unit
-            if main_compilation_unit is None:
-                main_compilation_unit = find_file_containing_main(
-                    args.project_dir, target_info
-                )
-                print(f"autodetected main compilation unit = {main_compilation_unit!r}")
-            if main_compilation_unit is None:
-                raise ValueError(
-                    "--main-compilation-unit is unset and autodetection failed"
-                )
-        case ty:
-            raise ValueError(f"unknown CMake target type {ty!r}")
+    cfg_parts = [
+        CONFIG_TEMPLATE_STR.format(
+            base_dir = base_dir,
+            example_name = targets[0]['name'],
+            example_dir_quoted = shlex.quote(str(example_dir_rel)),
+        ),
+    ]
 
-    cmake_presets_path = args.project_dir / 'CMakePresets.json'
-    cfg_cmake = '''cmake_src_dir = "test_case"'''
-    if cmake_presets_path.exists():
-        j_presets = json.load(cmake_presets_path.open())
-        assert len(j_presets['buildPresets']) == 1, 'expected exactly one entry in buildPresets'
-        cfg_cmake = toml.dumps({
-            'cmake_src_dir': '.',
-            'cmake_preset': j_presets['buildPresets'][0]['name'],
-        }).strip()
+    # TODO (hack): since several of CRISP's helper tools don't support multiple
+    # Rust crates, we try to combine everything into one crate instead.
+    #
+    # If there's only one artifact (a.k.a. target), we simply transpile that
+    # artifact.  This handles single-library and single-binary projects.
+    #
+    # If there's a binary and several libraries (as in P01), we proceed as
+    # follows (this part is the hack).  We do a clean build of the binary under
+    # `bear`, which picks up not only the `.c` files for the binary, but also
+    # those for any library it depends on.  We run c2rust-transpile on the
+    # `compile_commands.json` that was generated this way, which produces a
+    # Rust version of the binary.  Then, for each library artifact, we
+    # configure Cargo to build the existing source code of the *binary* as a
+    # library of the appropriate name.  As long as the binary depends on the
+    # library in question, the library's source code will have been included in
+    # the binary, and the library compiled from that binary will export all of
+    # the right symbols.  However, it will also include the symbols from all
+    # the other libraries that got pulled into the binary, which means trying
+    # to link several such libraries into the same executable will fail.
+    #
+    # c2rust-transpile does have proper support for translating all of the
+    # libraries and binaries of a C project into separate Rust crates; once our
+    # other tools (such as c2rust-refactor) support multi-crate projects, we
+    # should switch to that mode and get rid of this hack.
 
-    cfg_str = cfg_template.format(
-        base_dir=str(relpath(base_dir, args.project_dir)),
-        example_dir=str(example_dir_rel),
-        example_name=target_info["name"],
-        cfg_cmake = cfg_cmake,
-        main_compilation_unit=main_compilation_unit,
-    )
+    def is_binary(t):
+        return t['type'] == 'EXECUTABLE'
+    def is_library(t):
+        return t['type'] in ('STATIC_LIBRARY', 'SHARED_LIBRARY')
+    num_binaries = sum(1 for t in targets if is_binary(t))
+    num_libraries = sum(1 for t in targets if is_library(t))
+
+    # Supported combinations are 1 library and 0 binaries, or 1 binary and any
+    # number of libraries.
+    if num_binaries + num_libraries > 1:
+        assert num_binaries == 1, \
+            "this script can't handle a project with " \
+            f'{num_binaries} binaries and {num_libraries} libraries'
+
+    if num_binaries == 1:
+        # Transpile the binary first.
+        for target in targets:
+            if not is_binary(target):
+                continue
+            art = {
+                'name': target['name'],
+                'configure_cmds': shlex.join(
+                    ['cmake', '-B', 'build', cmake_dir] + cmake_extra_args),
+                'build_cmds': shlex.join(
+                    ['cmake', '--build', 'build', '--', target['name']]),
+                'bin_main': find_file_containing_main(args.project_dir, target),
+            }
+            cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
+            bin_name = target['name']
+
+        # Derive libraries from the transpiled binary
+        for target in targets:
+            if not is_library(target):
+                continue
+            art = {
+                'name': target['name'],
+                'lib_from_bin_artifact': bin_name,
+            }
+            cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
+
+    else:
+        assert num_binaries == 0
+        assert num_libraries == 1
+        # Transpile the library
+        for target in targets:
+            if not is_library(target):
+                continue
+            art = {
+                'name': target['name'],
+                'configure_cmds': shlex.join(
+                    ['cmake', '-B', 'build', cmake_dir] + cmake_extra_args),
+                'build_cmds': shlex.join(
+                    ['cmake', '--build', 'build', '--', target['name']]),
+            }
+            cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
+
+    cfg_str = '\n'.join(cfg_parts)
     (args.project_dir / "crisp.toml").write_text(cfg_str)
+
 
     # Collect source files
     commit_files = [
         base_dir / "Cargo.toml",
-    ]
-    commit_files_if_exists = [
         args.project_dir / "CMakeLists.txt",
         args.project_dir / "CMakePresets.json",
     ]
@@ -236,11 +268,12 @@ def main():
 
     src_files = []
     for path in commit_files:
+        if not path.exists():
+            continue
         src_files.append(relpath(path, args.project_dir))
-    for path in commit_files_if_exists:
-        if path.exists():
-            src_files.append(relpath(path, args.project_dir))
     for start_dir in commit_dirs:
+        if not start_dir.exists():
+            continue
         for root, dirs, files in start_dir.walk():
             for f in files:
                 path = root / f

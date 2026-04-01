@@ -162,10 +162,12 @@ def step(f):
         bound = sig.bind(self, *args, **kwargs)
         if self._step_depth == 0:
             print(' ** ' + name)
-            for arg_name, val in bound.arguments.items():
-                if isinstance(val, Workflow):
-                    continue
-                _print_step_value(arg_name, val)
+        else:
+            print(' ' * (1 + self._step_depth) + '* ' + name)
+        for arg_name, val in bound.arguments.items():
+            if isinstance(val, Workflow):
+                continue
+            _print_step_value(arg_name, val)
 
         mvir = self.mvir
         n_step = None
@@ -231,6 +233,22 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
+    def cc_custom(self, c_code: TreeNode, artifact: str | int | None = None) -> FileNode:
+        n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
+        compile_commands = self.mvir.node(n_op_cc.compile_commands)
+        return compile_commands
+
+    @step
+    def cc_custom_op(
+        self,
+        c_code: TreeNode,
+        artifact: str | int | None = None,
+    ) -> CompileCommandsOpNode:
+        cfg, mvir = self.cfg, self.mvir
+        art_cfg = cfg.transpile.artifact(artifact)
+        return analysis.cc_custom(cfg, mvir, c_code, art_cfg)
+
+    @step
     def transpile(
         self,
         c_code: TreeNode,
@@ -238,27 +256,59 @@ class Workflow:
         refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
     ) -> TreeNode:
-        compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(
-            c_code,
-            compile_commands,
-            src_loc_annotations=src_loc_annotations,
-            refactor_transforms=refactor_transforms,
-            hayroll=hayroll,
-        )
-        if n_op_transpile.rust_code is None:
-            print('error: transpile failed', file=sys.stderr)
-            return None
-        code = self.mvir.node(n_op_transpile.rust_code)
+        cfg, mvir = self.cfg, self.mvir
 
-        # Patch Cargo.toml before building and testing.  This makes sure we
-        # test the code that will actually be used, and also gives
-        # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
-        # needed.
-        code = self.patch_cargo_toml(code)
+        # Count the number of artifacts to transpile.  If there's only one
+        # transpiled artifact, we put it at the top level of the output
+        # directory as a non-virtual workspace root.
+        num_transpiled_artifacts = len(cfg.transpile.artifacts)
 
-        # Hack: add -lcrypto, which is required for one test case
-        code = self.patch_build_rs(code, libs = ['crypto'])
+        artifact_code = {}
+        for i, art_cfg in enumerate(cfg.transpile.artifacts):
+            art_name = art_cfg.name
+
+            compile_commands = self.cc_custom(c_code, artifact = art_name)
+            if num_transpiled_artifacts > 1:
+                subdir = art_cfg.name
+            else:
+                subdir = '.'
+            n_op_transpile = self.transpile_cc_op(
+                c_code,
+                compile_commands,
+                artifact=i,
+                subdir=subdir,
+                src_loc_annotations=src_loc_annotations,
+                refactor_transforms=refactor_transforms,
+                hayroll=hayroll,
+            )
+            if n_op_transpile.rust_code is None:
+                print(f'error: transpile of {art_name} failed', file=sys.stderr)
+                return None
+            art_code = mvir.node(n_op_transpile.rust_code)
+
+            # Patch Cargo.toml before building and testing.  This makes sure we
+            # test the code that will actually be used, and also gives
+            # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
+            # needed.
+            art_code = self.patch_cargo_toml(art_code, name = art_name)
+
+            # Hack: add -lcrypto, which is required for one test case
+            art_code = self.patch_build_rs(art_code, libs = ['crypto'])
+
+            artifact_code[art_name] = art_code
+
+        all_files = {}
+        path_origin = {}
+        for art_name, art_code in artifact_code.items():
+            for path, file in art_code.files.items():
+                assert path not in all_files, \
+                    f'artifacts {path_origin[path]!r} and {art_name!r} ' \
+                    f'both contain file {path!r}'
+                all_files[path] = file
+                path_origin[path] = art_name
+        code = TreeNode.new(mvir, files = all_files)
+
+        code = self.patch_cargo_toml_workspace(code)
 
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
@@ -270,6 +320,8 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
+        artifact: str | int | None = None,
+        subdir: str = '',
         src_loc_annotations: bool = False,
         refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
@@ -293,8 +345,9 @@ class Workflow:
             n_cc = FileNode.new(self.mvir, json.dumps(j))
 
         cfg, mvir = self.cfg, self.mvir
+        art_cfg = cfg.transpile.artifact(artifact)
         with run_sandbox(cfg, mvir) as sb:
-            output_path = cfg.relative_path(cfg.transpile.output_dir)
+            output_path = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
 
             sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
@@ -310,6 +363,8 @@ class Workflow:
 
             # Run c2rust-transpile
             if not hayroll:
+                sb.run(['mkdir', '-p', output_path])
+
                 c2rust_cmd = [
                     "c2rust",
                     "transpile",
@@ -323,9 +378,9 @@ class Workflow:
                         "--reorganize-definitions",
                         "--disable-refactoring",
                     ]
-                if cfg.transpile.bin_main is not None:
+                if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
+                        '--binary', art_cfg.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
@@ -351,7 +406,7 @@ class Workflow:
                     logs += new_logs
 
             else:
-                c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
+                project_dir_rel = cfg.relative_path(art_cfg.hayroll_project_dir)
 
                 # Setting `--project-dir` explicitly prevents Hayroll from
                 # including various ancestor directories as intermediate
@@ -362,12 +417,12 @@ class Workflow:
                         'hayroll',
                         sb.join(COMPILE_COMMANDS_PATH),
                         sb.join(output_path),
-                        '--project-dir', os.path.join(c_path_rel, 'src'),
+                        '--project-dir', project_dir_rel,
                         ]
                 # hayroll already has c2rust-transpile emit src loc annotations.
-                if cfg.transpile.bin_main is not None:
+                if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
+                        '--binary', art_cfg.bin_main,
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
@@ -403,14 +458,17 @@ class Workflow:
         return n_op
 
     @step
-    def patch_cargo_toml(self, code: TreeNode) -> TreeNode:
-        n_op = self.patch_cargo_toml_op(code)
+    def patch_cargo_toml(self, code: TreeNode, name: str | None = None) -> TreeNode:
+        n_op = self.patch_cargo_toml_op(code, name = name)
         new_code = self.mvir.node(n_op.new_code)
         return new_code
 
     @step
-    def patch_cargo_toml_op(self, code: TreeNode) -> EditOpNode:
+    def patch_cargo_toml_op(self, code: TreeNode, name: str | None = None) -> EditOpNode:
         cfg, mvir = self.cfg, self.mvir
+
+        if name is None:
+            name = cfg.project_name
 
         cargo_toml_paths = [k for k in code.files.keys()
                 if os.path.basename(k) == 'Cargo.toml']
@@ -423,13 +481,14 @@ class Workflow:
 
         if 'bin' in t:
             kind = 'bin'
+            t['package']['name'] = name
             assert isinstance(t['bin'], list)
             assert len(t['bin']) == 1
-            t['bin'][0]['name'] = cfg.project_name
+            t['bin'][0]['name'] = name
         else:
             kind = 'lib'
-            t['package']['name'] = cfg.project_name
-            t['lib']['name'] = cfg.project_name
+            t['package']['name'] = name
+            t['lib']['name'] = name
             t['lib']['crate-type'] = ['cdylib']
 
         new_files = code.files.copy()
@@ -443,6 +502,78 @@ class Workflow:
             body = f'patch Cargo.toml (kind = {kind})',
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
+        return n_op
+
+    @step
+    def patch_cargo_toml_workspace(self, code: TreeNode) -> TreeNode:
+        n_op = self.patch_cargo_toml_workspace_op(code)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_cargo_toml_workspace_op(self, code: TreeNode) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        workspace_dir = cfg.relative_path(cfg.transpile.output_dir)
+        workspace_cargo_toml_path = os.path.join(workspace_dir, 'Cargo.toml')
+
+        cargo_toml_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+
+        all_t = {path: toml.loads(mvir.node(code.files[path]).body_str())
+             for path in cargo_toml_paths}
+
+        # Remove workspace sections from all Cargo.toml files
+        for t in all_t.values():
+            t.pop('workspace', None)
+
+        members = [os.path.relpath(os.path.dirname(path), workspace_dir)
+            for path in cargo_toml_paths
+            if path != workspace_cargo_toml_path]
+
+        if workspace_cargo_toml_path in code.files:
+            # Add workspace options to the existing Cargo.toml
+            t = all_t[workspace_cargo_toml_path]
+            t['workspace'] = {
+                'members': members,
+                'default-members': ['.'] + members,
+            }
+        else:
+            # Generate a virtual workspace manifest
+            all_t[workspace_cargo_toml_path] = {
+                'workspace': {
+                    'members': members,
+                    'default-members': members,
+                },
+            }
+
+
+        new_files = code.files.copy()
+        for path, t in all_t.items():
+            new_files[path] = FileNode.new(mvir, toml.dumps(t)).node_id()
+
+        # Add a rust-toolchain.toml to the top-level workspace if needed.
+        workspace_toolchain_path = os.path.join(workspace_dir, 'rust-toolchain.toml')
+        if workspace_toolchain_path not in code.files:
+            toolchain_paths = [k for k in code.files.keys()
+                    if os.path.basename(k) == 'rust-toolchain.toml']
+            if len(toolchain_paths) > 0:
+                # All toolchain files must be identical.
+                toolchain_file_id = code.files[toolchain_paths[0]]
+                assert all(code.files[path] == toolchain_file_id
+                    for path in toolchain_paths)
+                # Copy the toolchain file into the new workspace root.
+                new_files[workspace_toolchain_path] = toolchain_file_id
+
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch Cargo.toml files to create workspace',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml_workspace')
         return n_op
 
     @step

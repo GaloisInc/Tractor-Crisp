@@ -203,18 +203,8 @@ def do_main(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    # Hacks to get the C path relative to `n_tree`.  This handles
-    # tricks like `base_dir = ".."` used by the testing scripts.
-    # TODO: clean up config path handling and get rid of this
-    config_path = Path(cfg.config_path).parent.resolve()
-    base_path = Path(cfg.base_dir).resolve()
-    c_path = config_path / cfg.transpile.cmake_src_dir
-    c_path_rel = c_path.relative_to(base_path)
-
     paths = (Path(path) for path in n_c_code.files.keys())
-    num_c_files = sum(
-        1 for path in paths if path.suffix == ".c" and path.is_relative_to(c_path_rel)
-    )
+    num_c_files = sum(1 for path in paths if path.suffix == ".c")
 
     # Try transpiling with Hayroll first, then fall back to plain C2Rust.  Note
     # that `w.transpile` also checks that the tests pass, so a successful

@@ -8,6 +8,7 @@ use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::SyntaxNode;
 use rust_analyzer_ext::crates;
 use rust_util::rewrite::{FlatTokens, OutputBuffer, TokenIndex, render_output};
+use std::collections::HashSet;
 use std::fs;
 use std::iter;
 use std::mem;
@@ -363,6 +364,7 @@ fn main() {
     let crates = crates::find_in_dir(&sema, &vfs, cargo_dir_path);
 
     let mut files = Vec::new();
+    let mut files_seen = HashSet::new();
     for &krate in &crates {
         for m in krate.modules(&db) {
             let src = m.definition_source(&db);
@@ -372,7 +374,9 @@ fn main() {
                 let file_id = editioned_file_id.file_id(&db);
                 let vfs_path = vfs.file_path(file_id);
                 if let Some(path) = vfs_path.as_path() {
-                    files.push((path.to_path_buf(), node));
+                    if files_seen.insert(path) {
+                        files.push((path.to_path_buf(), node));
+                    }
                 }
             }
         }

@@ -104,10 +104,7 @@ Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
-After refactoring, make sure the code still passes the tests.  Run the tests using this script:
-```sh
-{test_cmd}
-```
+After refactoring, make sure the code still passes the tests.
 
 You can measure the amount of unsafe code remaining using this command:
 ```sh
@@ -976,7 +973,6 @@ class Workflow:
         prompt = prompt.format(
             cargo_dir_path = cargo_dir,
             initial_unsafe_count = self.count_unsafe(n_code),
-            test_cmd = cfg.test_command,
         )
         return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
             clean_cmds = [

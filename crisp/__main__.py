@@ -231,11 +231,11 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'transpile'))
 
-    n_code = w.split_ffi(n_code)
-    if not w.test(n_code, n_c_code):
-        print('error: tests failed after split_ffi')
-        return None
-    w.accept(n_code, ('main', 'split_ffi'))
+    #n_code = w.split_ffi(n_code)
+    #if not w.test(n_code, n_c_code):
+    #    print('error: tests failed after split_ffi')
+    #    return None
+    #w.accept(n_code, ('main', 'split_ffi'))
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 

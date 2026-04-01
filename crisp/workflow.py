@@ -377,6 +377,7 @@ class Workflow:
                     "--output-dir",
                     sb.join(output_path),
                     "--emit-build-files",
+                    "--thin-binaries",
                 ]
                 if src_loc_annotations:
                     c2rust_cmd += [

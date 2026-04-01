@@ -3,6 +3,7 @@ from functools import wraps
 import inspect
 import json
 import os
+import shlex
 import subprocess
 import toml
 import typing
@@ -220,7 +221,7 @@ def inline_errors(
 COMPILE_COMMANDS_PATH = "compile_commands.json"
 
 @analysis
-def _cc_cmake_impl(
+def _cc_impl(
     cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode, cmds: list[list[str]]
 ) -> CompileCommandsOpNode:
     sb.checkout(c_code)
@@ -262,7 +263,30 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
             build_cmake_cmd.append(cfg.transpile.single_target)
         build_cmd = ["bear", "--", "sh", "-c", " ".join(build_cmake_cmd)]
         cmds = [config_cmd, build_cmd]
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    if n_op.compile_commands is not None:
+        mvir.set_tag('compile_commands', n_op.compile_commands, n_op.kind)
+    return n_op
+
+def cc_custom(
+    cfg: Config,
+    mvir: MVIR,
+    c_code: TreeNode,
+    art: TranspileArtifactConfig,
+) -> CompileCommandsOpNode:
+    with run_sandbox(cfg, mvir) as sb:
+        work_dir = sb.join(cfg.relative_path('.'))
+        cc_path = sb.join(COMPILE_COMMANDS_PATH)
+        cmds = []
+        for cmd in art.configure_cmds:
+            cmd = f'cd {shlex.quote(work_dir)} && {cmd}'
+            cmds.append(['sh', '-c', cmd])
+        for cmd in art.build_cmds:
+            cmd = f'cd {shlex.quote(work_dir)} && bear --output {shlex.quote(cc_path)} -- {cmd}'
+            cmds.append(['sh', '-c', cmd])
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:

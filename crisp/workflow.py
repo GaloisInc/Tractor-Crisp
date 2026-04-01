@@ -383,6 +383,7 @@ class Workflow:
                 if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', art_cfg.bin_main,
+                        "--no-split-library",
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 

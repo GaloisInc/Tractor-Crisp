@@ -390,7 +390,7 @@ class Workflow:
                 if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
                         '--binary', art_cfg.bin_main,
-                        "--no-split-library",
+                        '--thin-binaries',
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
@@ -541,16 +541,18 @@ class Workflow:
 
         t['package']['name'] = name
 
-        assert len(t['bin']) == 1, \
-            f'expected 1 bin section in base Cargo.toml, but got {len(t["bin"])}'
-        t_bin = t['bin'][0]
+        # The base Cargo.toml will have a `lib` containing all the relevant
+        # code, and a `bin` that wraps it and calls `lib::main`.  We discard
+        # the `bin` section, and read out the `lib` so we can create a modified
+        # version of it.
+        t_lib = t['lib']
         del t['bin']
 
-        assert 'lib' not in t, \
-            f'found unexpected lib section in base Cargo.toml'
+        # Use the baseline `lib` section to create the `lib` section for the
+        # derived artifact.
         base_cargo_dir_rel = os.path.relpath(base_cargo_dir, new_cargo_dir)
         t['lib'] = {
-            'path': os.path.join(base_cargo_dir_rel, t_bin['path']),
+            'path': os.path.join(base_cargo_dir_rel, t_lib['path']),
             'name': name,
             'crate-type': ['cdylib'],
         }

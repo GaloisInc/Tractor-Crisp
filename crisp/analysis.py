@@ -447,13 +447,17 @@ def detect_root_file(cfg: Config, mvir: MVIR, n_code: TreeNode) -> str:
     n_cargo_toml = mvir.node(n_code.files[cargo_toml_path])
     t = toml.loads(n_cargo_toml.body_str())
 
-    for t_bin in t.get('bin', ()):
-        if (path := cargo_target_root_file(t_bin)) is not None:
-            return path
-
     if (t_lib := t.get('lib')) is not None:
-        if (path := cargo_target_root_file(t_lib)) is not None:
+        if (path := t_lib.get('path')) is not None:
             return path
+        return 'src/lib.rs'
+
+    for t_bin in t.get('bin', ()):
+        if (path := t_bin.get('path')) is not None:
+            return path
+        if (name := t_bin.get('name')) is not None:
+            return f'src/bin/{name}.rs'
+        return 'src/main.rs'
 
     return 'src/lib.rs'
 

@@ -1,9 +1,7 @@
 This folder contains prompts found through the GEPA optimization process, i.e. through running `../run_gepa.py`.
 
-Notes:
-- General format of filenames is `<date in yyyymmdd>_<index, if multiple files were obtained on the same date>_<task lm>_<reflection lm>.txt`. Each filename contains a single system prompt.
-- Llama CPP GGUF models are stored locally in `~/Library/Caches/llama.cpp/`.
-- Result cells in table contain `cannot compile, compiles & unsafe, compiles & safe`.
+General format of filenames is `<date in yyyymmdd>_<index, if multiple files were obtained on the same date>_<task lm>_<reflection lm>.txt`. Each filename contains a single system prompt.
+
 
 ## `20260209_1_gptoss20b_gpt5.txt`
 - Dataset: `Test-Corpus_B01_organic`
@@ -30,7 +28,9 @@ Notes:
 - Run on: Godfather
 
 ### Results
-| Dataset (#files) | Seed prompt | This prompt |
+Key: Result cells in table contain number of files that `cannot compile, compiles & unsafe, compiles & safe`.
+
+| Dataset (total #files) | Seed prompt | This prompt |
 | -- | -- | -- |
 | B01 organic (34) | 16, 3, **15** | 10, 0, **24** |
 | B01 synthetic (86) | 28, 10, **48** | 27, 0, **59** |
@@ -45,7 +45,9 @@ Notes:
 - Run on: Local Macbook
 
 ### Results
-| Dataset (#files) | Seed prompt | This prompt |
+Key: Result cells in table contain number of files that `cannot compile, compiles & unsafe, compiles & safe`.
+
+| Dataset (total #files) | Seed prompt | This prompt |
 | -- | -- | -- |
 | B01 organic (38) | 22, 0, **16** | 1, 0, **37** |
 | B01 synthetic (86) | 25, 5, **56** | 3, 2, **81** |

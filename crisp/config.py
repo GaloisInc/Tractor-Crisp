@@ -125,6 +125,11 @@ class TranspileArtifactConfig(ConfigBase):
     # is defined in `driver.c`, this should be set to `driver`.
     bin_main: Optional[str] = None
 
+    # If set to the name of an artifact, `configure_cmds` and `build_cmds` are
+    # ignored, and this artifact instead uses the same transpiled Rust code as
+    # the named artifact.
+    lib_from_bin_artifact: Optional[str] = None
+
     # When using Hayroll, this path is passed as the `--project-dir` option.
     # To minimize the number of additional layers of module hierarchy that
     # Hayroll introduces, this should be set to the innermost directory that
@@ -132,16 +137,24 @@ class TranspileArtifactConfig(ConfigBase):
     hayroll_project_dir: str = '.'
 
     def __post_init__(self):
-        assert self.build_cmds is not None, \
-                f"artifact {self.name} is missing build_cmds"
-        # Normalize `configure_cmds` and `build_cmds` to be `list[str]`,
-        # using `object.__setattr__` to bypass `frozen = True`.
-        if self.configure_cmds is None:
-            object.__setattr__(self, 'configure_cmds', [])
-        elif isinstance(self.configure_cmds, str):
-            object.__setattr__(self, 'configure_cmds', [self.configure_cmds])
-        if isinstance(self.build_cmds, str):
-            object.__setattr__(self, 'build_cmds', [self.build_cmds])
+        if self.lib_from_bin_artifact is None:
+            assert self.build_cmds is not None, \
+                    f"artifact {self.name} is missing build_cmds"
+            # Normalize `configure_cmds` and `build_cmds` to be `list[str]`,
+            # using `object.__setattr__` to bypass `frozen = True`.
+            if self.configure_cmds is None:
+                object.__setattr__(self, 'configure_cmds', [])
+            elif isinstance(self.configure_cmds, str):
+                object.__setattr__(self, 'configure_cmds', [self.configure_cmds])
+            if isinstance(self.build_cmds, str):
+                object.__setattr__(self, 'build_cmds', [self.build_cmds])
+        else:
+            assert self.configure_cmds is None, \
+                    f"artifact {self.name} must not have configure_cmds "\
+                        'because lib_from_bin_artifact is set'
+            assert self.build_cmds is None, \
+                    f"artifact {self.name} must not have build_cmds "\
+                        'because lib_from_bin_artifact is set'
 
         config_dir = os.path.dirname(self.config_path)
         object.__setattr__(self, 'hayroll_project_dir',

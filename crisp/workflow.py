@@ -368,7 +368,7 @@ class Workflow:
                 if 'directory' in x:
                     d = x['directory']
                     rel_d = os.path.relpath(d, sb_dir)
-                    sb.checkout_file(os.path.join(rel_d, '.empty'), n_empty)
+                    sb.run(['mkdir', '-p', rel_d])
 
             # Run c2rust-transpile
             if not hayroll:

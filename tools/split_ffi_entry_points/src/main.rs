@@ -169,7 +169,16 @@ fn add_ffi_wrapper(
         args: arg_exprs.into_iter().collect(),
     });
     let wrapper_stmt = syn::Stmt::Expr(wrapper_expr, None);
-    fn_wrapper.block.stmts.push(wrapper_stmt);
+    let unsafe_expr = syn::Expr::Unsafe(syn::ExprUnsafe {
+        attrs: Vec::new(),
+        unsafe_token: Default::default(),
+        block: syn::Block {
+            brace_token: Default::default(),
+            stmts: vec![wrapper_stmt],
+        },
+    });
+    let unsafe_stmt = syn::Stmt::Expr(unsafe_expr, None);
+    fn_wrapper.block.stmts.push(unsafe_stmt);
 
     Some(fn_wrapper.into())
 }

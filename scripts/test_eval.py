@@ -107,6 +107,9 @@ def run_crisp(cli_args: Args, args: Sequence[str | Path]):
     return subprocess.run(cmd, cwd=cli_args.project_dir, check=True)
 
 
+# Note: all paths in the config are relative to the example/project directory
+# where the config file is located, except for paths in `test_command`, which
+# is run from the base directory.
 CONFIG_TEMPLATE_STR = r'''
 base_dir = "{base_dir}"
 project_name = "{example_name}"
@@ -121,10 +124,9 @@ src_globs = [
 test_command = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
-cd {example_dir_quoted}
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests.ci --root ../../.. -s {example_dir_quoted}
-python3 -m runtests.rust --root ../../.. -s {example_dir_quoted} --verbose
+python3 -m runtests.ci --root . -s {example_dir_from_base_quoted}
+python3 -m runtests.rust --root . -s {example_dir_from_base_quoted} --verbose
 """
 
 [transpile]
@@ -140,6 +142,11 @@ def relpath(path: Path, start: Path) -> Path:
 
 def main():
     args = parse_args()
+
+    # For consistency, `foo_dir` is always an absolute path in this code.
+    # Relative paths are always `foo_dir_from_bar`, meaning the path of
+    # `foo_dir` relative to `bar_dir`.
+    args.project_dir = args.project_dir.absolute()
 
     cmake_dir = 'test_case'
     cmake_extra_args = []
@@ -157,13 +164,15 @@ def main():
 
     # Write crisp.toml
     base_dir = find_git_root(args.project_dir)
-    example_dir_rel = args.project_dir.relative_to(base_dir)
+    # Example dir, relative to base dir
+    example_dir_from_base = args.project_dir.relative_to(base_dir)
+    base_dir_from_example = relpath(base_dir, args.project_dir)
 
     cfg_parts = [
         CONFIG_TEMPLATE_STR.format(
-            base_dir = base_dir,
+            base_dir = base_dir_from_example,
             example_name = targets[0]['name'],
-            example_dir_quoted = shlex.quote(str(example_dir_rel)),
+            example_dir_from_base_quoted = shlex.quote(str(example_dir_from_base)),
         ),
     ]
 

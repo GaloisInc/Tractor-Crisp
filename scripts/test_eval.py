@@ -217,7 +217,7 @@ def main():
                     ['cmake', '-B', 'build', cmake_dir] + cmake_extra_args),
                 'build_cmds': shlex.join(
                     ['cmake', '--build', 'build', '--', target['name']]),
-                'bin_main': find_file_containing_main(args.project_dir, target),
+                'bin_main': find_file_containing_main(args.project_dir / cmake_dir, target),
             }
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
             bin_name = target['name']

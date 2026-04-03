@@ -3,6 +3,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 from pathspec.pathspec import PathSpec
+import os
 
 from . import llm
 from .config import Config
@@ -38,6 +39,13 @@ def run_rewrite(
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
 ) -> TreeNode:
+    if 'CRISP_API_KEY' in os.environ:
+        # Print the warning in red so it stands out
+        print("\033[31mwarning: CRISP_API_KEY is being copied into " \
+              "the sandbox and could theoretically be leaked " \
+              "by commands run by the agent; please make sure " \
+              "to set limits on its usage.\033[0m")
+
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
         sb.checkout(test_code)

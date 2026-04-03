@@ -15,12 +15,16 @@ import toml
 @dataclass
 class Args:
     project_dir: Path
+    extra_test_dirs: list[Path]
     main_args: list[str]
 
 
 def parse_args() -> Args:
     ap = argparse.ArgumentParser()
     ap.add_argument("project_dir", type=Path)
+    ap.add_argument('--extra-test-dir',
+        type=Path, action='append', default=[], dest='extra_test_dirs',
+        help='run extra test vectors from this directory')
     ap.add_argument("main_args", nargs='*',
         help='extra arguments to pass to `crisp main`')
     return Args(**ap.parse_args().__dict__)
@@ -121,17 +125,19 @@ src_globs = [
     "translated_rust/src/*/*/*.rs",
     "translated_rust/src/*/*/*/*.rs",
 ]
-test_command = """
+test_command = """{test_command}"""
+
+[transpile]
+output_dir = "translated_rust"
+'''
+
+TEST_COMMAND_PREAMBLE = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 # Run non-Rust tests first so the C .so will be available for the Rust tests
 python3 -m runtests.ci --root . -s {example_dir_from_base_quoted}
 python3 -m runtests.rust --root . -s {example_dir_from_base_quoted} --verbose
 """
-
-[transpile]
-output_dir = "translated_rust"
-'''
 
 
 def relpath(path: Path, start: Path) -> Path:
@@ -146,7 +152,8 @@ def main():
     # For consistency, `foo_dir` is always an absolute path in this code.
     # Relative paths are always `foo_dir_from_bar`, meaning the path of
     # `foo_dir` relative to `bar_dir`.
-    args.project_dir = args.project_dir.absolute()
+    args.project_dir = args.project_dir.resolve()
+    args.extra_test_dirs = [path.resolve() for path in args.extra_test_dirs]
 
     cmake_dir = 'test_case'
     cmake_extra_args = []
@@ -168,11 +175,34 @@ def main():
     example_dir_from_base = args.project_dir.relative_to(base_dir)
     base_dir_from_example = relpath(base_dir, args.project_dir)
 
+    # Assemble test commands
+    test_command_parts = [
+        TEST_COMMAND_PREAMBLE.format(
+            example_dir_from_base_quoted = shlex.quote(str(example_dir_from_base)),
+        ),
+    ]
+    for test_dir in args.extra_test_dirs:
+        test_dir_from_base = test_dir.relative_to(base_dir)
+        test_dir_from_base_quoted = shlex.quote(str(test_dir_from_base))
+        example_dir_from_test = relpath(args.project_dir, test_dir)
+        example_dir_from_test_quoted = shlex.quote(str(example_dir_from_test))
+        test_command_parts.extend((
+            f'ln -sf {example_dir_from_test_quoted}/test_case {test_dir_from_base_quoted}/test_case',
+            f'ln -sf {example_dir_from_test_quoted}/translated_rust {test_dir_from_base_quoted}/translated_rust',
+            f'python3 -m runtests.ci -s {test_dir_from_base_quoted} --verbose',
+            f'python3 -m runtests.rust -s {test_dir_from_base_quoted} --verbose',
+            # `commit_dir` currently doesn't support symlinks, so remove them
+            # when done.
+            f'rm {test_dir_from_base_quoted}/test_case',
+            f'rm {test_dir_from_base_quoted}/translated_rust',
+        ))
+
     cfg_parts = [
         CONFIG_TEMPLATE_STR.format(
             base_dir = base_dir_from_example,
             example_name = targets[0]['name'],
             example_dir_from_base_quoted = shlex.quote(str(example_dir_from_base)),
+            test_command = '\n'.join(test_command_parts),
         ),
     ]
 
@@ -261,19 +291,25 @@ def main():
     (args.project_dir / "crisp.toml").write_text(cfg_str)
 
 
-    # Collect source files
+    # Collect source files for the project and for test infrastructure.
     commit_files = [
         base_dir / "Cargo.toml",
-        args.project_dir / "CMakeLists.txt",
-        args.project_dir / "CMakePresets.json",
     ]
     commit_dirs = [
-        args.project_dir / "runner",
         args.project_dir / "test_case",
-        args.project_dir / "test_vectors",
         base_dir / "deployment",
         base_dir / "tools",
     ]
+    # Add test files for the main project dir and for any extra dirs.
+    for test_dir in [args.project_dir] + args.extra_test_dirs:
+        commit_files.extend((
+            test_dir / "CMakeLists.txt",
+            test_dir / "CMakePresets.json",
+        ))
+        commit_dirs.extend((
+            test_dir / "runner",
+            test_dir / "test_vectors",
+        ))
 
     src_files = []
     for path in commit_files:

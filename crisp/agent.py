@@ -65,6 +65,9 @@ def run_rewrite(
             if exit_code != 0:
                 raise CrispError(f'codex-cli failed: exit code {exit_code}')
 
+        # TODO (HACK): remove symlinks so `commit_dir` doesn't break
+        sb.run(('find', '.', '-type', 'l', '-delete'))
+
         ignore_lines = [
             '__pycache__/',
             'build/',

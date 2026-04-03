@@ -11,6 +11,8 @@ from .error import CrispError
 from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
+AGENT_DEFAULT_MODEL = "gpt-5.4-2026-03-05"
+
 def _codex_command(subcmd: str, args: list[str]) -> list[str]:
     config_settings = {
         'model_providers.crisp.name': 'crisp',
@@ -18,7 +20,7 @@ def _codex_command(subcmd: str, args: list[str]) -> list[str]:
         #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
         'model_providers.crisp.env_key': 'CRISP_API_KEY',
         'profiles.crisp.model_provider': 'crisp',
-        'profiles.crisp.model': llm.API_MODEL or llm.get_default_model(),
+        'profiles.crisp.model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
         # TODO: figure out the actual context limit and use it here
         'profiles.crisp.context_length': 128 * 1024,
     }

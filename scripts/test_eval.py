@@ -107,7 +107,7 @@ def find_git_root(path: Path) -> Path:
 def run_crisp(cli_args: Args, args: Sequence[str | Path]):
     crisp_dir = Path(__file__).parent.parent.absolute()
     cmd = ["uv", "run", "--project", crisp_dir, "crisp", *args]
-    print(f'running {cmd!r}')
+    #print(f'running {cmd!r}')
     return subprocess.run(cmd, cwd=cli_args.project_dir, check=True)
 
 
@@ -135,8 +135,8 @@ TEST_COMMAND_PREAMBLE = """
 set -e
 export PYTHONPATH=$PWD/deployment/scripts/github-actions
 # Run non-Rust tests first so the C .so will be available for the Rust tests
-python3 -m runtests.ci --root . -s {example_dir_from_base_quoted}
-python3 -m runtests.rust --root . -s {example_dir_from_base_quoted} --verbose
+python3 -m runtests.ci --root . -s {project_dir_from_base_quoted}
+python3 -m runtests.rust --root . -s {project_dir_from_base_quoted} --verbose
 """
 
 
@@ -155,40 +155,49 @@ def main():
     args.project_dir = args.project_dir.resolve()
     args.extra_test_dirs = [path.resolve() for path in args.extra_test_dirs]
 
-    cmake_dir = 'test_case'
+    # `cmake_dir` is the directory that contains the top-level
+    # `CMakeLists.txt`.
+    cmake_dir = args.project_dir
+    cmakelists_path = cmake_dir / 'CMakeLists.txt'
+    if not cmakelists_path.exists():
+        cmake_dir = cmake_dir / 'test_case'
+        new_cmakelists_path = cmake_dir / 'CMakeLists.txt'
+        assert new_cmakelists_path.exists(), \
+            f'CMakeLists.txt not found at {cmakelists_path} or {new_cmakelists_path}'
+
     cmake_extra_args = []
 
-    cmake_presets_path = args.project_dir / 'CMakePresets.json'
+    cmake_presets_path = cmake_dir / 'CMakePresets.json'
     if cmake_presets_path.exists():
         j_presets = json.load(cmake_presets_path.open())
         assert len(j_presets['buildPresets']) == 1, 'expected exactly one entry in buildPresets'
         preset_name = j_presets['buildPresets'][0]['name']
-        cmake_dir = '.'
         cmake_extra_args.extend(('--preset', preset_name))
 
     # Extract CMake target info
-    targets = get_target_info(args.project_dir / cmake_dir, cmake_extra_args)
+    targets = get_target_info(cmake_dir, cmake_extra_args)
 
     # Write crisp.toml
     base_dir = find_git_root(args.project_dir)
-    # Example dir, relative to base dir
-    example_dir_from_base = args.project_dir.relative_to(base_dir)
-    base_dir_from_example = relpath(base_dir, args.project_dir)
+    project_dir_from_base = args.project_dir.relative_to(base_dir)
+    base_dir_from_project = relpath(base_dir, args.project_dir)
+    cmake_dir_from_base = cmake_dir.relative_to(base_dir)
+    cmake_dir_from_project = cmake_dir.relative_to(args.project_dir)
 
     # Assemble test commands
     test_command_parts = [
         TEST_COMMAND_PREAMBLE.format(
-            example_dir_from_base_quoted = shlex.quote(str(example_dir_from_base)),
+            project_dir_from_base_quoted = shlex.quote(str(project_dir_from_base)),
         ),
     ]
     for test_dir in args.extra_test_dirs:
         test_dir_from_base = test_dir.relative_to(base_dir)
         test_dir_from_base_quoted = shlex.quote(str(test_dir_from_base))
-        example_dir_from_test = relpath(args.project_dir, test_dir)
-        example_dir_from_test_quoted = shlex.quote(str(example_dir_from_test))
+        project_dir_from_test = relpath(args.project_dir, test_dir)
+        project_dir_from_test_quoted = shlex.quote(str(project_dir_from_test))
         test_command_parts.extend((
-            f'ln -sf {example_dir_from_test_quoted}/test_case {test_dir_from_base_quoted}/test_case',
-            f'ln -sf {example_dir_from_test_quoted}/translated_rust {test_dir_from_base_quoted}/translated_rust',
+            f'ln -sf {project_dir_from_test_quoted}/test_case {test_dir_from_base_quoted}/test_case',
+            f'ln -sf {project_dir_from_test_quoted}/translated_rust {test_dir_from_base_quoted}/translated_rust',
             f'python3 -m runtests.ci -s {test_dir_from_base_quoted} --verbose',
             f'python3 -m runtests.rust -s {test_dir_from_base_quoted} --verbose',
             # `commit_dir` currently doesn't support symlinks, so remove them
@@ -199,9 +208,9 @@ def main():
 
     cfg_parts = [
         CONFIG_TEMPLATE_STR.format(
-            base_dir = base_dir_from_example,
+            base_dir = base_dir_from_project,
             example_name = targets[0]['name'],
-            example_dir_from_base_quoted = shlex.quote(str(example_dir_from_base)),
+            project_dir_from_base_quoted = shlex.quote(str(project_dir_from_base)),
             test_command = '\n'.join(test_command_parts),
         ),
     ]
@@ -253,10 +262,10 @@ def main():
             art = {
                 'name': target['name'],
                 'configure_cmds': shlex.join(
-                    ['cmake', '-B', 'build', cmake_dir] + cmake_extra_args),
+                    ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
                 'build_cmds': shlex.join(
                     ['cmake', '--build', 'build', '--', target['name']]),
-                'bin_main': find_file_containing_main(args.project_dir / cmake_dir, target),
+                'bin_main': find_file_containing_main(cmake_dir, target),
             }
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
             bin_name = target['name']
@@ -281,7 +290,7 @@ def main():
             art = {
                 'name': target['name'],
                 'configure_cmds': shlex.join(
-                    ['cmake', '-B', 'build', cmake_dir] + cmake_extra_args),
+                    ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
                 'build_cmds': shlex.join(
                     ['cmake', '--build', 'build', '--', target['name']]),
             }
@@ -296,7 +305,7 @@ def main():
         base_dir / "Cargo.toml",
     ]
     commit_dirs = [
-        args.project_dir / "test_case",
+        cmake_dir,
         base_dir / "deployment",
         base_dir / "tools",
     ]
@@ -310,6 +319,17 @@ def main():
             test_dir / "runner",
             test_dir / "test_vectors",
         ))
+
+    # When `cmake_dir == args.project_dir`, traversing over `cmake_dir` may
+    # pick up a number of things that we don't want to include in the input to
+    # `crisp commit`.  We filter out specific directory names to avoid that.
+    exclude_dirs = {
+        # Compiled/generated output
+        'target', '__pycache__',
+        'build', 'build-ninja',
+        # CRISP
+        'crisp.toml', 'crisp-storage', 'translated_rust',
+    }
 
     src_files = []
     for path in commit_files:
@@ -325,7 +345,7 @@ def main():
                 rel_path = relpath(path, args.project_dir)
                 src_files.append(rel_path)
             for i in reversed(range(len(dirs))):
-                if dirs[i] in ("target", "__pycache__"):
+                if dirs[i] in exclude_dirs:
                     del dirs[i]
 
     run_crisp(args, ["commit", "-t", "c_code", *src_files])

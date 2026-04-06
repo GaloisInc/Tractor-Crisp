@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import os
 from pathlib import Path
+from pathspec.pathspec import PathSpec
 import shlex
 import subprocess
 import toml
@@ -75,8 +76,8 @@ class BwrapSandbox:
     def checkout_file(self, rel_path, n_file: FileNode):
         self.work_dir.checkout_file(rel_path, n_file)
 
-    def commit_dir(self, rel_path) -> TreeNode:
-        return self.work_dir.commit_dir(rel_path)
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None) -> TreeNode:
+        return self.work_dir.commit_dir(rel_path, ignore_spec)
 
     def commit_file(self, rel_path) -> FileNode:
         return self.work_dir.commit_file(rel_path)
@@ -84,7 +85,7 @@ class BwrapSandbox:
     def join(self, *other: StrPath) -> str:
         return str(WORK_DIR_INSIDE.joinpath(*other))
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -112,6 +113,9 @@ class BwrapSandbox:
             # means `analysis` results from one can be reused in the other.
             '--bind', self.work_dir.path, WORK_DIR_INSIDE,
         ]
+
+        for (k, v) in env.items():
+            bwrap_cmd.extend(('--setenv', k, v))
 
         # Add more `bind` entries based on config settings.
         extra_search_path = self.bwrap_cfg.extra_search_path.copy()

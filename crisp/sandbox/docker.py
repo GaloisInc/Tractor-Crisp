@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import docker
 import io
 import os
+from pathspec.pathspec import PathSpec
 import sys
 import tarfile
 import shlex
@@ -64,7 +65,7 @@ class WorkContainer:
             t.addfile(info, io.BytesIO(n_file.body()))
         self._checkout_tar_file(tar_io.getvalue())
 
-    def commit_dir(self, rel_path):
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -81,10 +82,15 @@ class WorkContainer:
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
+                    case tarfile.LNKTYPE:
+                        # Extract hard links for now, cargo creates some
+                        pass
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
+                        raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path
@@ -109,7 +115,7 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -120,9 +126,17 @@ class WorkContainer:
             # `exec_run` requires either a list or str, not a tuple.
             cmd = list(cmd)
 
+        # Copy the API key into the sandbox only if already set outside,
+        # but do not override the value from env.
+        if 'CRISP_API_KEY' not in env:
+            api_key = os.environ.get('CRISP_API_KEY')
+            if api_key is not None:
+                env['CRISP_API_KEY'] = api_key
+
         if not stream:
             exit_code, logs = self.container.exec_run(
-                cmd, workdir=self.join(cwd), stream=stream
+                cmd, workdir=self.join(cwd), stream=stream,
+                environment = env,
             )
             sys.stdout.flush()
             sys.stdout.buffer.write(logs)
@@ -132,7 +146,8 @@ class WorkContainer:
         # High-level `exec_run` API doesn't return the exit code when streaming
         # is enabled, so use the low-level API instead.
         exec_info = self.client.api.exec_create(
-            self.container.id, cmd, workdir=self.join(cwd)
+            self.container.id, cmd, workdir=self.join(cwd),
+            environment = env,
         )
         exec_id = exec_info['Id']
         stream = self.client.api.exec_start(exec_id, stream=True)

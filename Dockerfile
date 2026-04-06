@@ -12,7 +12,7 @@ RUN apt-get update
 # c2rust deps
 RUN apt-get install -y \
     build-essential llvm llvm-dev clang libclang-dev cmake \
-    libssl-dev pkg-config python3 git bear
+    libssl-dev pkg-config python3 git bear ripgrep
 
 # Install the toolchain used to build c2rust
 RUN rustup toolchain add \
@@ -81,9 +81,24 @@ RUN cd /opt/hayroll/hayroll \
     && rm -rf build/
 RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
 
+
 # Install CRISP tool binaries
 COPY tools/ /opt/crisp-tools/
 RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
+
+# Install codex-cli
+RUN mkdir /opt/codex-cli \
+    && cd /opt/codex-cli \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.107.0/codex-x86_64-unknown-linux-gnu.tar.gz \
+    && wget --quiet "$codex_url" \
+    && tar -xzf "$(basename "$codex_url")" \
+    && ln -s "$PWD/codex-x86_64-unknown-linux-gnu" /usr/local/bin/codex \
+    && rm "$(basename "$codex_url")"
+
+# Append the location of the Rust binaries to PATH
+# since `sh -l` overwrites that variable with the value
+# from /etc/profile and Codex uses `bash -lc` a lot
+RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
 
 
 FROM tractor-crisp-user AS tractor-crisp

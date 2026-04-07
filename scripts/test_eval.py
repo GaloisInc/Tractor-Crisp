@@ -322,13 +322,21 @@ def main():
 
     # When `cmake_dir == args.project_dir`, traversing over `cmake_dir` may
     # pick up a number of things that we don't want to include in the input to
-    # `crisp commit`.  We filter out specific directory names to avoid that.
-    exclude_dirs = {
+    # `crisp commit`.  We filter out specific subdirectory names to avoid that.
+    exclude_subdirs = {
         # Compiled/generated output
         'target', '__pycache__',
         'build', 'build-ninja',
         # CRISP
         'crisp.toml', 'crisp-storage', 'translated_rust',
+        # Exclude test runner and test vectors as in official T&E packaging
+        # scripts.  This ensures the agent won't stumble upon the tests when
+        # running with `--no-runtests` on a checkout that actually does include
+        # the tests.
+        'runner', 'test_vectors',
+    }
+    exclude_files = {
+        'compile_commands.json',
     }
 
     src_files = []
@@ -341,11 +349,13 @@ def main():
             continue
         for root, dirs, files in start_dir.walk():
             for f in files:
+                if f in exclude_files:
+                    continue
                 path = root / f
                 rel_path = relpath(path, args.project_dir)
                 src_files.append(rel_path)
             for i in reversed(range(len(dirs))):
-                if dirs[i] in exclude_dirs:
+                if dirs[i] in exclude_subdirs or dirs[i].startswith('crisp-storage'):
                     del dirs[i]
 
     run_crisp(args, ["commit", "-t", "c_code", *src_files])

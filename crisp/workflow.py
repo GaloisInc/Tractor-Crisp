@@ -356,8 +356,8 @@ class Workflow:
         with run_sandbox(cfg, mvir) as sb:
             output_path = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
 
-            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
+            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
 
             # Hack: ensure all directories mentioned in compile_commands.json
             # exist by placing an empty file in each one.

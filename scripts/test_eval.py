@@ -16,6 +16,8 @@ import toml
 class Args:
     project_dir: Path
     extra_test_dirs: list[Path]
+    runtests: bool
+    git: bool
     main_args: list[str]
 
 
@@ -25,6 +27,11 @@ def parse_args() -> Args:
     ap.add_argument('--extra-test-dir',
         type=Path, action='append', default=[], dest='extra_test_dirs',
         help='run extra test vectors from this directory')
+    ap.add_argument("--no-runtests", action='store_false', dest='runtests',
+        help="don't import `runtests` scripts or use them in `test_command`")
+    ap.add_argument("--no-git", action='store_false', dest='git',
+        help="don't require the project dir to be inside a git repository "
+            '(implies --no-runtests)')
     ap.add_argument("main_args", nargs='*',
         help='extra arguments to pass to `crisp main`')
     return Args(**ap.parse_args().__dict__)
@@ -149,6 +156,12 @@ def relpath(path: Path, start: Path) -> Path:
 def main():
     args = parse_args()
 
+    if not args.git:
+        args.runtests = False
+    if not args.runtests:
+        assert len(args.extra_test_dirs) == 0, \
+            '--extra-test-dirs is not supported with --no-runtests'
+
     # For consistency, `foo_dir` is always an absolute path in this code.
     # Relative paths are always `foo_dir_from_bar`, meaning the path of
     # `foo_dir` relative to `bar_dir`.
@@ -178,33 +191,42 @@ def main():
     targets = get_target_info(cmake_dir, cmake_extra_args)
 
     # Write crisp.toml
-    base_dir = find_git_root(args.project_dir)
+    if args.git:
+        base_dir = find_git_root(args.project_dir)
+    else:
+        base_dir = args.project_dir
     project_dir_from_base = args.project_dir.relative_to(base_dir)
     base_dir_from_project = relpath(base_dir, args.project_dir)
     cmake_dir_from_base = cmake_dir.relative_to(base_dir)
     cmake_dir_from_project = cmake_dir.relative_to(args.project_dir)
 
     # Assemble test commands
-    test_command_parts = [
-        TEST_COMMAND_PREAMBLE.format(
-            project_dir_from_base_quoted = shlex.quote(str(project_dir_from_base)),
-        ),
-    ]
-    for test_dir in args.extra_test_dirs:
-        test_dir_from_base = test_dir.relative_to(base_dir)
-        test_dir_from_base_quoted = shlex.quote(str(test_dir_from_base))
-        project_dir_from_test = relpath(args.project_dir, test_dir)
-        project_dir_from_test_quoted = shlex.quote(str(project_dir_from_test))
-        test_command_parts.extend((
-            f'ln -sf {project_dir_from_test_quoted}/test_case {test_dir_from_base_quoted}/test_case',
-            f'ln -sf {project_dir_from_test_quoted}/translated_rust {test_dir_from_base_quoted}/translated_rust',
-            f'python3 -m runtests.ci -s {test_dir_from_base_quoted} --verbose',
-            f'python3 -m runtests.rust -s {test_dir_from_base_quoted} --verbose',
-            # `commit_dir` currently doesn't support symlinks, so remove them
-            # when done.
-            f'rm {test_dir_from_base_quoted}/test_case',
-            f'rm {test_dir_from_base_quoted}/translated_rust',
-        ))
+    if args.runtests:
+        test_command_parts = [
+            TEST_COMMAND_PREAMBLE.format(
+                project_dir_from_base_quoted = shlex.quote(str(project_dir_from_base)),
+            ),
+        ]
+        for test_dir in args.extra_test_dirs:
+            test_dir_from_base = test_dir.relative_to(base_dir)
+            test_dir_from_base_quoted = shlex.quote(str(test_dir_from_base))
+            project_dir_from_test = relpath(args.project_dir, test_dir)
+            project_dir_from_test_quoted = shlex.quote(str(project_dir_from_test))
+            test_command_parts.extend((
+                f'ln -sf {project_dir_from_test_quoted}/test_case {test_dir_from_base_quoted}/test_case',
+                f'ln -sf {project_dir_from_test_quoted}/translated_rust {test_dir_from_base_quoted}/translated_rust',
+                f'python3 -m runtests.ci -s {test_dir_from_base_quoted} --verbose',
+                f'python3 -m runtests.rust -s {test_dir_from_base_quoted} --verbose',
+                # `commit_dir` currently doesn't support symlinks, so remove them
+                # when done.
+                f'rm {test_dir_from_base_quoted}/test_case',
+                f'rm {test_dir_from_base_quoted}/translated_rust',
+            ))
+    else:
+        test_command_parts = [
+            f'cd {shlex.quote(str(project_dir_from_base / "translated_rust"))}',
+            'cargo build',
+        ]
 
     cfg_parts = [
         CONFIG_TEMPLATE_STR.format(
@@ -301,24 +323,29 @@ def main():
 
 
     # Collect source files for the project and for test infrastructure.
-    commit_files = [
-        base_dir / "Cargo.toml",
-    ]
+    commit_files = []
     commit_dirs = [
         cmake_dir,
-        base_dir / "deployment",
-        base_dir / "tools",
     ]
+    if args.runtests:
+        commit_files.extend((
+            base_dir / "Cargo.toml",
+        ))
+        commit_dirs.extend((
+            base_dir / "deployment",
+            base_dir / "tools",
+        ))
     # Add test files for the main project dir and for any extra dirs.
     for test_dir in [args.project_dir] + args.extra_test_dirs:
         commit_files.extend((
             test_dir / "CMakeLists.txt",
             test_dir / "CMakePresets.json",
         ))
-        commit_dirs.extend((
-            test_dir / "runner",
-            test_dir / "test_vectors",
-        ))
+        if args.runtests:
+            commit_dirs.extend((
+                test_dir / "runner",
+                test_dir / "test_vectors",
+            ))
 
     # When `cmake_dir == args.project_dir`, traversing over `cmake_dir` may
     # pick up a number of things that we don't want to include in the input to

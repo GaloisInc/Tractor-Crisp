@@ -356,8 +356,8 @@ class Workflow:
         with run_sandbox(cfg, mvir) as sb:
             output_path = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
 
-            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
+            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
 
             # Create each directory mentioned in compile_commands.json, since
             # c2rust may assume that they already exist.

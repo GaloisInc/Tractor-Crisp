@@ -56,7 +56,15 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
-    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent'), default='default',
+    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+        default='default',
+        help='which style of LLM-based rewriting to use')
+
+    safety_loop = sub.add_parser('safety-loop')
+    safety_loop.add_argument('--c-code', default='c_code')
+    safety_loop.add_argument('node', nargs='?', default='current')
+    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+        default='default',
         help='which style of LLM-based rewriting to use')
 
     repl = sub.add_parser('repl')
@@ -230,6 +238,9 @@ def do_main(args, cfg):
         return None
     w.accept(n_code, ('main', 'split_ffi'))
 
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+
+def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe(n_code)
@@ -244,6 +255,26 @@ def do_main(args, cfg):
                     if n_op_test.exit_code == 0:
                         w.accept(n_new_code, ('main', 'safety', safety_try))
                         n_code = n_new_code
+
+                    continue
+
+                case 'agent_no_tests':
+                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    n_op_check = w.cargo_check_json_op(n_new_code)
+                    if n_op_check.passed:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+
+                    # `agent_no_tests` simulates the mode where no tests are
+                    # available and the only success criteria that CRISP can
+                    # check are whether the code builds or not.  We actually do
+                    # run the tests here, but if the accepted `n_code` ever
+                    # fails the tests, we bail out, on the assumption that
+                    # actually running CRISP with no tests on this input would
+                    # cause it to produce non-working code.
+                    n_op_test = w.test_op(n_code, n_c_code)
+                    assert n_op_test.exit_code == 0, \
+                        f'agent output failed tests: {n_op_test}'
 
                     continue
 
@@ -290,6 +321,18 @@ def do_main(args, cfg):
     unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def do_safety_loop(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
+    n_c_code = mvir.node(c_code_node_id)
+
+    code_node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(code_node_id)
+
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 def repl_locals(args, cfg, mvir, w):
     dct = dict(
@@ -455,6 +498,8 @@ def main():
 
     if args.cmd == 'main':
         do_main(args, cfg)
+    elif args.cmd == 'safety-loop':
+        do_safety_loop(args, cfg)
     elif args.cmd == 'repl':
         do_repl(args, cfg)
     elif args.cmd == 'eval':

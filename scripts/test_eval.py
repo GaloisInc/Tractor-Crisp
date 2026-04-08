@@ -276,19 +276,42 @@ def main():
             "this script can't handle a project with " \
             f'{num_binaries} binaries and {num_libraries} libraries'
 
+    def cmake_artifact(name, bin_main = None):
+        build_cmd = ['cmake', '--build', 'build']
+        if num_binaries + num_libraries > 1:
+            # If there are multiple targets, specify a particular one to build.
+            #
+            # TODO (hack): some of the Test-Corpus examples use the name of the
+            # parent directory (above `test_case/`) to set the name of the
+            # build target.  This name changes when we copy the code into a
+            # sandbox: the original directory `foo/test_case/` gets copied to
+            # `/tmp/sandbox/test_case` or similar, and attempting to build
+            # `foo` fails because the target is now called `sandbox`.  It
+            # happens to be the case that all such projects in `Test-Corpus`
+            # have only a single target.  We handle these projects by building
+            # without a specific target name, which builds the sole target
+            # regardless of its name, while still setting the artifact name in
+            # `crisp.toml` to the original name detected by this script, so
+            # that the final library or binary will still have the name
+            # expected by the test suite.
+            build_cmd.extend(('--', name))
+        art = {
+            'name': name,
+            'configure_cmds': shlex.join(
+                ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
+            'build_cmds': shlex.join(build_cmd),
+        }
+        if bin_main is not None:
+            art['bin_main'] = bin_main
+        return art
+
     if num_binaries == 1:
         # Transpile the binary first.
         for target in targets:
             if not is_binary(target):
                 continue
-            art = {
-                'name': target['name'],
-                'configure_cmds': shlex.join(
-                    ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
-                'build_cmds': shlex.join(
-                    ['cmake', '--build', 'build', '--', target['name']]),
-                'bin_main': find_file_containing_main(cmake_dir, target),
-            }
+            art = cmake_artifact(target['name'],
+                bin_main = find_file_containing_main(cmake_dir, target))
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
             bin_name = target['name']
 
@@ -309,13 +332,7 @@ def main():
         for target in targets:
             if not is_library(target):
                 continue
-            art = {
-                'name': target['name'],
-                'configure_cmds': shlex.join(
-                    ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
-                'build_cmds': shlex.join(
-                    ['cmake', '--build', 'build', '--', target['name']]),
-            }
+            art = cmake_artifact(target['name'])
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
 
     cfg_str = '\n'.join(cfg_parts)

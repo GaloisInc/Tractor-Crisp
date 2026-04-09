@@ -454,6 +454,9 @@ def detect_root_file(cfg: Config, mvir: MVIR, n_code: TreeNode) -> str:
     n_cargo_toml = mvir.node(n_code.files[cargo_toml_path])
     t = toml.loads(n_cargo_toml.body_str())
 
+    # TODO: get paths from `cargo metadata` instead of (partially) duplicating
+    # Cargo's logic here
+
     if (t_lib := t.get('lib')) is not None:
         if (path := t_lib.get('path')) is not None:
             return path

@@ -287,13 +287,23 @@ def cc_custom(
     with run_sandbox(cfg, mvir) as sb:
         work_dir = sb.join(cfg.relative_path('.'))
         cc_path = sb.join(COMPILE_COMMANDS_PATH)
+
+        cd_cmd = shlex.join(('cd', work_dir))
         cmds = []
+
         for cmd in art.configure_cmds:
-            cmd = f'cd {shlex.quote(work_dir)} && {cmd}'
-            cmds.append(['sh', '-c', cmd])
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.
+            cmds.append(['sh', '-c', f'{cd_cmd} && {cmd}'])
+
         for cmd in art.build_cmds:
-            cmd = f'cd {shlex.quote(work_dir)} && bear --output {shlex.quote(cc_path)} -- {cmd}'
-            cmds.append(['sh', '-c', cmd])
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.  We wrap the command in `sh -c` when passing it
+            # to `bear` because `bear` may scrub `--` entries from the command
+            # passed to it.
+            bear_cmd = shlex.join(('bear', '--output', cc_path, '--', 'sh', '-c', cmd))
+            cmds.append(['sh', '-c', f'{cd_cmd} && {bear_cmd}'])
+
         n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

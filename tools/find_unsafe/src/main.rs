@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{self, Read};
-use std::path;
+use std::path::{self, PathBuf};
 use ciborium;
 use clap::Parser;
 use serde::Serialize;
@@ -88,33 +89,101 @@ impl<'ast> Visit<'ast> for Visitor {
 
 
 #[derive(Parser, Debug)]
+#[group(multiple = false, required = true)]
 struct Args {
-    /// Expect the raw contents of a single file on stdin, instead of a CBOR dictionary mapping
-    /// file names to file contents.
+    /// Read a single file from stdin and report any unsafe code it contains.
     #[clap(long)]
-    single_file: bool,
+    stdin: bool,
+
+    /// Read a CBOR object from stdin.  It should contain a dictionary mapping file names to file
+    /// contents.
+    ///
+    /// This is mainly intended for use from CRISP, so it can pass multiple files over stdin rather
+    /// than creating temporary files.
+    #[clap(long)]
+    stdin_cbor: bool,
+
+    /// Read a single file from the given path.
+    #[clap(long)]
+    file: Option<PathBuf>,
+
+    /// Read all files within a directory (recursively) and report on all of them.
+    #[clap(long)]
+    dir: Option<PathBuf>,
 }
 
-fn read_files_cbor() -> HashMap<path::PathBuf, String> {
-    ciborium::from_reader(io::stdin()).unwrap()
-}
-
-fn read_files_single() -> HashMap<path::PathBuf, String> {
+fn read_stdin() -> io::Result<HashMap<PathBuf, String>> {
     let mut src = String::new();
-    io::stdin().read_to_string(&mut src).unwrap();
-    HashMap::from([
-        (path::PathBuf::from("input.rs"), src),
-    ])
+    io::stdin().read_to_string(&mut src)?;
+    Ok(HashMap::from([
+        (PathBuf::from("input.rs"), src),
+    ]))
+}
+
+fn read_stdin_cbor() -> Result<HashMap<PathBuf, String>, String> {
+    ciborium::from_reader(io::stdin())
+        .map_err(|e| e.to_string())
+}
+
+fn read_file(path: &path::Path) -> io::Result<HashMap<PathBuf, String>> {
+    let mut m = HashMap::new();
+    read_file_into(path, &mut m)?;
+    Ok(m)
+}
+
+fn read_file_into(
+    path: &path::Path,
+    dest: &mut HashMap<PathBuf, String>,
+) -> io::Result<()> {
+    let src = fs::read_to_string(path)?;
+    let old = dest.insert(path.to_owned(), src);
+    assert!(old.is_none(), "duplicate entry for {:?}", path);
+    Ok(())
+}
+
+fn read_dir(path: &path::Path) -> io::Result<HashMap<PathBuf, String>> {
+    let mut m = HashMap::new();
+    read_dir_into(path, &mut m)?;
+    Ok(m)
+}
+
+fn read_dir_into(
+    path: &path::Path,
+    dest: &mut HashMap<PathBuf, String>,
+) -> io::Result<()> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            read_dir_into(&entry.path(), dest)?;
+        } else {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".rs") && !name.starts_with('.') {
+                    read_file_into(&entry.path(), dest)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_files(args: &Args) -> Result<HashMap<PathBuf, String>, String> {
+    if args.stdin {
+        read_stdin().map_err(|e| e.to_string())
+    } else if args.stdin_cbor {
+        read_stdin_cbor()
+    } else if let Some(ref file) = args.file {
+        read_file(file).map_err(|e| e.to_string())
+    } else if let Some(ref dir) = args.dir {
+        read_dir(dir).map_err(|e| e.to_string())
+    } else {
+        panic!("must pass at least one input option")
+    }
 }
 
 fn main() {
     let args = Args::parse();
 
-    let files = if args.single_file {
-        read_files_single()
-    } else {
-        read_files_cbor()
-    };
+    let files = read_files(&args).unwrap();
 
     let mut outputs = HashMap::new();
     for (file_name, src) in files {
@@ -122,7 +191,6 @@ fn main() {
 
         let mut v = Visitor::default();
         v.visit_file(&ast);
-        eprintln!("{:?}", v);
         outputs.insert(file_name, v.out);
     }
 

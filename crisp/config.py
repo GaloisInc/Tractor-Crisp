@@ -136,6 +136,10 @@ class TranspileArtifactConfig(ConfigBase):
     # contains all of the relevant C sources.
     hayroll_project_dir: str = '.'
 
+    # Generate a `build.rs` for this artifact that sets `rustc-link-lib=foo`
+    # for each library in this list.
+    system_libs: list[str] = field(default_factory=list)
+
     def __post_init__(self):
         if self.lib_from_bin_artifact is None:
             assert self.build_cmds is not None, \

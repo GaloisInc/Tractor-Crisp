@@ -300,6 +300,8 @@ def main():
             'configure_cmds': shlex.join(
                 ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
             'build_cmds': shlex.join(build_cmd),
+            # Hack: add -lcrypto, which is required for one test case
+            'system_libs': ['crypto'],
         }
         if bin_main is not None:
             art['bin_main'] = bin_main

@@ -294,8 +294,9 @@ class Workflow:
                 # needed.
                 art_code = self.patch_cargo_toml(art_code, name = art_name)
 
-                # Hack: add -lcrypto, which is required for one test case
-                art_code = self.patch_build_rs(art_code, libs = ['crypto'])
+                # Add `-lcrypto` or similar flags if needed.
+                if len(art_cfg.system_libs) > 0:
+                    art_code = self.patch_build_rs(art_code, libs = art_cfg.system_libs)
 
             else:
                 base_code = artifact_code[art_cfg.lib_from_bin_artifact]

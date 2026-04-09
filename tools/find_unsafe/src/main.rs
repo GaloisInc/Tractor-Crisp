@@ -97,6 +97,9 @@ struct Args {
 
     /// Read a CBOR object from stdin.  It should contain a dictionary mapping file names to file
     /// contents.
+    ///
+    /// This is mainly intended for use from CRISP, so it can pass multiple files over stdin rather
+    /// than creating temporary files.
     #[clap(long)]
     stdin_cbor: bool,
 

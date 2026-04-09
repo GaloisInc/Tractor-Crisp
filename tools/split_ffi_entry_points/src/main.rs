@@ -50,6 +50,7 @@ impl<F: FnMut(&mut syn::Item) -> Option<syn::Item>> VisitMut for AddDerivedItemV
 }
 
 fn add_ffi_wrapper(
+    args: &Args,
     _db: &RootDatabase,
     _sema: &Semantics<RootDatabase>,
     _root: SyntaxNode,
@@ -168,7 +169,18 @@ fn add_ffi_wrapper(
         paren_token: syn::token::Paren::default(),
         args: arg_exprs.into_iter().collect(),
     });
-    let wrapper_stmt = syn::Stmt::Expr(wrapper_expr, None);
+    let mut wrapper_stmt = syn::Stmt::Expr(wrapper_expr, None);
+    if args.add_unsafe_blocks {
+        let unsafe_expr = syn::Expr::Unsafe(syn::ExprUnsafe {
+            attrs: Vec::new(),
+            unsafe_token: Default::default(),
+            block: syn::Block {
+                brace_token: Default::default(),
+                stmts: vec![wrapper_stmt],
+            },
+        });
+        wrapper_stmt = syn::Stmt::Expr(unsafe_expr, None);
+    }
     fn_wrapper.block.stmts.push(wrapper_stmt);
 
     Some(fn_wrapper.into())
@@ -333,6 +345,14 @@ impl ToTokens for ParsedMetaExportName {
 struct Args {
     /// Directory of Rust project to modify. `Cargo.toml` should reside inside this directory.
     cargo_dir_path: PathBuf,
+
+    /// Wrap the body of each generated FFI function in `unsafe { ... }`.
+    ///
+    /// This prevents an `unsafe_op_in_unsafe_fn` warning in 2024 edition, which is expected to
+    /// become a hard error in 2027 and later editions.  Earlier editions don't require this.
+    /// Since c2rust-transpile currently defaults to 2021 edition, this is off by default.
+    #[clap(long)]
+    add_unsafe_blocks: bool,
 }
 
 fn main() {
@@ -395,7 +415,7 @@ fn main() {
 
         let mut ast: syn::File = syn::parse2(ts.clone()).unwrap();
         let mut v = AddDerivedItemVisitor(|i: &mut syn::Item| -> Option<syn::Item> {
-            add_ffi_wrapper(&db, &sema, root.clone(), i)
+            add_ffi_wrapper(&args, &db, &sema, root.clone(), i)
         });
         v.visit_file_mut(&mut ast);
 

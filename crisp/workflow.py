@@ -600,7 +600,8 @@ class Workflow:
         with run_sandbox(cfg, mvir) as sb:
             sb.checkout(n_tree)
 
-            exit_code, logs = sb.run(['split_ffi_entry_points', sb.join(rust_path_rel)])
+            exit_code, logs = sb.run(
+                ['split_ffi_entry_points', '--add-unsafe-blocks', sb.join(rust_path_rel)])
 
             if exit_code == 0:
                 exit_code, logs2 = sb.run([

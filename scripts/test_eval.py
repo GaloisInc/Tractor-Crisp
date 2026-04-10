@@ -342,69 +342,49 @@ def main():
 
 
     # Collect source files for the project and for test infrastructure.
-    commit_files = []
-    commit_dirs = [
+    commit_paths = [
         cmake_dir,
     ]
     if args.runtests:
-        commit_files.extend((
+        commit_paths.extend((
             base_dir / "Cargo.toml",
         ))
-        commit_dirs.extend((
+        commit_paths.extend((
             base_dir / "deployment",
             base_dir / "tools",
         ))
     # Add test files for the main project dir and for any extra dirs.
     for test_dir in [args.project_dir] + args.extra_test_dirs:
-        commit_files.extend((
+        commit_paths.extend((
             test_dir / "CMakeLists.txt",
             test_dir / "CMakePresets.json",
         ))
         if args.runtests:
-            commit_dirs.extend((
+            commit_paths.extend((
                 test_dir / "runner",
                 test_dir / "test_vectors",
             ))
 
-    # When `cmake_dir == args.project_dir`, traversing over `cmake_dir` may
-    # pick up a number of things that we don't want to include in the input to
-    # `crisp commit`.  We filter out specific subdirectory names to avoid that.
-    exclude_subdirs = {
+    commit_excludes = [
         # Compiled/generated output
-        'target', '__pycache__',
-        'build', 'build-ninja',
-        # CRISP
-        'crisp.toml', 'crisp-storage', 'translated_rust',
-        # Exclude test runner and test vectors as in official T&E packaging
-        # scripts.  This ensures the agent won't stumble upon the tests when
-        # running with `--no-runtests` on a checkout that actually does include
-        # the tests.
-        'runner', 'test_vectors',
-    }
-    exclude_files = {
-        'compile_commands.json',
-    }
+        'target/', '__pycache__/',
+        # CRISP configs and storage
+        'crisp*',
+        # CRISP outputs that the user may have checked out into the directory
+        'translated_rust/', 'compile_commands.json',
+    ]
+    if not args.runtests:
+        commit_excludes.extend((
+            # Exclude test runner and test vectors as in official T&E packaging
+            # scripts.  This ensures the agent won't stumble upon the tests
+            # when running with `--no-runtests` on a checkout that actually
+            # does include the tests.
+            'runner/', 'test_vectors/',
+        ))
+    commit_exclude_args = ['--exclude=' + excl for excl in commit_excludes]
 
-    src_files = []
-    for path in commit_files:
-        if not path.exists():
-            continue
-        src_files.append(relpath(path, args.project_dir))
-    for start_dir in commit_dirs:
-        if not start_dir.exists():
-            continue
-        for root, dirs, files in start_dir.walk():
-            for f in files:
-                if f in exclude_files:
-                    continue
-                path = root / f
-                rel_path = relpath(path, args.project_dir)
-                src_files.append(rel_path)
-            for i in reversed(range(len(dirs))):
-                if dirs[i] in exclude_subdirs or dirs[i].startswith('crisp-storage'):
-                    del dirs[i]
-
-    run_crisp(args, ["commit", "-t", "c_code", *src_files])
+    run_crisp(args, ["commit", "-t", "c_code", *commit_exclude_args,
+        '--ignore-missing', *commit_paths])
     run_crisp(args, ["main"] + args.main_args)
 
 

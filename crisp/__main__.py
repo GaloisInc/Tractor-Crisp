@@ -61,6 +61,7 @@ def parse_args():
     main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    main.add_argument('--monotonic-unsafe', action='store_true')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -68,6 +69,7 @@ def parse_args():
     safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    safety_loop.add_argument('--monotonic-unsafe', action='store_true')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -241,12 +243,10 @@ def do_main(args, cfg):
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
-    for safety_try in range(llm_safety_tries):
-        unsafe_count = w.count_unsafe(n_code)
-        if unsafe_count == 0:
-            break
-
-        try:
+    safety_try = 0
+    unsafe_count = w.count_unsafe(n_code)
+    while safety_try < llm_safety_tries and unsafe_count > 0:
+        def safety_loop_inner():
             match args.llm_mode:
                 case 'agent':
                     n_new_code = w.agent_safety(n_code, n_c_code)
@@ -255,7 +255,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         w.accept(n_new_code, ('main', 'safety', safety_try))
                         n_code = n_new_code
 
-                    continue
+                    return
 
                 case 'agent_no_tests':
                     n_new_code = w.agent_safety(n_code, n_c_code)
@@ -275,7 +275,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     assert n_op_test.exit_code == 0, \
                         f'agent output failed tests: {n_op_test}'
 
-                    continue
+                    return
 
                 case 'default':
                     n_new_code = w.llm_safety(n_code)
@@ -309,15 +309,24 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
                     traceback.print_exc()
 
+        try:
+            safety_loop_inner()
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
             traceback.print_exc()
+
+        safety_try += 1
+        last_unsafe_count = unsafe_count
+        unsafe_count = w.count_unsafe(n_code)
+        if args.monotonic_unsafe and unsafe_count < last_unsafe_count:
+            # The agent reduced the unsafe count, restart the loop
+            last_unsafe_count = unsafe_count
+            safety_try = 0
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
     n_op_test = w.test_op(n_code, n_c_code)
-    unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 

@@ -56,13 +56,17 @@ class WorkContainer:
         self._checkout_tar_file(tar_io.getvalue())
 
     def checkout_file(self, rel_path, n_file):
-        assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
+        self.checkout_file_untracked(rel_path, n_file.body())
+
+    def checkout_file_untracked(self, rel_path, body):
+        assert not os.path.isabs(rel_path)
+        assert isinstance(body, bytes)
         tar_io = io.BytesIO()
         with tarfile.open(fileobj=tar_io, mode='w') as t:
             info = tarfile.TarInfo(rel_path)
-            info.size = len(n_file.body())
-            t.addfile(info, io.BytesIO(n_file.body()))
+            info.size = len(body)
+            t.addfile(info, io.BytesIO(body))
         self._checkout_tar_file(tar_io.getvalue())
 
     def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):

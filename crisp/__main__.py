@@ -62,6 +62,9 @@ def parse_args():
         choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    main.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+            "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -70,6 +73,9 @@ def parse_args():
         choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    safety_loop.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+        "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -119,7 +125,10 @@ def parse_args():
     sandbox_run.add_argument('--checkout', action='append', default=[], metavar='NODE',
         help='check out files from this node into the sandbox')
 
-    return ap.parse_args()
+    args = ap.parse_args()
+    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in ('agent', 'agent_sim_no_tests'):
+        ap.error('--codex-login requires --llm-mode=agent or --llm-mode=agent_sim_no_tests')
+    return args
 
 
 def parse_node_id_arg(mvir, s):
@@ -207,7 +216,7 @@ def parse_node_id(mvir, s):
 
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
+    w = Workflow(cfg, mvir, codex_login=args.codex_login)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
@@ -359,7 +368,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
+    w = Workflow(cfg, mvir, codex_login=args.codex_login)
 
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)

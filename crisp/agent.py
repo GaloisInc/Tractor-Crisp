@@ -3,6 +3,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 import os
+import re
 
 from pathspec.pathspec import PathSpec
 
@@ -14,13 +15,25 @@ from .sandbox import run_sandbox
 
 AGENT_DEFAULT_MODEL = "gpt-5.4-2026-03-05"
 
+_SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
+
+def _snapshot_to_family_alias(model: str) -> str:
+    """
+    Convert a pinned snapshot model ID like:
+        gpt-5.4-2026-03-05 -> gpt-5.4
+    """
+    m = _SNAPSHOT_SUFFIX.match(model)
+    return m.group("alias") if m else model
+
 def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> list[str]:
     cmd = ['codex', subcmd]
 
     if codex_login:
         # Use the host's `codex login` credentials (auth.json).  We only
         # override the model; everything else uses codex's defaults.
-        model = llm.API_MODEL or AGENT_DEFAULT_MODEL
+        # The --model flag does not support snapshot-style model identifiers so
+        # we attempt to convert snapshots to model family aliases.
+        model = _snapshot_to_family_alias(llm.API_MODEL or AGENT_DEFAULT_MODEL)
         cmd += ['--model', model]
     else:
         config_settings = {

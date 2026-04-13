@@ -119,6 +119,7 @@ WORKDIR /opt/tractor-crisp
 
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
+COPY scripts/test_eval.py ./scripts/test_eval.py
 RUN uv sync
 # FIXME: currently disabled in favor of the wrapper script below.  Some parts
 # of CRISP use `os.path.dirname(__file__)` to find related files, but `uv`

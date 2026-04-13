@@ -48,9 +48,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             universal-ctags
-      
-      # `--push` instead of `--load` so that everything is cached first
-      # and so we don't accidentally run out of storage.
 
       - name: Set $IMAGE_PREFIX
         run: |
@@ -66,7 +63,8 @@ jobs:
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
             --target ${TARGET} \
-            --tag ${IMAGE_NAME}:latest \
+            --tag ${TARGET}:latest \
+            --load \
             .
       
       - name: docker build tractor-crisp
@@ -79,13 +77,6 @@ jobs:
             --target ${TARGET} \
             --tag ${IMAGE_NAME}:latest \
             .
-
-      - name: docker pull and docker tag tractor-crisp-user
-        run: |
-          TARGET=tractor-crisp-user
-          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
-          docker pull ${IMAGE_NAME}:latest
-          docker tag ${IMAGE_NAME}:latest ${TARGET}:latest
 
       - uses: astral-sh/setup-uv@v6
 

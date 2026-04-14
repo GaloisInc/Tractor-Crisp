@@ -21,6 +21,9 @@ class ConfigBase:
             if origin is dict and _is_config_type(args[1]):
                 d[k] = {kk: args[1].from_dict(vv, config_path)
                     for kk, vv in v.items()}
+            elif origin is list and _is_config_type(args[0]):
+                d[k] = [args[0].from_dict(vv, config_path)
+                    for vv in v]
         if 'config_path' in field_tys and 'config_path' not in d:
             d['config_path'] = config_path
         return cls(**d)
@@ -86,27 +89,80 @@ class Config(ConfigBase):
 @dataclass(frozen = True)
 class TranspileConfig(ConfigBase):
     config_path: str
-    cmake_src_dir: str
     output_dir: str
-
-    # If set, run cmake with `--preset foo` to pick up settings from
-    # `CMakePresets.json`.
-    cmake_preset: str | None = None
-    # Basename (without extension) of the compilation unit that contains the
-    # `main` entry point, if the project produces a binary.  For example, if
-    # `main` is defined in `driver.c`, this should be set to `driver`.
-    bin_main: Optional[str] = None
-    # If set, only this target will be built (via `make foo` or similar) when
-    # generating `compile_commands.json`.  This means only files used in this
-    # target will be included in the generated Rust.
-    single_target: str | None = None
+    artifacts: list[TranspileArtifactConfig]
 
     def __post_init__(self):
+        # Check that all artifact names are distinct.
+        seen = set()
+        for a in self.artifacts:
+            assert a.name not in seen, f'duplicate entry for artifact {a.name!r}'
+            seen.add(a.name)
+
+    def artifact(self, key: str | int | None) -> 'TranspileArtifactConfig':
+        if key is None:
+            assert len(self.artifacts) == 1, \
+                    'must specify artifact name/index because config contains multiple artifacts'
+            return self.artifacts[0]
+        elif isinstance(key, int):
+            return self.artifacts[key]
+        else:
+            for art in self.artifacts:
+                if art.name == key:
+                    return art
+            raise KeyError(f'artifact {name!r} not found')
+
+@dataclass(frozen = True)
+class TranspileArtifactConfig(ConfigBase):
+    config_path: str
+
+    name: str
+    configure_cmds: list[str] | str | None = None
+    build_cmds: list[str] | str | None = None
+
+    # Basename (without extension) of the compilation unit that contains the
+    # `main` entry point, if this artifact is a binary.  For example, if `main`
+    # is defined in `driver.c`, this should be set to `driver`.
+    bin_main: Optional[str] = None
+
+    # If set to the name of an artifact, `configure_cmds` and `build_cmds` are
+    # ignored, and this artifact instead uses the same transpiled Rust code as
+    # the named artifact.
+    lib_from_bin_artifact: Optional[str] = None
+
+    # When using Hayroll, this path is passed as the `--project-dir` option.
+    # To minimize the number of additional layers of module hierarchy that
+    # Hayroll introduces, this should be set to the innermost directory that
+    # contains all of the relevant C sources.
+    hayroll_project_dir: str = '.'
+
+    # Generate a `build.rs` for this artifact that sets `rustc-link-lib=foo`
+    # for each library in this list.
+    system_libs: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.lib_from_bin_artifact is None:
+            assert self.build_cmds is not None, \
+                    f"artifact {self.name} is missing build_cmds"
+            # Normalize `configure_cmds` and `build_cmds` to be `list[str]`,
+            # using `object.__setattr__` to bypass `frozen = True`.
+            if self.configure_cmds is None:
+                object.__setattr__(self, 'configure_cmds', [])
+            elif isinstance(self.configure_cmds, str):
+                object.__setattr__(self, 'configure_cmds', [self.configure_cmds])
+            if isinstance(self.build_cmds, str):
+                object.__setattr__(self, 'build_cmds', [self.build_cmds])
+        else:
+            assert self.configure_cmds is None, \
+                    f"artifact {self.name} must not have configure_cmds "\
+                        'because lib_from_bin_artifact is set'
+            assert self.build_cmds is None, \
+                    f"artifact {self.name} must not have build_cmds "\
+                        'because lib_from_bin_artifact is set'
+
         config_dir = os.path.dirname(self.config_path)
-        object.__setattr__(self, 'cmake_src_dir',
-            os.path.join(config_dir, self.cmake_src_dir))
-        object.__setattr__(self, 'output_dir',
-            os.path.join(config_dir, self.output_dir))
+        object.__setattr__(self, 'hayroll_project_dir',
+            os.path.join(config_dir, self.hayroll_project_dir))
 
 @dataclass(frozen = True)
 class ModelConfig(ConfigBase):

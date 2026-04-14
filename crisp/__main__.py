@@ -4,6 +4,9 @@ import glob
 import json
 import os
 import pathlib
+from pathlib import Path
+from pathspec import PathSpec, GitIgnoreSpec
+import pathspec.util
 import re
 import requests
 import stat
@@ -11,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import traceback
-from pathlib import Path
 
 from . import analysis, inline_errors, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
@@ -92,8 +94,13 @@ def parse_args():
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
 
-    commit = sub.add_parser('commit')
+    commit = sub.add_parser('commit',
+        help='import files and directories into MVIR')
     commit.add_argument('--tag', '-t', default='current')
+    commit.add_argument('--exclude', action='append',
+        help="don't import files that match this gitignore-style rule")
+    commit.add_argument('--ignore-missing', action='store_true',
+        help='ignore nonexistent `path` arguments instead of reporting an error')
     commit.add_argument('path', nargs='*')
 
     checkout = sub.add_parser('checkout')
@@ -203,18 +210,8 @@ def do_main(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    # Hacks to get the C path relative to `n_tree`.  This handles
-    # tricks like `base_dir = ".."` used by the testing scripts.
-    # TODO: clean up config path handling and get rid of this
-    config_path = Path(cfg.config_path).parent.resolve()
-    base_path = Path(cfg.base_dir).resolve()
-    c_path = config_path / cfg.transpile.cmake_src_dir
-    c_path_rel = c_path.relative_to(base_path)
-
     paths = (Path(path) for path in n_c_code.files.keys())
-    num_c_files = sum(
-        1 for path in paths if path.suffix == ".c" and path.is_relative_to(c_path_rel)
-    )
+    num_c_files = sum(1 for path in paths if path.suffix == ".c")
 
     # Try transpiling with Hayroll first, then fall back to plain C2Rust.  Note
     # that `w.transpile` also checks that the tests pass, so a successful
@@ -419,13 +416,31 @@ def commit_node(mvir, cfg):
 def do_commit(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    base = os.path.abspath(cfg.base_dir)
     all_paths = {}
-    for path in args.path:
+    def add_path(path):
         abs_path = os.path.abspath(path)
         rel_path = cfg.relative_path(abs_path)
         assert all_paths.get(rel_path, abs_path) == abs_path
         all_paths[rel_path] = abs_path
+
+    ps = GitIgnoreSpec.from_lines(args.exclude)
+    for path_arg in args.path:
+        if os.path.isdir(path_arg):
+            # `ps.match_file` needs the input to have a trailing slash to
+            # recognize it as a directory.
+            if not path_arg.endswith('/'):
+                path_arg += '/'
+            if not ps.match_file(path_arg):
+                for path in ps.match_tree_files(path_arg, negate = True):
+                    add_path(os.path.join(path_arg, path))
+        elif os.path.isfile(path_arg):
+            if not ps.match_file(path_arg):
+                add_path(path_arg)
+        else:
+            if args.ignore_missing:
+                pass
+            else:
+                raise OSError(f'path {path_arg!r} does not exist')
 
     dct = {}
     for rel_path, abs_path in all_paths.items():

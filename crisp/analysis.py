@@ -3,6 +3,7 @@ from functools import wraps
 import inspect
 import json
 import os
+import shlex
 import subprocess
 import toml
 import typing
@@ -220,7 +221,7 @@ def inline_errors(
 COMPILE_COMMANDS_PATH = "compile_commands.json"
 
 @analysis
-def _cc_cmake_impl(
+def _cc_impl(
     cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode, cmds: list[list[str]]
 ) -> CompileCommandsOpNode:
     sb.checkout(c_code)
@@ -266,7 +267,44 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
         # `cmake --build <build_dir> <target>` which is incorrect.
         build_cmd = ["bear", "--", "sh", "-c", " ".join(build_cmake_cmd)]
         cmds = [config_cmd, build_cmd]
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    if n_op.compile_commands is not None:
+        mvir.set_tag('compile_commands', n_op.compile_commands, n_op.kind)
+    return n_op
+
+def cc_custom(
+    cfg: Config,
+    mvir: MVIR,
+    c_code: TreeNode,
+    art: TranspileArtifactConfig,
+) -> CompileCommandsOpNode:
+    assert art.lib_from_bin_artifact is None, \
+            f"can't generate compile_commands for {art.name} " \
+            'because it uses lib_from_bin_artifact'
+
+    with run_sandbox(cfg, mvir) as sb:
+        work_dir = sb.join(cfg.relative_path('.'))
+        cc_path = sb.join(COMPILE_COMMANDS_PATH)
+
+        cd_cmd = shlex.join(('cd', work_dir))
+        cmds = []
+
+        for cmd in art.configure_cmds:
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.
+            cmds.append(['sh', '-c', f'{cd_cmd} && {cmd}'])
+
+        for cmd in art.build_cmds:
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.  We wrap the command in `sh -c` when passing it
+            # to `bear` because `bear` may scrub `--` entries from the command
+            # passed to it.
+            bear_cmd = shlex.join(('bear', '--output', cc_path, '--', 'sh', '-c', cmd))
+            cmds.append(['sh', '-c', f'{cd_cmd} && {bear_cmd}'])
+
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:
@@ -410,26 +448,26 @@ def _split_rust_impl(
         raise CrispError('split_rust failed', n_op)
     return n_op
 
-def cargo_target_root_file(t: dict) -> str | None:
-    if (path := t.get('path')) is not None:
-        return path
-    if (name := t.get('name')) is not None:
-        return f'src/{name}'
-    return None
-
 def detect_root_file(cfg: Config, mvir: MVIR, n_code: TreeNode) -> str:
     cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
     cargo_toml_path = os.path.join(cargo_dir, 'Cargo.toml')
     n_cargo_toml = mvir.node(n_code.files[cargo_toml_path])
     t = toml.loads(n_cargo_toml.body_str())
 
-    for t_bin in t.get('bin', ()):
-        if (path := cargo_target_root_file(t_bin)) is not None:
-            return path
+    # TODO: get paths from `cargo metadata` instead of (partially) duplicating
+    # Cargo's logic here
 
     if (t_lib := t.get('lib')) is not None:
-        if (path := cargo_target_root_file(t_lib)) is not None:
+        if (path := t_lib.get('path')) is not None:
             return path
+        return 'src/lib.rs'
+
+    for t_bin in t.get('bin', ()):
+        if (path := t_bin.get('path')) is not None:
+            return path
+        if (name := t_bin.get('name')) is not None:
+            return f'src/bin/{name}.rs'
+        return 'src/main.rs'
 
     return 'src/lib.rs'
 

@@ -240,11 +240,37 @@ def do_main(args, cfg):
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+    # Try at most this many times in total to make the code safe.
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
+    # If set, bail out if the LLM fails to improve safety of the code for
+    # several consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
+    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
+    # progress for 3 iterations in a row, on the assumption that the LLM has
+    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
+    max_consecutive_failures = \
+            int(os.environ.get("LLM_SAFETY_MAX_CONSECUTIVE_FAILURES", llm_safety_tries))
+
+    best_unsafe_count = None
+    consecutive_failures = 0
+
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:
             break
+
+        # Update consecutive failure count
+        if best_unsafe_count is None or unsafe_count < best_unsafe_count:
+            best_unsafe_count = unsafe_count
+            consecutive_failures = 0
+        else:
+            # The previous iteration failed to make progress.  (Note the LLM
+            # may have run normally and produced working code, but if it didn't
+            # improve the unsafe count, we still consider that to be a failed
+            # iteration.)
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print(f'stopping due to {consecutive_failures} consecutive failures')
+                break
 
         try:
             match args.llm_mode:

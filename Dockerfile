@@ -103,6 +103,9 @@ RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
 
 FROM tractor-crisp-user AS tractor-crisp
 
+# Additional dependencies for scripts
+RUN apt-get install -y universal-ctags
+
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
 RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers

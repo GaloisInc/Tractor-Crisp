@@ -59,19 +59,19 @@ RUN cd /opt/c2rust \
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-COPY deps/hayroll /opt/hayroll/hayroll
+COPY deps/hayroll /opt/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
-RUN cd /opt/hayroll/hayroll \
+RUN cd /opt/hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19 \
-    && rm -rf ../z3/build/src/ \
-    && mv ../Maki/build/lib/libcpp2c.so . \
-    && mv ../Maki/build/bin/cpp2c . \
-    && rm -rf ../Maki/build/ \
-    && mkdir -p ../Maki/build/lib \
-    && mkdir -p ../Maki/build/bin \
-    && mv libcpp2c.so ../Maki/build/lib/ \
-    && mv cpp2c ../Maki/build/bin/
-RUN cd /opt/hayroll/hayroll \
+    && rm -rf dependencies/z3/build/src/ \
+    && mv dependencies/Maki/build/lib/libcpp2c.so . \
+    && mv dependencies/Maki/build/bin/cpp2c . \
+    && rm -rf dependencies/Maki/build/ \
+    && mkdir -p dependencies/Maki/build/lib \
+    && mkdir -p dependencies/Maki/build/bin \
+    && mv libcpp2c.so dependencies/Maki/build/lib/ \
+    && mv cpp2c dependencies/Maki/build/bin/
+RUN cd /opt/hayroll \
     && cargo-docker-clean.sh ./build.bash --release \
     && ln -f build/hayroll . \
     && ln -f build/release/reaper . \
@@ -79,7 +79,7 @@ RUN cd /opt/hayroll/hayroll \
     && ln -f build/release/inliner . \
     && ln -f build/release/cleaner . \
     && rm -rf build/
-RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
+RUN ln -s /opt/hayroll/hayroll /usr/local/bin/hayroll
 
 
 # Install CRISP tool binaries

@@ -103,7 +103,7 @@ RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
 
 FROM tractor-crisp-user AS tractor-crisp
 
-# Additional dependencies for scripts
+# Dependencies for `scripts/test_eval.py`
 RUN apt-get install -y universal-ctags
 
 # Set up sudo so CRISP can use it for sandboxing
@@ -118,9 +118,9 @@ ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
 # Enable sparse registry for the sandbox user
-RUN mkdir -v /home/crisp_sandbox_user/.cargo \
-    && cp -v $CARGO_HOME/config.toml /home/crisp_sandbox_user/.cargo/config.toml \
-    && chown -Rv crisp_sandbox_user:crisp_sandbox_user /home/crisp_sandbox_user/.cargo
+RUN mkdir -v /home/$CRISP_SANDBOX_SUDO_USER/.cargo \
+    && cp -v $CARGO_HOME/config.toml /home/$CRISP_SANDBOX_SUDO_USER/.cargo/ \
+    && chown -Rv $CRISP_SANDBOX_SUDO_USER:$CRISP_SANDBOX_SUDO_USER /home/$CRISP_SANDBOX_SUDO_USER/.cargo
 
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp

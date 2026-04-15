@@ -380,7 +380,7 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
 
     if exit_code == 0:
         if isinstance(logs, bytes):
-            logs = logs.decode('utf-8')
+            logs = logs.decode()
 
         json = sb.commit_file('unsafe.json').body_str()
     else:

@@ -117,6 +117,11 @@ RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
+# Enable sparse registry for the sandbox user
+RUN mkdir -v /home/crisp_sandbox_user/.cargo \
+    && cp -v $CARGO_HOME/config.toml /home/crisp_sandbox_user/.cargo/config.toml \
+    && chown -Rv crisp_sandbox_user:crisp_sandbox_user /home/crisp_sandbox_user/.cargo
+
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 

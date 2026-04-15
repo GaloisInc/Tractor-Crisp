@@ -371,43 +371,41 @@ def crisp_git_state(subdir=None) -> str:
 
 
 @analysis
-def _find_unsafe_impl(cfg: Config, mvir: MVIR,
-        code: TreeNode, commit: str) -> FindUnsafeAnalysisNode:
-    find_unsafe_dir = os.path.join(_CRISP_DIR, 'tools/find_unsafe')
+def _find_unsafe_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
+        code: TreeNode, cmd: list[str]) -> FindUnsafeAnalysisNode:
+    sb.checkout(code)
 
-    subprocess.run(('cargo', 'build', '--release'),
-        cwd=find_unsafe_dir, check=True)
+    cmd_wrapped = ['sh', '-c', shlex.join(cmd) + ' >unsafe.json']
+    exit_code, logs = sb.run(cmd_wrapped)
 
-    input_cbor_bytes = cbor.dumps({
-        name: mvir.node(node_id).body_str()
-        for name, node_id in code.files.items()
-        if name.endswith('.rs')
-    })
-    p = subprocess.run(('cargo', 'run', '--release', '--', '--stdin-cbor'),
-        cwd=find_unsafe_dir,
-        input=input_cbor_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode()
 
-    if p.returncode != 0:
-        print('command failed with exit code %d' % p.returncode)
-        print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
-        print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
-        p.check_returncode()
+        json = sb.commit_file('unsafe.json').body_str()
+    else:
+        json = ''
+        crate_out = CrateNode.new(mvir, defs = {})
 
-    # Check that stdout is valid json
-    _ = json.loads(p.stdout.decode('utf-8'))
-
-    n = FindUnsafeAnalysisNode.new(
-            mvir,
-            code = code.node_id(),
-            commit = commit,
-            stderr = p.stderr.decode('utf-8'),
-            body = p.stdout,
-            )
-    return n
+    n_op = FindUnsafeAnalysisNode.new(
+        mvir,
+        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
+        # output in the successful case.
+        body = json,
+        code = code.node_id(),
+        cmd = cmd,
+        exit_code = exit_code,
+        logs = logs,
+    )
+    if exit_code != 0:
+        raise CrispError('find_unsafe failed', n_op)
+    return n_op
 
 def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
-    commit = crisp_git_state('tools/find_unsafe')
-    return _find_unsafe_impl(cfg, mvir, code, commit)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['find-unsafe', '--dir', sb.join('.')]
+        n_op = _find_unsafe_impl(cfg, mvir, sb, code, cmd)
+    return n_op
 
 
 @analysis

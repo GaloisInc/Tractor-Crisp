@@ -103,6 +103,9 @@ RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
 
 FROM tractor-crisp-user AS tractor-crisp
 
+# Dependencies for `scripts/test_eval.py`
+RUN apt-get install -y universal-ctags
+
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
 RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers
@@ -114,11 +117,17 @@ RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
+# Enable sparse registry for the sandbox user
+RUN mkdir -v /home/$CRISP_SANDBOX_SUDO_USER/.cargo \
+    && cp -v $CARGO_HOME/config.toml /home/$CRISP_SANDBOX_SUDO_USER/.cargo/ \
+    && chown -Rv $CRISP_SANDBOX_SUDO_USER:$CRISP_SANDBOX_SUDO_USER /home/$CRISP_SANDBOX_SUDO_USER/.cargo
+
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
+COPY scripts/test_eval.py ./scripts/test_eval.py
 RUN uv sync
 # FIXME: currently disabled in favor of the wrapper script below.  Some parts
 # of CRISP use `os.path.dirname(__file__)` to find related files, but `uv`

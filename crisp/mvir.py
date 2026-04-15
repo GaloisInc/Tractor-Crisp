@@ -751,15 +751,16 @@ class InlineErrorsOpNode(Node):
     check_json = property(lambda self: self._metadata['check_json'])
 
 class FindUnsafeAnalysisNode(Node):
-    KIND = 'find_unsafe_analysis'
+    KIND = 'find_unsafe_analysis_v2'
     code: Metadata[NodeId]
-    # Commit hash of the `find_unsafe` version that was used
-    commit: Metadata[str]
-    stderr: Metadata[str]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    logs: Metadata[str]
     # `body` stores the JSON output
 
     code = property(lambda self: self._metadata['code'])
-    commit = property(lambda self: self._metadata['commit'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
     stderr = property(lambda self: self._metadata['stderr'])
 
 class EditOpNode(Node):
@@ -934,3 +935,14 @@ def migrate_split_ffi_op(metadata: dict[str, Any]):
     metadata['kind'] = 'split_ffi_op_v2'
     # `commit` field was removed
     del metadata['commit']
+
+@migration('find_unsafe_analysis')
+def migrate_find_unsafe_analysis(metadata: dict[str, Any]):
+    metadata['kind'] = 'find_unsafe_analysis_v2'
+    # `commit` field was removed
+    del metadata['commit']
+    # `cmd` and `exit_code` fields were added
+    metadata['cmd'] = ['find-unsafe', '--stdin-cbor']
+    metadata['exit_code'] = 0
+    # `stderr` was renamed to `logs`
+    metadata['logs'] = metadata['stderr']

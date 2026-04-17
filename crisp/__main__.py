@@ -284,7 +284,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     continue
 
                 case 'agent_no_tests':
-                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    # Don't provide the test code, so the agent can't
+                    # accidentally find the tests.  Note this has the side
+                    # effect of not providing the original C code, since we
+                    # don't currently distinguish test code from the rest of
+                    # the C code.
+                    n_new_code = w.agent_safety_no_tests(n_code)
                     n_op_check = w.cargo_check_json_op(n_new_code)
                     if n_op_check.passed:
                         w.accept(n_new_code, ('main', 'safety', safety_try))

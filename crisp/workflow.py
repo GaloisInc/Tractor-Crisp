@@ -311,6 +311,9 @@ class Workflow:
 
         code = self.patch_cargo_toml_workspace(code)
 
+        if not self.cargo_check_json_op(code).passed:
+            print('error: build failed after transpile')
+            return None
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
             return None

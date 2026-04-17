@@ -234,9 +234,12 @@ def do_main(args, cfg):
     w.accept(n_code, ('main', 'transpile'))
 
     n_code = w.split_ffi(n_code)
+    if not w.cargo_check_json_op(n_code).passed:
+        print('error: build failed after split_ffi')
+        return
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
-        return None
+        return
     w.accept(n_code, ('main', 'split_ffi'))
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)

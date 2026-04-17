@@ -132,7 +132,7 @@ src_globs = [
     "translated_rust/src/*/*/*.rs",
     "translated_rust/src/*/*/*/*.rs",
 ]
-test_command = """{test_command}"""
+{test_command_kv}
 
 [transpile]
 output_dir = "translated_rust"
@@ -222,18 +222,18 @@ def main():
                 f'rm {test_dir_from_base_quoted}/test_case',
                 f'rm {test_dir_from_base_quoted}/translated_rust',
             ))
+        test_command_kv = 'test_command = """{test_command}"""'.format(
+            test_command = '\n'.join(test_command_parts),
+        )
     else:
-        test_command_parts = [
-            f'cd {shlex.quote(str(project_dir_from_base / "translated_rust"))}',
-            'cargo build',
-        ]
+        test_command_kv = '# No test_command provided'
 
     cfg_parts = [
         CONFIG_TEMPLATE_STR.format(
             base_dir = base_dir_from_project,
             example_name = targets[0]['name'],
             project_dir_from_base_quoted = shlex.quote(str(project_dir_from_base)),
-            test_command = '\n'.join(test_command_parts),
+            test_command_kv = test_command_kv,
         ),
     ]
 

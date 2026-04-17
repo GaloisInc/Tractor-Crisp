@@ -676,7 +676,10 @@ class Workflow:
 
     @step
     def test_op(self, code: TreeNode, c_code: TreeNode) -> TestResultNode:
-        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, self.cfg.test_command)
+        test_cmd = self.cfg.test_command
+        if test_cmd is None:
+            test_cmd = 'true'
+        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, test_cmd)
         return n
 
     @step
@@ -962,12 +965,13 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
+        # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
     ) -> TreeNode:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        if provide_test_cmd:
+        if provide_test_cmd and cfg.test_command is not None:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
                     .format(test_cmd = cfg.test_command)
         else:

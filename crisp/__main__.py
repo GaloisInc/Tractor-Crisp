@@ -58,14 +58,16 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
-    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+    main.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
     safety_loop.add_argument('node', nargs='?', default='current')
-    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+    safety_loop.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
 
@@ -283,7 +285,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
                     continue
 
-                case 'agent_no_tests':
+                case 'agent_sim_no_tests':
                     # Don't provide the test code, so the agent can't
                     # accidentally find the tests.  Note this has the side
                     # effect of not providing the original C code, since we
@@ -295,7 +297,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         w.accept(n_new_code, ('main', 'safety', safety_try))
                         n_code = n_new_code
 
-                    # `agent_no_tests` simulates the mode where no tests are
+                    # `agent_sim_no_tests` simulates the mode where no tests are
                     # available and the only success criteria that CRISP can
                     # check are whether the code builds or not.  We actually do
                     # run the tests here, but if the accepted `n_code` ever

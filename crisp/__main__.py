@@ -58,14 +58,16 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
-    main.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+    main.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
     safety_loop.add_argument('node', nargs='?', default='current')
-    safety_loop.add_argument('--llm-mode', choices=('default', 'no_ffi', 'agent', 'agent_no_tests'),
+    safety_loop.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
         help='which style of LLM-based rewriting to use')
 
@@ -232,9 +234,12 @@ def do_main(args, cfg):
     w.accept(n_code, ('main', 'transpile'))
 
     n_code = w.split_ffi(n_code)
+    if not w.cargo_check_json_op(n_code).passed:
+        print('error: build failed after split_ffi')
+        return
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
-        return None
+        return
     w.accept(n_code, ('main', 'split_ffi'))
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
@@ -283,14 +288,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
                     continue
 
-                case 'agent_no_tests':
-                    n_new_code = w.agent_safety(n_code, n_c_code)
+                case 'agent_sim_no_tests':
+                    # Don't provide the test code, so the agent can't
+                    # accidentally find the tests.  Note this has the side
+                    # effect of not providing the original C code, since we
+                    # don't currently distinguish test code from the rest of
+                    # the C code.
+                    n_new_code = w.agent_safety_no_tests(n_code)
                     n_op_check = w.cargo_check_json_op(n_new_code)
                     if n_op_check.passed:
                         w.accept(n_new_code, ('main', 'safety', safety_try))
                         n_code = n_new_code
 
-                    # `agent_no_tests` simulates the mode where no tests are
+                    # `agent_sim_no_tests` simulates the mode where no tests are
                     # available and the only success criteria that CRISP can
                     # check are whether the code builds or not.  We actually do
                     # run the tests here, but if the accepted `n_code` ever

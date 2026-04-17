@@ -51,7 +51,10 @@ class Config(ConfigBase):
     # this command are interpreted relative to `base_dir` (specifically, the
     # command is run in a sandbox directory where a subset of the files from
     # `base_dir` have been checked out).
-    test_command: str
+    #
+    # If this is `None`, no tests will be run.  Operations that would normally
+    # run tests will always report that the tests passed.
+    test_command: str | None = None
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
     # `model = None` means call `/v1/models` and pick the first from the list.

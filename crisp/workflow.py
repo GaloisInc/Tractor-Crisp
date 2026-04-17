@@ -104,33 +104,26 @@ Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
+{after_refactoring_instruction}
+
+You can measure the amount of unsafe code remaining using this command:
+```sh
+find-unsafe --dir {cargo_dir_path} \
+    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
+```
+This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
+'''
+
+AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this script:
 ```sh
 {test_cmd}
 ```
+'''.strip()
 
-You can measure the amount of unsafe code remaining using this command:
-```sh
-find-unsafe --dir {cargo_dir_path} \
-    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
-```
-This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
-'''
-
-AGENT_SAFETY_PROMPT_NO_TESTS = '''
-Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.  First, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fileds) that uses `unsafe`, and plan how you would refactor it to make it safe.  Write this plan to `SAFETY_PLAN.md`.  Then carry out the refactor as planned.
-
-HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
-
+AGENT_AFTER_REFACTORING_BUILD = '''
 After refactoring, make sure the code still builds.
-
-You can measure the amount of unsafe code remaining using this command:
-```sh
-find-unsafe --dir {cargo_dir_path} \
-    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
-```
-This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
-'''
+'''.strip()
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -318,6 +311,9 @@ class Workflow:
 
         code = self.patch_cargo_toml_workspace(code)
 
+        if not self.cargo_check_json_op(code).passed:
+            print('error: build failed after transpile')
+            return None
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
             return None
@@ -683,7 +679,10 @@ class Workflow:
 
     @step
     def test_op(self, code: TreeNode, c_code: TreeNode) -> TestResultNode:
-        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, self.cfg.test_command)
+        test_cmd = self.cfg.test_command
+        if test_cmd is None:
+            test_cmd = 'true'
+        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, test_cmd)
         return n
 
     @step
@@ -969,14 +968,22 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
-        prompt: str = AGENT_SAFETY_PROMPT,
+        # If set, provide `cfg.test_command` to the agent, if it's available.
+        provide_test_cmd: bool = True,
     ) -> TreeNode:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = prompt.format(
+
+        if provide_test_cmd and cfg.test_command is not None:
+            after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
+                    .format(test_cmd = cfg.test_command)
+        else:
+            after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
+
+        prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
             initial_unsafe_count = self.count_unsafe(n_code),
-            test_cmd = cfg.test_command,
+            after_refactoring_instruction = after_refactoring_instruction,
         )
         return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
             clean_cmds = [
@@ -987,8 +994,7 @@ class Workflow:
     def agent_safety_no_tests(
         self,
         n_code: TreeNode,
-        prompt: str = AGENT_SAFETY_PROMPT_NO_TESTS,
     ) -> TreeNode:
         cfg, mvir = self.cfg, self.mvir
         n_test_code = TreeNode.new(mvir, files={})
-        return self.agent_safety(n_code, n_test_code, prompt = prompt)
+        return self.agent_safety(n_code, n_test_code, provide_test_cmd = False)

@@ -97,7 +97,7 @@ def parse_args():
     commit = sub.add_parser('commit',
         help='import files and directories into MVIR')
     commit.add_argument('--tag', '-t', default='current')
-    commit.add_argument('--exclude', action='append',
+    commit.add_argument('--exclude', action='append', default=[],
         help="don't import files that match this gitignore-style rule")
     commit.add_argument('--ignore-missing', action='store_true',
         help='ignore nonexistent `path` arguments instead of reporting an error')

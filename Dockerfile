@@ -3,9 +3,9 @@
 # Debian trixie (13) has gcc-13.
 FROM docker.io/rust:trixie AS tractor-crisp-user
 
-# rust-analyzer (required by hayroll)'s deps require Rust 1.89
-RUN rustup default 1.90.0
-RUN rustup +1.90.0 component add rustfmt
+# rust-analyzer 0.0.329 (used by tools/*) requires Rust 1.93 at minimum
+RUN rustup default 1.93.1
+RUN rustup +1.93.1 component add rustfmt
 
 RUN apt-get update
 

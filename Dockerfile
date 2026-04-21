@@ -100,7 +100,7 @@ RUN mkdir /opt/codex-cli \
 # Append the location of the Rust binaries to PATH
 # since `sh -l` overwrites that variable with the value
 # from /etc/profile and Codex uses `bash -lc` a lot
-RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
+RUN echo "export PATH=$PATH:${CARGO_HOME}/bin" >>/etc/profile
 
 
 FROM tractor-crisp-user AS tractor-crisp
@@ -110,7 +110,7 @@ RUN apt-get install -y universal-ctags
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
-RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers
+RUN sed -i -e "s,secure_path=\",&${CARGO_HOME}/bin:," /etc/sudoers
 RUN sed -i -e 's,secure_path=",&/opt/hayroll/build:,' /etc/sudoers
 RUN echo 'Defaults env_keep+="RUSTUP_HOME"' >>/etc/sudoers
 

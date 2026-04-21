@@ -3,7 +3,6 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use ra_ap_hir::{
     Adt, Function, HasCrate, HasSource, InFile, Module, ModuleDef, ModuleDefId, Name, Semantics,
-    db::DefDatabase,
 };
 use ra_ap_hir_def::{hir::generics::TypeOrConstParamData, signatures::FunctionSignature};
 use ra_ap_ide_db::search::FileReferenceNode;
@@ -11,6 +10,7 @@ use ra_ap_ide_db::{RootDatabase, defs::Definition};
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::{AstNode, Edition, NodeOrToken, TextRange, WalkEvent};
+use ra_ap_vfs::Vfs;
 use rust_analyzer_ext::crates;
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -57,12 +57,11 @@ fn module_def_source(
         ModuleDef::Module(m) => Some(m.definition_source_range(sema.db)),
         ModuleDef::Function(x) => source_text_range(sema, x),
         ModuleDef::Adt(x) => source_text_range(sema, x),
-        ModuleDef::Variant(x) => source_text_range(sema, x),
+        ModuleDef::EnumVariant(x) => source_text_range(sema, x),
         ModuleDef::Const(x) => source_text_range(sema, x),
         ModuleDef::Static(x) => source_text_range(sema, x),
         ModuleDef::Trait(x) => source_text_range(sema, x),
         ModuleDef::TypeAlias(x) => source_text_range(sema, x),
-        ModuleDef::TraitAlias(x) => source_text_range(sema, x),
         ModuleDef::BuiltinType(_) => return None, // Builtins are not defined in source code
         ModuleDef::Macro(x) => source_text_range(sema, x),
     }
@@ -225,7 +224,7 @@ fn definition_source(d: Definition) -> Option<ModuleDef> {
         Definition::Module(x) => Some(ModuleDef::Module(x)),
         Definition::Function(x) => Some(ModuleDef::Function(x)),
         Definition::Adt(x) => Some(ModuleDef::Adt(x)),
-        Definition::Variant(x) => Some(ModuleDef::Variant(x)),
+        Definition::EnumVariant(x) => Some(ModuleDef::EnumVariant(x)),
         Definition::Const(x) => Some(ModuleDef::Const(x)),
         Definition::Static(x) => Some(ModuleDef::Static(x)),
         Definition::Trait(x) => Some(ModuleDef::Trait(x)),
@@ -243,7 +242,7 @@ pub fn canonical_item_path(
 ) -> Option<String> {
     let mut segments = vec![item.name(db)?];
     // Include type before enum variants
-    if let ModuleDef::Variant(variant) = item {
+    if let ModuleDef::EnumVariant(variant) = item {
         segments.push(variant.parent_enum(db).name(db))
     }
     for m in item.module(db)?.path_to_root(db) {
@@ -264,7 +263,7 @@ fn absolute_item_path(db: &RootDatabase, item: ModuleDef, edition: Edition) -> S
         append_module_path_to_string(db, path, edition, &mut out);
     }
     // Include type before enum variants
-    if let ModuleDef::Variant(variant) = item {
+    if let ModuleDef::EnumVariant(variant) = item {
         let _ = write!(
             &mut out,
             "{}::",
@@ -331,12 +330,12 @@ fn items_used_by(sema: &Semantics<RootDatabase>, module_def: ModuleDef) -> HashS
             let const_ast = sema.source::<_>(c).expect("def without source").value;
             const_ast.body().expect("const value").syntax().to_owned()
         }
-        ModuleDef::Variant(v) => {
+        ModuleDef::EnumVariant(v) => {
             for f in v.fields(sema.db) {
-                use_type_components(f.ty(sema.db))
+                use_type_components(f.ty(sema.db).to_type(sema.db))
             }
             let variant_ast = sema.source(v).expect("def without source").value;
-            match variant_ast.expr() {
+            match variant_ast.const_arg() {
                 Some(body) => body.syntax().to_owned(),
                 None => return used_module_defs,
             }
@@ -348,12 +347,12 @@ fn items_used_by(sema: &Semantics<RootDatabase>, module_def: ModuleDef) -> HashS
             match adt {
                 Adt::Struct(s) => {
                     for f in s.fields(sema.db) {
-                        use_type_components(f.ty(sema.db))
+                        use_type_components(f.ty(sema.db).to_type(sema.db))
                     }
                 }
                 Adt::Union(u) => {
                     for f in u.fields(sema.db) {
-                        use_type_components(f.ty(sema.db))
+                        use_type_components(f.ty(sema.db).to_type(sema.db))
                     }
                 }
                 Adt::Enum(_e) => {}
@@ -363,7 +362,6 @@ fn items_used_by(sema: &Semantics<RootDatabase>, module_def: ModuleDef) -> HashS
         // References to a trait don't necessarily need to know about its full signature;
         // individual method references should cover the relevant portions.
         ModuleDef::Trait(_tr) => return used_module_defs,
-        ModuleDef::TraitAlias(_tra) => return used_module_defs,
         ModuleDef::TypeAlias(ta) => {
             use_type_components(ta.ty(sema.db));
             return used_module_defs;
@@ -403,6 +401,8 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
         load_out_dirs_from_check: true,
         with_proc_macro_server: ProcMacroServerChoice::Sysroot,
         prefill_caches: false,
+        num_worker_threads: 1,
+        proc_macro_processes: 1,
     };
 
     let (db, vfs, _proc_macro_client) = ra_ap_load_cargo::load_workspace_at(
@@ -415,7 +415,18 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
     log::info!("loaded crate");
 
-    let sema = Semantics::new(&db);
+    ra_ap_hir::attach_db(&db, || {
+        find_related_decls_impl(&args, &db, vfs, cargo_dir_path)
+    })
+}
+
+fn find_related_decls_impl(
+    args: &Args,
+    db: &RootDatabase,
+    vfs: Vfs,
+    cargo_dir_path: &Path,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let sema = Semantics::new(db);
 
     let krate = match crates::find_in_dir(&sema, &vfs, cargo_dir_path).as_slice()
     {
@@ -437,10 +448,10 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     };
 
     let mut files = Vec::new();
-    for m in krate.modules(&db) {
-        if let Some(editioned_file_id) = m.as_source_file_id(&db) {
+    for m in krate.modules(db) {
+        if let Some(editioned_file_id) = m.as_source_file_id(db) {
             sema.parse(editioned_file_id);
-            let file_id = editioned_file_id.file_id(&db);
+            let file_id = editioned_file_id.file_id(db);
             let vfs_path = vfs.file_path(file_id);
             if let Some(_path) = vfs_path.as_path() {
                 files.push(editioned_file_id);
@@ -449,13 +460,13 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     }
 
     // Iterate all items, constructing map of their text ranges and finding any in `args.item_paths`
-    let mut unfound_paths: HashSet<_> = args.item_paths.into_iter().collect();
+    let mut unfound_paths: HashSet<_> = args.item_paths.iter().cloned().collect();
     // Use `IndexMap` here to provide deterministic ordering required by snapshot tests.
     let mut found_items: IndexMap<_, _> = Default::default();
 
     let mut items_by_range = Vec::new();
     for file in &files {
-        let db = &db;
+        let db = db;
         let mut observe_def = |module_def: ModuleDef| {
             log::trace!(
                 "traversal saw item {:?}",
@@ -493,7 +504,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
                 if let ModuleDef::Adt(ra_ap_hir::Adt::Enum(e)) = module_def {
                     log::trace!("traversing enum");
                     for v in e.variants(db) {
-                        observe_def(ModuleDef::Variant(v));
+                        observe_def(ModuleDef::EnumVariant(v));
                     }
                 }
                 observe_def(module_def);
@@ -506,7 +517,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     // Visit the crate root, which is not included in the traversal above.
     {
         let path = "$crate";
-        let mod_ = krate.root_module();
+        let mod_ = krate.root_module(db);
         let module_def = ModuleDef::Module(mod_);
         if let Some(path) = unfound_paths.take(path) {
             log::debug!("found queried path for root module: {path}");
@@ -530,15 +541,15 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
         log::info!("processing {path}");
 
         let mod_def_path = |module_def: ModuleDef| {
-            let is_local = match module_def.module(&db) {
-                Some(m) => m.krate() == krate,
+            let is_local = match module_def.module(db) {
+                Some(m) => m.krate(db) == krate,
                 None => false,
             };
             if is_local {
-                canonical_item_path(&module_def, &db, Edition::DEFAULT)
-                    .unwrap_or_else(|| absolute_item_path(&db, module_def, Edition::DEFAULT))
+                canonical_item_path(&module_def, db, Edition::DEFAULT)
+                    .unwrap_or_else(|| absolute_item_path(db, module_def, Edition::DEFAULT))
             } else {
-                absolute_item_path(&db, module_def, Edition::DEFAULT)
+                absolute_item_path(db, module_def, Edition::DEFAULT)
             }
         };
 
@@ -575,19 +586,19 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
                 // For modules, output a list of child paths and info about the file.
                 let mod_ = Module::from(mod_id);
-                let decls = mod_.declarations(&db);
-                let mod_file_id = mod_.definition_source_file_id(&db);
-                let edition = mod_file_id.edition(&db);
+                let decls = mod_.declarations(db);
+                let mod_file_id = mod_.definition_source_file_id(db);
+                let edition = mod_file_id.edition(db);
                 let mut paths = Vec::with_capacity(decls.len());
                 for decl in decls {
-                    let path = canonical_item_path(&decl, &db, edition)
-                        .unwrap_or_else(|| absolute_item_path(&db, decl, edition));
+                    let path = canonical_item_path(&decl, db, edition)
+                        .unwrap_or_else(|| absolute_item_path(db, decl, edition));
                     paths.push(path);
                 }
                 path_info.insert("child_items".to_owned(), paths.into());
 
                 let file_path = mod_file_id.file_id()
-                    .map(|efid| efid.file_id(&db))
+                    .map(|efid| efid.file_id(db))
                     .map(|fid| vfs.file_path(fid))
                     .and_then(|vp| vp.as_path())
                     .map(|ap| ap.as_str());
@@ -596,16 +607,16 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
                 // If `is_inline` is set, then the file may contain other modules as well.  Each
                 // file should usually contain exactly one non-inline module and zero or more
                 // inline ones.
-                path_info.insert("is_inline".to_owned(), mod_.is_inline(&db).into());
+                path_info.insert("is_inline".to_owned(), mod_.is_inline(db).into());
             },
             Some(ModuleDefId::FunctionId(func_id)) => {
                 kind = "function";
 
                 // For functions, output the signature.
-                let sig = db.function_signature(func_id);
+                let sig = FunctionSignature::of(db, func_id);
                 path_info.insert(
                     "signature".to_owned(),
-                    pp_function_signature(&db, &*sig).into(),
+                    pp_function_signature(db, &sig).into(),
                 );
                 path_info.insert(
                     "written_signature".to_owned(),
@@ -620,6 +631,7 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
         output.insert(path, path_info.into());
     }
+
     Ok(output)
 }
 

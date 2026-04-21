@@ -29,14 +29,14 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2.0.106", features = ["full", "visit", "visit-mut"] }
 
-ra_ap_base_db = "=0.0.301"
-ra_ap_hir = "=0.0.301"
-ra_ap_hir_def = "=0.0.301"
-ra_ap_ide_db = "=0.0.301"
-ra_ap_load-cargo = "=0.0.301"
-ra_ap_project_model = "=0.0.301"
-ra_ap_syntax = "=0.0.301"
-ra_ap_vfs = "=0.0.301"
+ra_ap_base_db = "=0.0.329"
+ra_ap_hir = "=0.0.329"
+ra_ap_hir_def = "=0.0.329"
+ra_ap_ide_db = "=0.0.329"
+ra_ap_load-cargo = "=0.0.329"
+ra_ap_project_model = "=0.0.329"
+ra_ap_syntax = "=0.0.329"
+ra_ap_vfs = "=0.0.329"
 
 rust_analyzer_ext = { path = "rust_analyzer_ext" }
 rust_util = { path = "rust_util" }

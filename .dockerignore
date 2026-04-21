@@ -36,3 +36,6 @@
 
 # hayroll build dir
 /deps/hayroll/build/
+
+# hayroll dependencies
+/deps/hayroll/dependencies/

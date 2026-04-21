@@ -7,6 +7,8 @@ fn main() {
     println!("Hello, world!");
 }
 
+mod foo;
+
 /// example module for testing
 mod another {
     pub const MAX: usize = usize::MAX;

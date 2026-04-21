@@ -3,14 +3,20 @@ from functools import wraps
 import inspect
 import json
 import os
+import shlex
 import subprocess
+import toml
 import typing
 
 from . import inline_errors as inline_errors_module
 from .config import Config
-from .mvir import MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode, \
-        CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode, \
-        InlineErrorsOpNode
+from .error import CrispError
+from .mvir import (
+    MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
+    CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
+    InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
+    RelatedDeclsOpNode,
+)
 from .sandbox import Sandbox, run_sandbox
 
 
@@ -215,7 +221,7 @@ def inline_errors(
 COMPILE_COMMANDS_PATH = "compile_commands.json"
 
 @analysis
-def _cc_cmake_impl(
+def _cc_impl(
     cfg: Config, mvir: MVIR, sb: Sandbox, c_code: TreeNode, cmds: list[list[str]]
 ) -> CompileCommandsOpNode:
     sb.checkout(c_code)
@@ -250,11 +256,55 @@ def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode
         src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
         build_dir = sb.join("build")
         config_cmd = ["cmake", "-B", build_dir, src_dir]
-        build_cmd = ["bear", "--", "cmake", "--build", build_dir, "--"]
+        if cfg.transpile.cmake_preset is not None:
+            config_cmd += ['--preset', cfg.transpile.cmake_preset]
+        build_cmake_cmd = ["cmake", "--build", build_dir, "--"]
         if cfg.transpile.single_target is not None:
-            build_cmd.append(cfg.transpile.single_target)
+            build_cmake_cmd.append(cfg.transpile.single_target)
+        # We wrap the inner cmake command in `sh -c "cmake ..."` because
+        # the bear command line parser strips the second `--`, e.g.
+        # `bear -- cmake --build <build_dir> -- <target>` becomes
+        # `cmake --build <build_dir> <target>` which is incorrect.
+        build_cmd = ["bear", "--", "sh", "-c", " ".join(build_cmake_cmd)]
         cmds = [config_cmd, build_cmd]
-        n_op = _cc_cmake_impl(cfg, mvir, sb, c_code, cmds)
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    if n_op.compile_commands is not None:
+        mvir.set_tag('compile_commands', n_op.compile_commands, n_op.kind)
+    return n_op
+
+def cc_custom(
+    cfg: Config,
+    mvir: MVIR,
+    c_code: TreeNode,
+    art: TranspileArtifactConfig,
+) -> CompileCommandsOpNode:
+    assert art.lib_from_bin_artifact is None, \
+            f"can't generate compile_commands for {art.name} " \
+            'because it uses lib_from_bin_artifact'
+
+    with run_sandbox(cfg, mvir) as sb:
+        work_dir = sb.join(cfg.relative_path('.'))
+        cc_path = sb.join(COMPILE_COMMANDS_PATH)
+
+        cd_cmd = shlex.join(('cd', work_dir))
+        cmds = []
+
+        for cmd in art.configure_cmds:
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.
+            cmds.append(['sh', '-c', f'{cd_cmd} && {cmd}'])
+
+        for cmd in art.build_cmds:
+            # `cmd` is a string set by the user; we assume it's already
+            # properly quoted.  We wrap the command in `sh -c` when passing it
+            # to `bear` because `bear` may scrub `--` entries from the command
+            # passed to it.
+            bear_cmd = shlex.join(('bear', '--output', cc_path, '--', 'sh', '-c', cmd))
+            cmds.append(['sh', '-c', f'{cd_cmd} && {bear_cmd}'])
+
+        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     if n_op.compile_commands is not None:
@@ -321,40 +371,228 @@ def crisp_git_state(subdir=None) -> str:
 
 
 @analysis
-def _find_unsafe_impl(cfg: Config, mvir: MVIR,
-        code: TreeNode, commit: str) -> FindUnsafeAnalysisNode:
-    find_unsafe_dir = os.path.join(_CRISP_DIR, 'tools/find_unsafe')
+def _find_unsafe_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
+        code: TreeNode, cmd: list[str]) -> FindUnsafeAnalysisNode:
+    sb.checkout(code)
 
-    subprocess.run(('cargo', 'build', '--release'),
-        cwd=find_unsafe_dir, check=True)
+    cmd_wrapped = ['sh', '-c', shlex.join(cmd) + ' >unsafe.json']
+    exit_code, logs = sb.run(cmd_wrapped)
 
-    input_cbor_bytes = cbor.dumps({
-        name: mvir.node(node_id).body_str()
-        for name, node_id in code.files.items()
-        if name.endswith('.rs')
-    })
-    p = subprocess.run(('cargo', 'run', '--release'),
-        cwd=find_unsafe_dir,
-        input=input_cbor_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode()
 
-    if p.returncode != 0:
-        print('command failed with exit code %d' % p.returncode)
-        print(' --- stdout ---\n%s\n' % p.stdout.decode('utf-8', errors='replace'))
-        print(' --- stderr ---\n%s\n' % p.stderr.decode('utf-8', errors='replace'))
-        p.check_returncode()
+        json = sb.commit_file('unsafe.json').body_str()
+    else:
+        json = ''
+        crate_out = CrateNode.new(mvir, defs = {})
 
-    # Check that stdout is valid json
-    _ = json.loads(p.stdout.decode('utf-8'))
-
-    n = FindUnsafeAnalysisNode.new(
-            mvir,
-            code = code.node_id(),
-            commit = commit,
-            stderr = p.stderr.decode('utf-8'),
-            body = p.stdout,
-            )
-    return n
+    n_op = FindUnsafeAnalysisNode.new(
+        mvir,
+        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
+        # output in the successful case.
+        body = json,
+        code = code.node_id(),
+        cmd = cmd,
+        exit_code = exit_code,
+        logs = logs,
+    )
+    if exit_code != 0:
+        raise CrispError('find_unsafe failed', n_op)
+    return n_op
 
 def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
-    commit = crisp_git_state('tools/find_unsafe')
-    return _find_unsafe_impl(cfg, mvir, code, commit)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['find-unsafe', '--dir', sb.join('.')]
+        n_op = _find_unsafe_impl(cfg, mvir, sb, code, cmd)
+    return n_op
+
+
+@analysis
+def _split_rust_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox, code_in: TreeNode, cmd: list[str]
+) -> SplitOpNode:
+    sb.checkout(code_in)
+
+    exit_code, logs = sb.run(cmd)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        json_out = sb.commit_file('out.json')
+        j = json_out.body_json()
+        assert isinstance(j, dict)
+        defs = {}
+        for def_id, def_str in j.items():
+            defs[def_id] = DefNode.new(mvir, body = def_str).node_id()
+        crate_out = CrateNode.new(mvir, defs = defs)
+    else:
+        json_out = FileNode.new(mvir, b'')
+        crate_out = CrateNode.new(mvir, defs = {})
+
+    n_op = SplitOpNode.new(
+        mvir,
+        # Note that saving `logs` here duplicates the entire JSON/`CrateNode`
+        # output in the successful case.
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code_in = code_in.node_id(),
+        json_out = json_out.node_id(),
+        crate_out = crate_out.node_id(),
+    )
+    if exit_code != 0:
+        raise CrispError('split_rust failed', n_op)
+    return n_op
+
+def detect_root_file(cfg: Config, mvir: MVIR, n_code: TreeNode) -> str:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    cargo_toml_path = os.path.join(cargo_dir, 'Cargo.toml')
+    n_cargo_toml = mvir.node(n_code.files[cargo_toml_path])
+    t = toml.loads(n_cargo_toml.body_str())
+
+    # TODO: get paths from `cargo metadata` instead of (partially) duplicating
+    # Cargo's logic here
+
+    if (t_lib := t.get('lib')) is not None:
+        if (path := t_lib.get('path')) is not None:
+            return path
+        return 'src/lib.rs'
+
+    for t_bin in t.get('bin', ()):
+        if (path := t_bin.get('path')) is not None:
+            return path
+        if (name := t_bin.get('name')) is not None:
+            return f'src/bin/{name}.rs'
+        return 'src/main.rs'
+
+    return 'src/lib.rs'
+
+def split_rust(
+    cfg: Config,
+    mvir: MVIR,
+    n_code: TreeNode,
+    root_file: str | None = None,
+) -> SplitOpNode:
+    if root_file is None:
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = detect_root_file(cfg, mvir, n_code)
+        root_file = os.path.join(cargo_dir, root_file_rel)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['split_rust', sb.join(root_file), '--output-path', sb.join("out.json")]
+        n_op = _split_rust_impl(cfg, mvir, sb, n_code, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def _merge_rust_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox,
+    code_in: TreeNode, crate_in: CrateNode, cmd: list[str]
+) -> MergeOpNode:
+    sb.checkout(code_in)
+
+    j = {k: mvir.node(v).body_str() for k, v in crate_in.defs.items()}
+    json_in = FileNode.new(mvir, json.dumps(j))
+    sb.checkout_file('in.json', json_in)
+
+    exit_code, logs = sb.run(cmd)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        _ = sb.run(['rm', '-f', 'in.json'])
+
+        code_out = sb.commit_dir('.')
+    else:
+        code_out = TreeNode.new(mvir, files = {})
+
+    n_op = MergeOpNode.new(
+        mvir,
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code_in = code_in.node_id(),
+        crate_in = crate_in.node_id(),
+        code_out = code_out.node_id(),
+    )
+    if exit_code != 0:
+        raise CrispError('merge_rust failed', n_op)
+    return n_op
+
+def merge_rust(cfg: Config, mvir: MVIR, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    root_file_rel = detect_root_file(cfg, mvir, n_code)
+    root_file = os.path.join(cargo_dir, root_file_rel)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['merge_rust', sb.join(root_file), sb.join("in.json")]
+        n_op = _merge_rust_impl(cfg, mvir, sb, n_code, n_crate, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def _related_decls_impl(
+    cfg: Config, mvir: MVIR, sb: Sandbox,
+    code: TreeNode, query_def_names: list[str], cmd: list[str],
+) -> RelatedDeclsOpNode:
+    sb.checkout(code)
+
+    exit_code, logs = sb.run(cmd, stream=True)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode('utf-8')
+
+        json_out = sb.commit_file('out.json')
+        j = json_out.body_json()
+        assert isinstance(j, dict)
+        sig_defs = {}
+        # related_decls currently gives the signature up through the end of the
+        # return type.  We add a placeholder body after this so it will look
+        # more familiar to the LLM.
+        for def_id, j_def in j.items():
+            if (sig := j_def.get('written_signature')) is not None:
+                sig += ' {\n' \
+                    '    // ...\n' \
+                    '}\n'
+                sig_defs[def_id] = DefNode.new(mvir, body = sig).node_id()
+        sigs_out = CrateNode.new(mvir, defs = sig_defs)
+    else:
+        json_out = FileNode.new(mvir, b'')
+        sigs_out = CrateNode.new(mvir, defs = {})
+
+    n_op = RelatedDeclsOpNode.new(
+        mvir,
+        body = logs,
+        cmd = cmd,
+        exit_code = exit_code,
+        code = code.node_id(),
+        query_def_names = query_def_names.copy(),
+        json_out = json_out.node_id(),
+        sigs_out = sigs_out.node_id(),
+    )
+    if exit_code != 0:
+        raise CrispError('related_decls failed', n_op)
+    return n_op
+
+def related_decls(
+    cfg: Config,
+    mvir: MVIR,
+    n_code: TreeNode,
+    query_def_names: list[str] | None = None,
+) -> RelatedDeclsOpNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = ['related_decls', sb.join(cargo_dir), '--output-path', sb.join("out.json")]
+        if query_def_names is not None:
+            cmd += query_def_names
+        else:
+            cmd += ['--all']
+            query_def_names = []
+        n_op = _related_decls_impl(cfg, mvir, sb, n_code, query_def_names, cmd)
+
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op

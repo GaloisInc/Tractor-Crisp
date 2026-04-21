@@ -30,6 +30,7 @@ def get_repo(mvir: MVIR) -> pygit2.Repository:
 # names of the fields containing the old and new `TreeNode`s.
 OP_NODE_KINDS = {
     mvir_module.LlmOpNode.KIND: ('old_code', 'new_code'),
+    mvir_module.CodexAgentOpNode.KIND: ('old_code', 'new_code'),
 }
 
 HISTORY_INDEX_KEYS = set((kind, new) for (kind, (old, new)) in OP_NODE_KINDS.items())

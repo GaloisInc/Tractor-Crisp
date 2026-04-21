@@ -4,17 +4,21 @@ import glob
 import json
 import os
 import pathlib
+from pathlib import Path
+from pathspec import PathSpec, GitIgnoreSpec
+import pathspec.util
 import re
 import requests
 import stat
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+import traceback
 
 from . import analysis, inline_errors, llm, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
+from .error import CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode
 from .sandbox import run_sandbox
@@ -54,6 +58,18 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
+    main.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        default='default',
+        help='which style of LLM-based rewriting to use')
+
+    safety_loop = sub.add_parser('safety-loop')
+    safety_loop.add_argument('--c-code', default='c_code')
+    safety_loop.add_argument('node', nargs='?', default='current')
+    safety_loop.add_argument('--llm-mode',
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        default='default',
+        help='which style of LLM-based rewriting to use')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -80,8 +96,13 @@ def parse_args():
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
 
-    commit = sub.add_parser('commit')
+    commit = sub.add_parser('commit',
+        help='import files and directories into MVIR')
     commit.add_argument('--tag', '-t', default='current')
+    commit.add_argument('--exclude', action='append', default=[],
+        help="don't import files that match this gitignore-style rule")
+    commit.add_argument('--ignore-missing', action='store_true',
+        help='ignore nonexistent `path` arguments instead of reporting an error')
     commit.add_argument('path', nargs='*')
 
     checkout = sub.add_parser('checkout')
@@ -92,6 +113,11 @@ def parse_args():
     git = sub.add_parser('git')
     git.add_argument('-n', '--node', default='current')
     git.add_argument('args', nargs='*')
+
+    sandbox_run = sub.add_parser('sandbox-run')
+    sandbox_run.add_argument('run_cmd', nargs='*')
+    sandbox_run.add_argument('--checkout', action='append', default=[], metavar='NODE',
+        help='check out files from this node into the sandbox')
 
     return ap.parse_args()
 
@@ -186,18 +212,8 @@ def do_main(args, cfg):
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
 
-    # Hacks to get the C path relative to `n_tree`.  This handles
-    # tricks like `base_dir = ".."` used by the testing scripts.
-    # TODO: clean up config path handling and get rid of this
-    config_path = Path(cfg.config_path).parent.resolve()
-    base_path = Path(cfg.base_dir).resolve()
-    c_path = config_path / cfg.transpile.cmake_src_dir
-    c_path_rel = c_path.relative_to(base_path)
-
     paths = (Path(path) for path in n_c_code.files.keys())
-    num_c_files = sum(
-        1 for path in paths if path.suffix == ".c" and path.is_relative_to(c_path_rel)
-    )
+    num_c_files = sum(1 for path in paths if path.suffix == ".c")
 
     # Try transpiling with Hayroll first, then fall back to plain C2Rust.  Note
     # that `w.transpile` also checks that the tests pass, so a successful
@@ -218,38 +234,120 @@ def do_main(args, cfg):
     w.accept(n_code, ('main', 'transpile'))
 
     n_code = w.split_ffi(n_code)
+    if not w.cargo_check_json_op(n_code).passed:
+        print('error: build failed after split_ffi')
+        return
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
-        return None
+        return
     w.accept(n_code, ('main', 'split_ffi'))
 
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+
+def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+    # Try at most this many times in total to make the code safe.
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
+    # If set, bail out if the LLM fails to improve safety of the code for
+    # several consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
+    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
+    # progress for 3 iterations in a row, on the assumption that the LLM has
+    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
+    max_consecutive_failures = \
+            int(os.environ.get("LLM_SAFETY_MAX_CONSECUTIVE_FAILURES", llm_safety_tries))
+
+    best_unsafe_count = None
+    consecutive_failures = 0
+
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe(n_code)
         if unsafe_count == 0:
             break
 
-        n_new_code = w.llm_safety(n_code)
-
-        for repair_try in range(3):
-            n_op_check = w.cargo_check_json_op(n_new_code)
-            if not n_op_check.passed:
-                n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
-
-                n_op_check = w.cargo_check_json_op(n_new_code)
-                if not n_op_check.passed:
-                    # If we failed to fix the compile errors, don't bother
-                    # trying to run tests.  This still counts as a repair
-                    # attempt.
-                    continue
-
-            n_op_test = w.test_op(n_new_code, n_c_code)
-            if n_op_test.exit_code == 0:
-                w.accept(n_new_code, ('main', 'safety', safety_try))
-                n_code = n_new_code
+        # Update consecutive failure count
+        if best_unsafe_count is None or unsafe_count < best_unsafe_count:
+            best_unsafe_count = unsafe_count
+            consecutive_failures = 0
+        else:
+            # The previous iteration failed to make progress.  (Note the LLM
+            # may have run normally and produced working code, but if it didn't
+            # improve the unsafe count, we still consider that to be a failed
+            # iteration.)
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
 
-            n_new_code = w.llm_repair(n_new_code, n_op_test)
+        try:
+            match args.llm_mode:
+                case 'agent':
+                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    n_op_test = w.test_op(n_new_code, n_c_code)
+                    if n_op_test.exit_code == 0:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+
+                    continue
+
+                case 'agent_sim_no_tests':
+                    # Don't provide the test code, so the agent can't
+                    # accidentally find the tests.  Note this has the side
+                    # effect of not providing the original C code, since we
+                    # don't currently distinguish test code from the rest of
+                    # the C code.
+                    n_new_code = w.agent_safety_no_tests(n_code)
+                    n_op_check = w.cargo_check_json_op(n_new_code)
+                    if n_op_check.passed:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+
+                    # `agent_sim_no_tests` simulates the mode where no tests are
+                    # available and the only success criteria that CRISP can
+                    # check are whether the code builds or not.  We actually do
+                    # run the tests here, but if the accepted `n_code` ever
+                    # fails the tests, we bail out, on the assumption that
+                    # actually running CRISP with no tests on this input would
+                    # cause it to produce non-working code.
+                    n_op_test = w.test_op(n_code, n_c_code)
+                    assert n_op_test.exit_code == 0, \
+                        f'agent output failed tests: {n_op_test}'
+
+                    continue
+
+                case 'default':
+                    n_new_code = w.llm_safety(n_code)
+                case 'no_ffi':
+                    n_new_code = w.llm_safety_no_ffi(n_code)
+                case mode:
+                    # `--llm-mode agent` should be handled at a higher level.
+                    assert False, f'unexpected llm_mode {mode!r}'
+
+            for repair_try in range(3):
+                try:
+                    n_op_check = w.cargo_check_json_op(n_new_code)
+                    if not n_op_check.passed:
+                        n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
+
+                        n_op_check = w.cargo_check_json_op(n_new_code)
+                        if not n_op_check.passed:
+                            # If we failed to fix the compile errors, don't bother
+                            # trying to run tests.  This still counts as a repair
+                            # attempt.
+                            continue
+
+                    n_op_test = w.test_op(n_new_code, n_c_code)
+                    if n_op_test.exit_code == 0:
+                        w.accept(n_new_code, ('main', 'safety', safety_try))
+                        n_code = n_new_code
+                        break
+
+                    n_new_code = w.llm_repair(n_new_code, n_op_test)
+                except CrispError as e:
+                    print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
+                    traceback.print_exc()
+
+        except CrispError as e:
+            print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
+            traceback.print_exc()
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())
@@ -258,6 +356,18 @@ def do_main(args, cfg):
     unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def do_safety_loop(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    c_code_node_id = parse_node_id_arg(mvir, args.c_code)
+    n_c_code = mvir.node(c_code_node_id)
+
+    code_node_id = parse_node_id_arg(mvir, args.node)
+    n_code = mvir.node(code_node_id)
+
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 def repl_locals(args, cfg, mvir, w):
     dct = dict(
@@ -342,13 +452,31 @@ def commit_node(mvir, cfg):
 def do_commit(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
 
-    base = os.path.abspath(cfg.base_dir)
     all_paths = {}
-    for path in args.path:
+    def add_path(path):
         abs_path = os.path.abspath(path)
         rel_path = cfg.relative_path(abs_path)
         assert all_paths.get(rel_path, abs_path) == abs_path
         all_paths[rel_path] = abs_path
+
+    ps = GitIgnoreSpec.from_lines(args.exclude)
+    for path_arg in args.path:
+        if os.path.isdir(path_arg):
+            # `ps.match_file` needs the input to have a trailing slash to
+            # recognize it as a directory.
+            if not path_arg.endswith('/'):
+                path_arg += '/'
+            if not ps.match_file(path_arg):
+                for path in ps.match_tree_files(path_arg, negate = True):
+                    add_path(os.path.join(path_arg, path))
+        elif os.path.isfile(path_arg):
+            if not ps.match_file(path_arg):
+                add_path(path_arg)
+        else:
+            if args.ignore_missing:
+                pass
+            else:
+                raise OSError(f'path {path_arg!r} does not exist')
 
     dct = {}
     for rel_path, abs_path in all_paths.items():
@@ -404,6 +532,15 @@ def do_git(args, cfg):
 
     os.execvpe('git', cmd, env)
 
+def do_sandbox_run(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+
+    with run_sandbox(cfg, mvir) as sb:
+        for node_id_str in args.checkout:
+            node_id = parse_node_id_arg(mvir, node_id_str)
+            sb.checkout(mvir.node(node_id))
+        sb.run(args.run_cmd, stream = True)
+
 def main():
     args = parse_args()
 
@@ -417,6 +554,8 @@ def main():
 
     if args.cmd == 'main':
         do_main(args, cfg)
+    elif args.cmd == 'safety-loop':
+        do_safety_loop(args, cfg)
     elif args.cmd == 'repl':
         do_repl(args, cfg)
     elif args.cmd == 'eval':
@@ -435,6 +574,8 @@ def main():
         do_checkout(args, cfg)
     elif args.cmd == 'git':
         do_git(args, cfg)
+    elif args.cmd == 'sandbox-run':
+        do_sandbox_run(args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

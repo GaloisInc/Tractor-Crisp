@@ -48,9 +48,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             universal-ctags
-      
-      # `--push` instead of `--load` so that everything is cached first
-      # and so we don't accidentally run out of storage.
 
       - name: Set $IMAGE_PREFIX
         run: |
@@ -66,7 +63,8 @@ jobs:
             --cache-from type=registry,ref=${IMAGE_NAME}:cache \
             --cache-to   type=registry,ref=${IMAGE_NAME}:cache,mode=max \
             --target ${TARGET} \
-            --tag ${IMAGE_NAME}:latest \
+            --tag ${TARGET}:latest \
+            --load \
             .
       
       - name: docker build tractor-crisp
@@ -80,28 +78,21 @@ jobs:
             --tag ${IMAGE_NAME}:latest \
             .
 
-      - name: docker pull and docker tag tractor-crisp-user
-        run: |
-          TARGET=tractor-crisp-user
-          IMAGE_NAME=${IMAGE_PREFIX}/${TARGET}
-          docker pull ${IMAGE_NAME}:latest
-          docker tag ${IMAGE_NAME}:latest ${TARGET}:latest
-
       - uses: astral-sh/setup-uv@v6
 
       - run: uv sync
 
       - name: Test on Test-Corpus (library, runs hayroll)
-        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
+        run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B01_organic/colourblind_lib/
       
       - name: Test on Test-Corpus (binary, runs c2rust transpile)
-        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
+        run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
       
       - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
-        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
+        run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
       
       - name: Test on Test-Corpus (uses c2rust-bitfields)
-        run: ./scripts/test_eval_20250917.py Test-Corpus/Public-Tests/P01_sphincs_plus/005_sphincs_PQCgenKAT_sign_blake_128f_simple/
+        run: ./scripts/test_eval.py Test-Corpus/Public-Tests/P01_sphincs_plus/005_sphincs_PQCgenKAT_sign_blake_128f_simple/
 
   build-crisp:
     runs-on: ubuntu-latest
@@ -125,6 +116,8 @@ jobs:
           - find_unsafe
           - merge_rust
           - related_decls
+          - rust_analyzer_ext
+          - rust_util
           - split_ffi_entry_points
           - split_rust
 

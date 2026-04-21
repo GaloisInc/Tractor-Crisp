@@ -3,7 +3,8 @@ use rust_util::collect::FileCollector;
 use rust_util::item_span::item_spans;
 use serde_json;
 use std::collections::HashMap;
-use std::fs;
+use std::io::BufWriter;
+use std::fs::{self, File};
 use std::path::PathBuf;
 
 /// Split a Rust codebase into a JSON map from item paths to their source text.
@@ -11,6 +12,10 @@ use std::path::PathBuf;
 struct Args {
     /// Root Rust source file to split (`lib.rs` or `main.rs`).
     src_root_path: PathBuf,
+
+    /// Where to write output JSON.  Default: stdout.
+    #[clap(short, long)]
+    output_path: Option<PathBuf>,
 }
 
 fn main() {
@@ -26,5 +31,11 @@ fn main() {
             out.insert(item_path.join("::"), snippet.to_owned());
         }
     }
-    serde_json::to_writer(std::io::stdout(), &out).unwrap();
+    if let Some(output_path) = args.output_path {
+        let f = File::create(output_path).unwrap();
+        let f = BufWriter::new(f);
+        serde_json::to_writer(f, &out).unwrap();
+    } else {
+        serde_json::to_writer(std::io::stdout(), &out).unwrap();
+    }
 }

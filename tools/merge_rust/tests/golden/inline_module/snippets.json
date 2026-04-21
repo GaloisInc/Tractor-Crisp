@@ -1,0 +1,10 @@
+{
+  "f": "pub fn f() -> i32 {\n    10\n}",
+  "f2": "pub fn f2() -> i32 {\n    10\n}",
+  "foo": "mod foo {\n    pub fn g() -> i32 {\n        2\n    }\n\n    mod bar;\n}",
+  "foo::g": "pub fn g() -> i32 {\n        20\n    }",
+  "foo::g2": "pub fn g2() -> i32 {\n        20\n    }",
+  "foo::bar": "mod bar;",
+  "foo::bar::h": "pub fn h() -> i32 {\n    30\n}",
+  "foo::bar::h2": "pub fn h2() -> i32 {\n    30\n}"
+}

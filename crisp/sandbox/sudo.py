@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import io
 import os
+from pathspec.pathspec import PathSpec
 import pwd
 import shlex
 import subprocess
@@ -10,7 +11,6 @@ from subprocess import CompletedProcess, Popen
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
-from ..work_dir import WorkDir
 
 
 class SudoSandbox:
@@ -27,16 +27,17 @@ class SudoSandbox:
         dir_name = 'crisp_sandbox_%d' % entry.pw_uid
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
-    def _sudo_cmd(self, cmd):
-        return ('sudo', '-u', self.user, *cmd)
+    def _sudo_cmd(self, cmd, env):
+        env_args = (f"{k}={v}" for (k, v) in env.items())
+        return ('sudo', '-u', self.user, *env_args, *cmd)
 
-    def _run_sudo(self, cmd, check=True, **kwargs) -> CompletedProcess[str]:
-        sudo_cmd = self._sudo_cmd(cmd)
+    def _run_sudo(self, cmd, check=True, env={}, **kwargs) -> CompletedProcess[str]:
+        sudo_cmd = self._sudo_cmd(cmd, env)
         p = subprocess.run(sudo_cmd, check=check, **kwargs)
         return p
 
-    def _popen_sudo(self, cmd, **kwargs) -> Popen[str]:
-        sudo_cmd = self._sudo_cmd(cmd)
+    def _popen_sudo(self, cmd, env={}, **kwargs) -> Popen[str]:
+        sudo_cmd = self._sudo_cmd(cmd, env)
         p = subprocess.Popen(sudo_cmd, **kwargs)
         return p
 
@@ -74,7 +75,7 @@ class SudoSandbox:
         )
         self._run_sudo(('sh', '-c', cmd), input=n_file.body())
 
-    def commit_dir(self, rel_path):
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
         assert not os.path.isabs(rel_path)
         p = self._run_sudo(('tar', '-C', self.join(rel_path), '-c', '.'), stdout=subprocess.PIPE)
         tar_bytes = p.stdout
@@ -85,10 +86,15 @@ class SudoSandbox:
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
+                    case tarfile.LNKTYPE:
+                        # Extract hard links for now, cargo creates some
+                        pass
                     case tarfile.DIRTYPE:
                         continue
                     case t:
-                        raise ValueError(f"expected REGTYPE or DIRTYPE, but got {t} for file {info.name}")
+                        raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))
@@ -105,7 +111,7 @@ class SudoSandbox:
     def join(self, *args, **kwargs):
         return os.path.join(self.dir_path, *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".") -> tuple[int, str | bytes]:
+    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -118,12 +124,19 @@ class SudoSandbox:
         )
         cmd = ('sh', '-c', cmd)
 
+        # Copy the API key into the sandbox only if already set outside,
+        # but do not override the value from env.
+        if 'CRISP_API_KEY' not in env:
+            api_key = os.environ.get('CRISP_API_KEY')
+            if api_key is not None:
+                env['CRISP_API_KEY'] = api_key
+
         if not stream:
-            p = self._run_sudo(cmd, check=False,
+            p = self._run_sudo(cmd, check=False, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             return p.returncode, p.stdout
 
-        p = self._popen_sudo(cmd,
+        p = self._popen_sudo(cmd, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         printer = ChunkPrinter()

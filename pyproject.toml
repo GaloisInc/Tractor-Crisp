@@ -5,6 +5,7 @@ requires-python = "==3.14.*" # pygit2 doesn't have prebuilts for 3.15 yet.
 dependencies = [
     "cbor>=1.0.0",
     "docker>=7.1.0",
+    "pathspec>=1.0.4",
     "pygit2>=1.19.0",
     "requests>=2.32.5",
     "toml>=0.10.2",

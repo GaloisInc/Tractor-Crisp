@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import glob
 import os
+from pathspec.pathspec import PathSpec
 import shutil
 from typing import Union, Sequence
 
@@ -52,6 +53,30 @@ class WorkDir:
             assert rel_path not in dct
             dct[rel_path] = self.commit_file(rel_path).node_id()
         return TreeNode.new(self.mvir, files=dct)
+
+    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+        """
+        `ignore_spec` is a `PathSpec` object specifying a gitignore-style
+        (or alternative encoding) list of files to ignore during this operation,
+        e.g. `["foo", "bar", "!bar/abc"]` means that files/directories named
+        `foo` and `bar` are ignored, but not `bar/abc`. Can also be `None`
+        to commit all files.
+        """
+
+        assert not os.path.isabs(rel_path)
+        path = os.path.join(self.path, rel_path)
+        files = {}
+        if os.path.exists(path):
+            for (dir_path, dir_names, file_names) in os.walk(path):
+                dir_path_rel = os.path.relpath(dir_path, self.path)
+                for file_name in file_names:
+                    file_path = os.path.join(dir_path_rel, file_name)
+                    if ignore_spec is not None and ignore_spec.match_file(file_path):
+                        continue
+
+                    assert file_path not in files
+                    files[file_path] = self.commit_file(file_path).node_id()
+        return TreeNode.new(self.mvir, files=files)
 
     def commit_file(self, rel_path):
         assert not os.path.isabs(rel_path)

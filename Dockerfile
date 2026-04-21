@@ -12,7 +12,7 @@ RUN apt-get update
 # c2rust deps
 RUN apt-get install -y \
     build-essential llvm llvm-dev clang libclang-dev cmake \
-    libssl-dev pkg-config python3 git bear
+    libssl-dev pkg-config python3 git bear ripgrep jq ninja-build
 
 # Install the toolchain used to build c2rust
 RUN rustup toolchain add \
@@ -59,19 +59,19 @@ RUN cd /opt/c2rust \
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-COPY deps/hayroll /opt/hayroll/hayroll
+COPY deps/hayroll /opt/hayroll
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
-RUN cd /opt/hayroll/hayroll \
+RUN cd /opt/hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19 \
-    && rm -rf ../z3/build/src/ \
-    && mv ../Maki/build/lib/libcpp2c.so . \
-    && mv ../Maki/build/bin/cpp2c . \
-    && rm -rf ../Maki/build/ \
-    && mkdir -p ../Maki/build/lib \
-    && mkdir -p ../Maki/build/bin \
-    && mv libcpp2c.so ../Maki/build/lib/ \
-    && mv cpp2c ../Maki/build/bin/
-RUN cd /opt/hayroll/hayroll \
+    && rm -rf dependencies/z3/build/src/ \
+    && mv dependencies/Maki/build/lib/libcpp2c.so . \
+    && mv dependencies/Maki/build/bin/cpp2c . \
+    && rm -rf dependencies/Maki/build/ \
+    && mkdir -p dependencies/Maki/build/lib \
+    && mkdir -p dependencies/Maki/build/bin \
+    && mv libcpp2c.so dependencies/Maki/build/lib/ \
+    && mv cpp2c dependencies/Maki/build/bin/
+RUN cd /opt/hayroll \
     && cargo-docker-clean.sh ./build.bash --release \
     && ln -f build/hayroll . \
     && ln -f build/release/reaper . \
@@ -79,14 +79,32 @@ RUN cd /opt/hayroll/hayroll \
     && ln -f build/release/inliner . \
     && ln -f build/release/cleaner . \
     && rm -rf build/
-RUN ln -s /opt/hayroll/hayroll/hayroll /usr/local/bin/hayroll
+RUN ln -s /opt/hayroll/hayroll /usr/local/bin/hayroll
+
 
 # Install CRISP tool binaries
-COPY tools/rust_util/ /opt/crisp-tools/rust_util/
-COPY tools/split_ffi_entry_points/ /opt/crisp-tools/split_ffi_entry_points/
-RUN cargo-docker-clean.sh cargo install --locked --path /opt/crisp-tools/split_ffi_entry_points
+COPY tools/ /opt/crisp-tools/
+RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
+
+# Install codex-cli
+RUN mkdir /opt/codex-cli \
+    && cd /opt/codex-cli \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.107.0/codex-x86_64-unknown-linux-gnu.tar.gz \
+    && wget --quiet "$codex_url" \
+    && tar -xzf "$(basename "$codex_url")" \
+    && ln -s "$PWD/codex-x86_64-unknown-linux-gnu" /usr/local/bin/codex \
+    && rm "$(basename "$codex_url")"
+
+# Append the location of the Rust binaries to PATH
+# since `sh -l` overwrites that variable with the value
+# from /etc/profile and Codex uses `bash -lc` a lot
+RUN echo "export PATH=$PATH:/usr/local/cargo/bin" >>/etc/profile
+
 
 FROM tractor-crisp-user AS tractor-crisp
+
+# Dependencies for `scripts/test_eval.py`
+RUN apt-get install -y universal-ctags
 
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
@@ -99,11 +117,17 @@ RUN useradd -m crisp_sandbox_user
 ENV CRISP_SANDBOX=sudo
 ENV CRISP_SANDBOX_SUDO_USER=crisp_sandbox_user
 
+# Enable sparse registry for the sandbox user
+RUN mkdir -v /home/$CRISP_SANDBOX_SUDO_USER/.cargo \
+    && cp -v $CARGO_HOME/config.toml /home/$CRISP_SANDBOX_SUDO_USER/.cargo/ \
+    && chown -Rv $CRISP_SANDBOX_SUDO_USER:$CRISP_SANDBOX_SUDO_USER /home/$CRISP_SANDBOX_SUDO_USER/.cargo
+
 # CRISP setup.  This comes last because it changes the most often.
 WORKDIR /opt/tractor-crisp
 
 COPY pyproject.toml uv.lock ./
 COPY crisp/ ./crisp/
+COPY scripts/test_eval.py ./scripts/test_eval.py
 RUN uv sync
 # FIXME: currently disabled in favor of the wrapper script below.  Some parts
 # of CRISP use `os.path.dirname(__file__)` to find related files, but `uv`
@@ -116,6 +140,3 @@ RUN uv sync
 RUN echo '#!/bin/sh' >/usr/local/bin/crisp && \
     echo 'uv run --project /opt/tractor-crisp crisp "$@"' >>/usr/local/bin/crisp && \
     chmod +x /usr/local/bin/crisp
-
-COPY tools/find_unsafe/ ./tools/find_unsafe/
-RUN cargo-docker-clean.sh cargo install --locked --path tools/find_unsafe

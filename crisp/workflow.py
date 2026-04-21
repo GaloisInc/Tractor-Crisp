@@ -7,16 +7,18 @@ import subprocess
 import sys
 import toml
 import typing
-from typing import Any
+from typing import Any, Callable
 
-from . import analysis, llm
+from . import agent, analysis, llm
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
+from .error import CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
-    WorkflowStepNode,
+    WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
+    RelatedDeclsOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -35,6 +37,14 @@ LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+
+After making the code safe, {output_instructions_lowercase}
+
+{input_files}
+'''
+
+LLM_SAFETY_PROMPT_NO_FFI = '''
+This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
 After making the code safe, {output_instructions_lowercase}
 
@@ -71,6 +81,50 @@ Compiler logs:
 ```
 '''
 
+LLM_PROMPT_REPAIR_CALL_SITES = '''
+The file `ffi.rs` below contains FFI wrapper functions, which expose various Rust functions to C. The signatures of the underlying Rust functions have changed; please update the wrappers to match.
+
+{output_instructions}
+
+Old signatures:
+```rust
+{old_sigs}
+```
+
+New signatures:
+```rust
+{new_sigs}
+```
+
+{input_files}
+'''
+
+AGENT_SAFETY_PROMPT = '''
+Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.  First, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fileds) that uses `unsafe`, and plan how you would refactor it to make it safe.  Write this plan to `SAFETY_PLAN.md`.  Then carry out the refactor as planned.
+
+HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+
+{after_refactoring_instruction}
+
+You can measure the amount of unsafe code remaining using this command:
+```sh
+find-unsafe --dir {cargo_dir_path} \
+    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
+```
+This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
+'''
+
+AGENT_AFTER_REFACTORING_RUN_TESTS = '''
+After refactoring, make sure the code still passes the tests.  Run the tests using this script:
+```sh
+{test_cmd}
+```
+'''.strip()
+
+AGENT_AFTER_REFACTORING_BUILD = '''
+After refactoring, make sure the code still builds.
+'''.strip()
+
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -101,10 +155,12 @@ def step(f):
         bound = sig.bind(self, *args, **kwargs)
         if self._step_depth == 0:
             print(' ** ' + name)
-            for arg_name, val in bound.arguments.items():
-                if isinstance(val, Workflow):
-                    continue
-                _print_step_value(arg_name, val)
+        else:
+            print(' ' * (1 + self._step_depth) + '* ' + name)
+        for arg_name, val in bound.arguments.items():
+            if isinstance(val, Workflow):
+                continue
+            _print_step_value(arg_name, val)
 
         mvir = self.mvir
         n_step = None
@@ -170,6 +226,22 @@ class Workflow:
         return analysis.cc_cmake(self.cfg, self.mvir, c_code)
 
     @step
+    def cc_custom(self, c_code: TreeNode, artifact: str | int | None = None) -> FileNode:
+        n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
+        compile_commands = self.mvir.node(n_op_cc.compile_commands)
+        return compile_commands
+
+    @step
+    def cc_custom_op(
+        self,
+        c_code: TreeNode,
+        artifact: str | int | None = None,
+    ) -> CompileCommandsOpNode:
+        cfg, mvir = self.cfg, self.mvir
+        art_cfg = cfg.transpile.artifact(artifact)
+        return analysis.cc_custom(cfg, mvir, c_code, art_cfg)
+
+    @step
     def transpile(
         self,
         c_code: TreeNode,
@@ -177,28 +249,71 @@ class Workflow:
         refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
     ) -> TreeNode:
-        compile_commands = self.cc_cmake(c_code)
-        n_op_transpile = self.transpile_cc_op(
-            c_code,
-            compile_commands,
-            src_loc_annotations=src_loc_annotations,
-            refactor_transforms=refactor_transforms,
-            hayroll=hayroll,
-        )
-        if n_op_transpile.rust_code is None:
-            print('error: transpile failed', file=sys.stderr)
+        cfg, mvir = self.cfg, self.mvir
+
+        # Count the number of artifacts to transpile.  This excludes artifacts
+        # that are generated using `lib_from_bin_artifact`.  If there's only
+        # one transpiled artifact, we put it at the top level of the output
+        # directory as a non-virtual workspace root.
+        num_transpiled_artifacts = sum(1 for a in cfg.transpile.artifacts
+            if a.lib_from_bin_artifact is None)
+
+        artifact_code = {}
+        for i, art_cfg in enumerate(cfg.transpile.artifacts):
+            art_name = art_cfg.name
+            if art_cfg.lib_from_bin_artifact is None:
+                compile_commands = self.cc_custom(c_code, artifact = art_name)
+                if num_transpiled_artifacts > 1:
+                    subdir = art_cfg.name
+                else:
+                    subdir = '.'
+                n_op_transpile = self.transpile_cc_op(
+                    c_code,
+                    compile_commands,
+                    artifact=i,
+                    subdir=subdir,
+                    src_loc_annotations=src_loc_annotations,
+                    refactor_transforms=refactor_transforms,
+                    hayroll=hayroll,
+                )
+                if n_op_transpile.rust_code is None:
+                    print(f'error: transpile of {art_name} failed', file=sys.stderr)
+                    return None
+                art_code = mvir.node(n_op_transpile.rust_code)
+
+                # Patch Cargo.toml before building and testing.  This makes sure we
+                # test the code that will actually be used, and also gives
+                # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
+                # needed.
+                art_code = self.patch_cargo_toml(art_code, name = art_name)
+
+                # Add `-lcrypto` or similar flags if needed.
+                if len(art_cfg.system_libs) > 0:
+                    art_code = self.patch_build_rs(art_code, libs = art_cfg.system_libs)
+
+            else:
+                base_code = artifact_code[art_cfg.lib_from_bin_artifact]
+                art_code = self.generate_lib_from_bin_cargo_toml(
+                        base_code, art_name, subdir = art_name)
+
+            artifact_code[art_name] = art_code
+
+        all_files = {}
+        path_origin = {}
+        for art_name, art_code in artifact_code.items():
+            for path, file in art_code.files.items():
+                assert path not in all_files, \
+                    f'artifacts {path_origin[path]!r} and {art_name!r} ' \
+                    f'both contain file {path!r}'
+                all_files[path] = file
+                path_origin[path] = art_name
+        code = TreeNode.new(mvir, files = all_files)
+
+        code = self.patch_cargo_toml_workspace(code)
+
+        if not self.cargo_check_json_op(code).passed:
+            print('error: build failed after transpile')
             return None
-        code = self.mvir.node(n_op_transpile.rust_code)
-
-        # Patch Cargo.toml before building and testing.  This makes sure we
-        # test the code that will actually be used, and also gives
-        # `patch_cargo_toml` a chance to fix the c2rust-bitflags dependency if
-        # needed.
-        code = self.patch_cargo_toml(code)
-
-        # Hack: add -lcrypto, which is required for one test case
-        code = self.patch_build_rs(code, libs = ['crypto'])
-
         if not self.test(code, c_code):
             print('error: tests failed after transpile')
             return None
@@ -209,6 +324,8 @@ class Workflow:
         self,
         n_c_code: TreeNode,
         n_cc: FileNode,
+        artifact: str | int | None = None,
+        subdir: str = '',
         src_loc_annotations: bool = False,
         refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
@@ -232,25 +349,26 @@ class Workflow:
             n_cc = FileNode.new(self.mvir, json.dumps(j))
 
         cfg, mvir = self.cfg, self.mvir
+        art_cfg = cfg.transpile.artifact(artifact)
         with run_sandbox(cfg, mvir) as sb:
-            output_path = cfg.relative_path(cfg.transpile.output_dir)
+            output_path = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
 
-            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
             sb.checkout(n_c_code)
+            sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
 
-            # Hack: ensure all directories mentioned in compile_commands.json
-            # exist by placing an empty file in each one.
+            # Create each directory mentioned in compile_commands.json, since
+            # c2rust may assume that they already exist.
             j = n_cc.body_json()
-            n_empty = FileNode.new(mvir, '')
             sb_dir = sb.join()
-            for x in j:
-                if 'directory' in x:
-                    d = x['directory']
-                    rel_d = os.path.relpath(d, sb_dir)
-                    sb.checkout_file(os.path.join(rel_d, '.empty'), n_empty)
+            cc_dirs = {os.path.relpath(x['directory'], sb_dir)
+                for x in j if 'directory' in x}
+            for d in cc_dirs:
+                sb.run(['mkdir', '-p', d])
 
             # Run c2rust-transpile
             if not hayroll:
+                sb.run(['mkdir', '-p', output_path])
+
                 c2rust_cmd = [
                     "c2rust",
                     "transpile",
@@ -264,9 +382,10 @@ class Workflow:
                         "--reorganize-definitions",
                         "--disable-refactoring",
                     ]
-                if cfg.transpile.bin_main is not None:
+                if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
+                        '--binary', art_cfg.bin_main,
+                        '--thin-binaries',
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
@@ -292,7 +411,7 @@ class Workflow:
                     logs += new_logs
 
             else:
-                c_path_rel = cfg.relative_path(cfg.transpile.cmake_src_dir)
+                project_dir_rel = cfg.relative_path(art_cfg.hayroll_project_dir)
 
                 # Setting `--project-dir` explicitly prevents Hayroll from
                 # including various ancestor directories as intermediate
@@ -303,12 +422,13 @@ class Workflow:
                         'hayroll',
                         sb.join(COMPILE_COMMANDS_PATH),
                         sb.join(output_path),
-                        '--project-dir', os.path.join(c_path_rel, 'src'),
+                        '--project-dir', project_dir_rel,
                         ]
                 # hayroll already has c2rust-transpile emit src loc annotations.
-                if cfg.transpile.bin_main is not None:
+                if art_cfg.bin_main is not None:
                     c2rust_cmd.extend((
-                        '--binary', cfg.transpile.bin_main,
+                        '--binary', art_cfg.bin_main,
+                        '--thin-binaries',
                         ))
                 exit_code, logs = sb.run(c2rust_cmd)
 
@@ -344,14 +464,17 @@ class Workflow:
         return n_op
 
     @step
-    def patch_cargo_toml(self, code: TreeNode) -> TreeNode:
-        n_op = self.patch_cargo_toml_op(code)
+    def patch_cargo_toml(self, code: TreeNode, name: str | None = None) -> TreeNode:
+        n_op = self.patch_cargo_toml_op(code, name = name)
         new_code = self.mvir.node(n_op.new_code)
         return new_code
 
     @step
-    def patch_cargo_toml_op(self, code: TreeNode) -> EditOpNode:
+    def patch_cargo_toml_op(self, code: TreeNode, name: str | None = None) -> EditOpNode:
         cfg, mvir = self.cfg, self.mvir
+
+        if name is None:
+            name = cfg.project_name
 
         cargo_toml_paths = [k for k in code.files.keys()
                 if os.path.basename(k) == 'Cargo.toml']
@@ -364,13 +487,14 @@ class Workflow:
 
         if 'bin' in t:
             kind = 'bin'
+            t['package']['name'] = name
             assert isinstance(t['bin'], list)
             assert len(t['bin']) == 1
-            t['bin'][0]['name'] = cfg.project_name
+            t['bin'][0]['name'] = name
         else:
             kind = 'lib'
-            t['package']['name'] = cfg.project_name
-            t['lib']['name'] = cfg.project_name
+            t['package']['name'] = name
+            t['lib']['name'] = name
             t['lib']['crate-type'] = ['cdylib']
 
         new_files = code.files.copy()
@@ -384,6 +508,132 @@ class Workflow:
             body = f'patch Cargo.toml (kind = {kind})',
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml')
+        return n_op
+
+    @step
+    def generate_lib_from_bin_cargo_toml(
+        self,
+        base_code: TreeNode,
+        name: str,
+        subdir: str,
+    ) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        if name is None:
+            name = cfg.project_name
+
+        base_cargo_toml_paths = [k for k in base_code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+        assert len(base_cargo_toml_paths) == 1, (
+            f'expected only 1 Cargo.toml in transpiler output, but got {base_cargo_toml_paths}')
+        base_cargo_toml_path, = base_cargo_toml_paths
+        base_cargo_dir = os.path.dirname(base_cargo_toml_path)
+        base_cargo_toml = mvir.node(base_code.files[base_cargo_toml_path])
+
+        new_cargo_dir = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
+        new_cargo_toml_path = os.path.join(new_cargo_dir, 'Cargo.toml')
+
+        t = toml.loads(base_cargo_toml.body_str())
+
+        t['package']['name'] = name
+
+        # The base Cargo.toml will have a `lib` containing all the relevant
+        # code, and a `bin` that wraps it and calls `lib::main`.  We discard
+        # the `bin` section, and read out the `lib` so we can create a modified
+        # version of it.
+        t_lib = t['lib']
+        del t['bin']
+
+        # Use the baseline `lib` section to create the `lib` section for the
+        # derived artifact.
+        base_cargo_dir_rel = os.path.relpath(base_cargo_dir, new_cargo_dir)
+        t['lib'] = {
+            'path': os.path.join(base_cargo_dir_rel, t_lib['path']),
+            'name': name,
+            'crate-type': ['cdylib'],
+        }
+
+        new_files = {
+            new_cargo_toml_path: FileNode.new(mvir, toml.dumps(t)).node_id(),
+        }
+        base_build_rs_path = os.path.join(base_cargo_dir, 'build.rs')
+        if base_build_rs_path in base_code.files:
+            new_build_rs_path = os.path.join(new_cargo_dir, 'build.rs')
+            new_files[new_build_rs_path] = base_code.files[base_build_rs_path]
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        return new_code
+
+    @step
+    def patch_cargo_toml_workspace(self, code: TreeNode) -> TreeNode:
+        n_op = self.patch_cargo_toml_workspace_op(code)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_cargo_toml_workspace_op(self, code: TreeNode) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        workspace_dir = cfg.relative_path(cfg.transpile.output_dir)
+        workspace_cargo_toml_path = os.path.join(workspace_dir, 'Cargo.toml')
+
+        cargo_toml_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+
+        all_t = {path: toml.loads(mvir.node(code.files[path]).body_str())
+             for path in cargo_toml_paths}
+
+        # Remove workspace sections from all Cargo.toml files
+        for t in all_t.values():
+            t.pop('workspace', None)
+
+        members = [os.path.relpath(os.path.dirname(path), workspace_dir)
+            for path in cargo_toml_paths
+            if path != workspace_cargo_toml_path]
+
+        if workspace_cargo_toml_path in code.files:
+            # Add workspace options to the existing Cargo.toml
+            t = all_t[workspace_cargo_toml_path]
+            t['workspace'] = {
+                'members': members,
+                'default-members': ['.'] + members,
+            }
+        else:
+            # Generate a virtual workspace manifest
+            all_t[workspace_cargo_toml_path] = {
+                'workspace': {
+                    'members': members,
+                    'default-members': members,
+                },
+            }
+
+
+        new_files = code.files.copy()
+        for path, t in all_t.items():
+            new_files[path] = FileNode.new(mvir, toml.dumps(t)).node_id()
+
+        # Add a rust-toolchain.toml to the top-level workspace if needed.
+        workspace_toolchain_path = os.path.join(workspace_dir, 'rust-toolchain.toml')
+        if workspace_toolchain_path not in code.files:
+            toolchain_paths = [k for k in code.files.keys()
+                    if os.path.basename(k) == 'rust-toolchain.toml']
+            if len(toolchain_paths) > 0:
+                # All toolchain files must be identical.
+                toolchain_file_id = code.files[toolchain_paths[0]]
+                assert all(code.files[path] == toolchain_file_id
+                    for path in toolchain_paths)
+                # Copy the toolchain file into the new workspace root.
+                new_files[workspace_toolchain_path] = toolchain_file_id
+
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch Cargo.toml files to create workspace',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_cargo_toml_workspace')
         return n_op
 
     @step
@@ -429,7 +679,10 @@ class Workflow:
 
     @step
     def test_op(self, code: TreeNode, c_code: TreeNode) -> TestResultNode:
-        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, self.cfg.test_command)
+        test_cmd = self.cfg.test_command
+        if test_cmd is None:
+            test_cmd = 'true'
+        n = analysis.run_tests(self.cfg, self.mvir, code, c_code, test_cmd)
         return n
 
     @step
@@ -470,14 +723,22 @@ class Workflow:
         return analysis.find_unsafe(self.cfg, self.mvir, n_code)
 
     @step
-    def llm_safety(self, n_code: TreeNode) -> TreeNode:
-        n_new_code, n_op_llm = self.llm_safety_op(n_code)
+    def llm_safety(
+        self,
+        n_code: TreeNode,
+        prompt: str = LLM_SAFETY_PROMPT,
+    ) -> TreeNode:
+        n_new_code, n_op_llm = self.llm_safety_op(n_code, prompt = prompt)
         return n_new_code
 
     @step
-    def llm_safety_op(self, n_code: TreeNode) -> tuple[TreeNode, LlmOpNode]:
+    def llm_safety_op(
+        self,
+        n_code: TreeNode,
+        prompt: str = LLM_SAFETY_PROMPT,
+    ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_SAFETY_PROMPT, n_code,
+                self.cfg, self.mvir, prompt, n_code,
                 glob_filter = self.cfg.src_globs)
 
     @step
@@ -548,9 +809,8 @@ class Workflow:
             if exit_code == 0:
                 n_new_tree = sb.commit_dir(rust_path_rel)
             else:
-                # TODO: record failure without throwing an exception, like
-                # `transpile_cc_op` does
-                raise ValueError(
+                # TODO: record exit code in the `Node`, like `transpile_cc_op` does
+                raise CrispError(
                     f'split_ffi_entry_points failed (exit code = {exit_code})\n'
                     f'logs:\n{logs.decode("utf-8", errors="replace")}')
 
@@ -563,3 +823,178 @@ class Workflow:
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
         return n_op
+
+    @step
+    def split(self, n_code: TreeNode, root_file: str | None = None) -> CrateNode:
+        n_op = self.split_op(n_code, root_file = root_file)
+        return self.mvir.node(n_op.crate_out)
+
+    @step
+    def split_op(self, n_code: TreeNode, root_file: str | None = None) -> SplitOpNode:
+        return analysis.split_rust(self.cfg, self.mvir, n_code, root_file = root_file)
+
+    @step
+    def merge(self, n_code: TreeNode, n_crate: CrateNode) -> TreeNode:
+        n_op = self.merge_op(n_code, n_crate)
+        return self.mvir.node(n_op.code_out)
+
+    @step
+    def merge_op(self, n_code: TreeNode, n_crate: CrateNode) -> MergeOpNode:
+        return analysis.merge_rust(self.cfg, self.mvir, n_code, n_crate)
+
+    @step
+    def related_decls_op(
+        self,
+        n_code: TreeNode,
+        query_def_names: list[str] | None = None,
+    ) -> RelatedDeclsOpNode:
+        return analysis.related_decls(self.cfg, self.mvir, n_code,
+            query_def_names = query_def_names)
+
+    def _filter_defs(self, code: TreeNode, f: Callable[[str], bool]) -> CrateNode:
+        mvir = self.mvir
+
+        crate = self.split(code)
+
+        crate_erased = CrateNode.new(mvir,
+            defs = {k: v for k, v in crate.defs.items() if f(k)})
+        return crate_erased
+
+    @step
+    def erase_ffi(self, code: TreeNode) -> TreeNode:
+        """
+        Erase all FFI functions introduced by `split_ffi` from `code`.  They
+        can be handled separately and re-inserted using `unerase_ffi`.
+        """
+        # For now, we assume any function whose name ends with `_ffi` is an FFI
+        # entry point introduced by `split_ffi`.  It should be fairly rare for
+        # the original C code to use such names itself, since FFI logic is
+        # usually in a language-specific adapter rather than the core C
+        # library.
+        crate_erased = self._filter_defs(code, lambda k: not k.endswith('_ffi'))
+        code_erased = self.merge(code, crate_erased)
+        return code_erased
+
+    @step
+    def extract_ffi_defs(self, code: TreeNode) -> CrateNode:
+        """
+        Extract FFI function definitions from `code`.
+        """
+        return self._filter_defs(code, lambda k: k.endswith('_ffi'))
+
+    @step
+    def unerase_ffi(self,
+            code_old: TreeNode, code_new: TreeNode, crate_ffi: CrateNode) -> TreeNode:
+        mvir = self.mvir
+
+        crate_new = self.split(code_new)
+
+        defs_out = crate_new.defs.copy()
+        for k, v in crate_ffi.defs.items():
+            if k in defs_out:
+                raise CrispError(f'{k!r} is present in both the ffi and non-ffi inputs')
+            defs_out[k] = v
+        crate_out = CrateNode.new(mvir, defs = defs_out)
+
+        code_out = self.merge(code_old, crate_out)
+        return code_out
+
+    @step
+    def llm_safety_no_ffi(self, orig_code: TreeNode) -> TreeNode:
+        main_code = self.erase_ffi(orig_code)
+        # TODO: alternate safety prompt
+        new_main_code = self.llm_safety(main_code, prompt = LLM_SAFETY_PROMPT_NO_FFI)
+
+        orig_sigs = self.extract_sigs(orig_code)
+        main_sigs = self.extract_sigs(new_main_code)
+        ffi_defs = self.extract_ffi_defs(orig_code)
+        new_ffi_defs = self.llm_repair_call_sites(ffi_defs, orig_sigs, main_sigs)
+
+        code = self.unerase_ffi(main_code, new_main_code, new_ffi_defs)
+        return code
+
+    @step
+    def extract_sigs(self, code: TreeNode) -> CrateNode:
+        cfg, mvir = self.cfg, self.mvir
+        n_op = self.related_decls_op(code)
+        return mvir.node(n_op.sigs_out)
+
+    @step
+    def llm_repair_call_sites(
+        self,
+        ffi_defs: CrateNode,
+        old_sigs: CrateNode,
+        new_sigs: CrateNode,
+    ) -> CrateNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        ffi_defs_list = [mvir.node(v) for k,v in ffi_defs.defs.items() if k.endswith('_ffi')]
+        if len(ffi_defs_list) == 0:
+            return CrateNode.new(mvir, defs = {})
+        ffi_file = FileNode.new(mvir, '\n\n'.join(d.body_str() for d in ffi_defs_list))
+        ffi_tree = TreeNode.new(mvir, files = {'ffi.rs': ffi_file.node_id()})
+
+        old_sigs_str = '\n'.join(mvir.node(v).body_str() for v in old_sigs.defs.values())
+        new_sigs_str = '\n'.join(mvir.node(v).body_str() for v in new_sigs.defs.values())
+
+        new_ffi_tree, _llm_op = llm.run_rewrite(
+                cfg, mvir, LLM_PROMPT_REPAIR_CALL_SITES, ffi_tree,
+                format_kwargs = dict(
+                    old_sigs = old_sigs_str,
+                    new_sigs = new_sigs_str,
+                ))
+
+        # `new_ffi_tree` has a flat module structure; all FFI functions have
+        # been renamed to be at top level, e.g. `foo::bar_ffi` -> `bar_ffi`.
+        # We need to move these back to their respective paths.
+        new_ffi_crate_renamed = self.split(new_ffi_tree, root_file = 'ffi.rs')
+        new_ffi_defs_dct = {}
+        for k in ffi_defs.defs.keys():
+            _, _, def_name = k.rpartition('::')
+            if def_name in new_ffi_crate_renamed.defs:
+                new_ffi_defs_dct[k] = new_ffi_crate_renamed.defs[def_name]
+            else:
+                print(f'warning: LLM omitted FFI def {def_name!r}')
+                # Copy the original version of this FFI function.  This will
+                # likely cause a compile error, which `llm_repair_compile` will
+                # try to fix.
+                new_ffi_defs_dct[k] = ffi_defs.defs[k]
+        new_ffi_defs = CrateNode.new(mvir, defs = new_ffi_defs_dct)
+
+        return new_ffi_defs
+
+    @step
+    def agent_safety(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        # If set, provide `cfg.test_command` to the agent, if it's available.
+        provide_test_cmd: bool = True,
+    ) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        if provide_test_cmd and cfg.test_command is not None:
+            after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
+                    .format(test_cmd = cfg.test_command)
+        else:
+            after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
+
+        prompt = AGENT_SAFETY_PROMPT.format(
+            cargo_dir_path = cargo_dir,
+            initial_unsafe_count = self.count_unsafe(n_code),
+            after_refactoring_instruction = after_refactoring_instruction,
+        )
+        return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
+            clean_cmds = [
+                ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
+            ])
+
+    @step
+    def agent_safety_no_tests(
+        self,
+        n_code: TreeNode,
+    ) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+        n_test_code = TreeNode.new(mvir, files={})
+        return self.agent_safety(n_code, n_test_code, provide_test_cmd = False)

@@ -1,4 +1,5 @@
 use clap::Parser;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use ra_ap_hir::{
     Adt, Function, HasCrate, HasSource, InFile, Module, ModuleDef, ModuleDefId, Name, Semantics,
@@ -10,8 +11,11 @@ use ra_ap_ide_db::{RootDatabase, defs::Definition};
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::{AstNode, Edition, NodeOrToken, TextRange, WalkEvent};
-use std::collections::{HashMap, HashSet};
+use rust_analyzer_ext::crates;
+use std::collections::HashSet;
 use std::fmt::Write;
+use std::fs::File;
+use std::io::BufWriter;
 use std::ops::Index;
 use std::path::{Path, PathBuf};
 
@@ -20,9 +24,17 @@ use std::path::{Path, PathBuf};
 struct Args {
     /// Directory of Rust project to analyze. `Cargo.toml` should reside inside this directory.
     cargo_dir_path: PathBuf,
-    #[arg(required = true)]
+
     /// Paths to Rust item to analyze.
     item_paths: Vec<String>,
+
+    /// Where to write output JSON.  Default: stdout.
+    #[clap(short, long)]
+    output_path: Option<PathBuf>,
+
+    /// Output info about all items, ignoring `item_paths`.
+    #[clap(long)]
+    all: bool,
 }
 
 /// Obtain the textual range of a given item
@@ -304,12 +316,10 @@ fn items_used_by(sema: &Semantics<RootDatabase>, module_def: ModuleDef) -> HashS
                 .source::<Function>(func)
                 .expect("def without source")
                 .value;
-            // Obtain body definition as token sequence
-            fn_ast
-                .body()
-                .expect("function has no body")
-                .syntax()
-                .to_owned()
+            // Obtain body definition as token sequence.  Extern functions have no body to inspect.
+            let Some(body) = fn_ast.body()
+                else { return used_module_defs };
+            body.syntax().to_owned()
         }
         ModuleDef::Static(s) => {
             use_type_components(s.ty(sema.db));
@@ -405,17 +415,26 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
     log::info!("loaded crate");
 
-    let cargo_dir_vfspath: ra_ap_vfs::VfsPath =
-        ra_ap_vfs::AbsPathBuf::assert_utf8(cargo_dir_path.to_owned()).into();
-    // Find the first file in `vfs` under the cargo dir, which we use to find the target crate
-    let (first_file_id, _) = vfs
-        .iter()
-        .find(|(_id, path)| path.starts_with(&cargo_dir_vfspath))
-        .expect("could not find first file in crate");
-
     let sema = Semantics::new(&db);
 
-    let krate = sema.first_crate(first_file_id).unwrap();
+    let krate = match crates::find_in_dir(&sema, &vfs, cargo_dir_path).as_slice()
+    {
+        &[] => {
+            return Err(format!(
+                "no crates found in directory {:?}",
+                cargo_dir_path.display()
+            ));
+        }
+        &[krate] => krate,
+        _ => {
+            // At present, this tool only supports a single crate because it resolves paths without
+            // a crate name relative to that crate.
+            return Err(format!(
+                "multiple crates found in directory {:?}",
+                cargo_dir_path.display()
+            ));
+        }
+    };
 
     let mut files = Vec::new();
     for m in krate.modules(&db) {
@@ -431,7 +450,8 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 
     // Iterate all items, constructing map of their text ranges and finding any in `args.item_paths`
     let mut unfound_paths: HashSet<_> = args.item_paths.into_iter().collect();
-    let mut found_items: HashMap<_, _> = Default::default();
+    // Use `IndexMap` here to provide deterministic ordering required by snapshot tests.
+    let mut found_items: IndexMap<_, _> = Default::default();
 
     let mut items_by_range = Vec::new();
     for file in &files {
@@ -446,12 +466,16 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
             let abs_path = absolute_item_path(db, module_def, file.edition(db));
             let canonical_path = canonical_item_path(&module_def, db, file.edition(db));
 
-            if let Some(path) = canonical_path
-                .and_then(|path| unfound_paths.take(&path))
+            if let Some(path) = canonical_path.as_ref()
+                .and_then(|path| unfound_paths.take(path))
                 .or_else(|| unfound_paths.take(&abs_path))
             {
                 log::debug!("item traversal found queried path: {path}");
                 found_items.insert(path.to_owned(), module_def);
+            } else if args.all {
+                let path = canonical_path.unwrap_or(abs_path);
+                log::debug!("item traversal found path: {path}");
+                found_items.insert(path, module_def);
             }
 
             // Save source range
@@ -479,6 +503,20 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     // Sort shorter ranges first, so that we examine inner items before their parents
     items_by_range.sort_by_key(|(text_range, _item)| text_range.value.len());
 
+    // Visit the crate root, which is not included in the traversal above.
+    {
+        let path = "$crate";
+        let mod_ = krate.root_module();
+        let module_def = ModuleDef::Module(mod_);
+        if let Some(path) = unfound_paths.take(path) {
+            log::debug!("found queried path for root module: {path}");
+            found_items.insert(path.to_owned(), module_def);
+        } else if args.all {
+            log::debug!("found path for root module: {path}");
+            found_items.insert(path.to_owned(), module_def);
+        }
+    }
+
     for path in &unfound_paths {
         eprintln!("did not find item {path} in crate");
     }
@@ -490,12 +528,26 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
     for (path, module_def) in found_items {
         let mut path_info = serde_json::Map::new();
         log::info!("processing {path}");
+
+        let mod_def_path = |module_def: ModuleDef| {
+            let is_local = match module_def.module(&db) {
+                Some(m) => m.krate() == krate,
+                None => false,
+            };
+            if is_local {
+                canonical_item_path(&module_def, &db, Edition::DEFAULT)
+                    .unwrap_or_else(|| absolute_item_path(&db, module_def, Edition::DEFAULT))
+            } else {
+                absolute_item_path(&db, module_def, Edition::DEFAULT)
+            }
+        };
+
         // Find uses of the item
         {
             let using_items = item_uses(&sema, &items_by_range, module_def);
             let mut paths = using_items
                 .into_iter()
-                .map(|module_def| absolute_item_path(&db, module_def, Edition::DEFAULT))
+                .map(|module_def| mod_def_path(module_def))
                 .collect::<Vec<_>>();
             paths.sort();
             path_info.insert("uses".to_owned(), paths.into());
@@ -505,15 +557,51 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
             let used_items = items_used_by(&sema, module_def);
             let mut paths = used_items
                 .into_iter()
-                .map(|module_def| absolute_item_path(&db, module_def, Edition::DEFAULT))
+                .map(|module_def| mod_def_path(module_def))
                 .collect::<Vec<_>>();
             paths.sort();
             path_info.insert("used_items".to_owned(), paths.into());
         }
-        // Output signature for functions
-        {
-            let id: Option<ModuleDefId> = module_def.try_into().ok();
-            if let Some(ModuleDefId::FunctionId(func_id)) = id {
+
+        // Output additional info for specific item kinds.
+        let id: Option<ModuleDefId> = module_def.try_into().ok();
+
+        // Record the kind of the item and any special fields for that kind.  For now we just emit
+        // "other" for kinds with no kind-specific fields.
+        let kind;
+        match id {
+            Some(ModuleDefId::ModuleId(mod_id)) => {
+                kind = "module";
+
+                // For modules, output a list of child paths and info about the file.
+                let mod_ = Module::from(mod_id);
+                let decls = mod_.declarations(&db);
+                let mod_file_id = mod_.definition_source_file_id(&db);
+                let edition = mod_file_id.edition(&db);
+                let mut paths = Vec::with_capacity(decls.len());
+                for decl in decls {
+                    let path = canonical_item_path(&decl, &db, edition)
+                        .unwrap_or_else(|| absolute_item_path(&db, decl, edition));
+                    paths.push(path);
+                }
+                path_info.insert("child_items".to_owned(), paths.into());
+
+                let file_path = mod_file_id.file_id()
+                    .map(|efid| efid.file_id(&db))
+                    .map(|fid| vfs.file_path(fid))
+                    .and_then(|vp| vp.as_path())
+                    .map(|ap| ap.as_str());
+                path_info.insert("file_path".to_owned(), file_path.into());
+
+                // If `is_inline` is set, then the file may contain other modules as well.  Each
+                // file should usually contain exactly one non-inline module and zero or more
+                // inline ones.
+                path_info.insert("is_inline".to_owned(), mod_.is_inline(&db).into());
+            },
+            Some(ModuleDefId::FunctionId(func_id)) => {
+                kind = "function";
+
+                // For functions, output the signature.
                 let sig = db.function_signature(func_id);
                 path_info.insert(
                     "signature".to_owned(),
@@ -524,7 +612,12 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
                     function_signature_as_written(&sema, func_id.into()).into(),
                 );
             }
-        }
+            _ => {
+                kind = "other";
+            },
+        };
+        path_info.insert("kind".to_owned(), kind.into());
+
         output.insert(path, path_info.into());
     }
     Ok(output)
@@ -533,54 +626,172 @@ fn find_related_decls(args: Args) -> Result<serde_json::Map<String, serde_json::
 fn main() -> Result<(), String> {
     env_logger::init();
 
-    let output = find_related_decls(Args::parse())?;
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, &output)
-        .map_err(|e| format!("error writing output: {e}"))?;
+    let args = Args::parse();
+    let output_path = args.output_path.clone();
+    let output = find_related_decls(args)?;
+    if let Some(output_path) = output_path {
+        let f = File::create(&output_path)
+            .map_err(|e| format!("error opening output file {output_path:?}: {e}"))?;
+        let f = BufWriter::new(f);
+        serde_json::to_writer(f, &output)
+            .map_err(|e| format!("error writing output: {e}"))?;
+    } else {
+        serde_json::to_writer(std::io::stdout().lock(), &output)
+            .map_err(|e| format!("error writing output: {e}"))?;
+    }
 
     Ok(())
 }
 
-#[test]
-fn test_example_input() {
-    let info = find_related_decls(Args {
-        cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
-        item_paths: vec![
-            "main".into(),
-            "another::bar::CONSTANT".into(),
-            "synthetic_usages".into(),
-            "TGE".into(),
-        ],
-    })
-    .unwrap();
 
-    assert_eq!(
-        info["main"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::example_input::synthetic_usages")]
-    );
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::sync::Mutex;
+    use insta::assert_json_snapshot;
 
-    assert_eq!(
-        info["another::bar::CONSTANT"]["uses"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::example_input::synthetic_usages")]
-    );
+    /// Parallel calls to rust-analyzer will try to use the same cache files and race with each
+    /// other.  We use a mutex to prevent this from happening.
+    static RUST_ANALYZER_MUTEX: Mutex<()> = Mutex::new(());
 
-    assert_eq!(
-        info["synthetic_usages"]["used_items"].as_array().unwrap(),
-        &vec![
-            serde_json::Value::from("::core"),
-            serde_json::Value::from("::example_input::another"),
-            serde_json::Value::from("::example_input::another::bar"),
-            serde_json::Value::from("::example_input::another::bar::CONSTANT"),
-            serde_json::Value::from("::example_input::another::foo"),
-            serde_json::Value::from("::example_input::another::foo::CONSTANT"),
-            serde_json::Value::from("::example_input::another::foo::OTHER_CONSTANT"),
-            serde_json::Value::from("::example_input::main"),
-            serde_json::Value::from("::std::macros::eprintln"),
-        ]
-    );
+    fn clean_paths(v: &mut serde_json::Value) {
+        match *v {
+            serde_json::Value::String(ref mut s) => {
+                // Trim path components leading up to `example-input/`, since these may vary
+                // depending on the build environment.
+                if let Some(idx) = s.find("example-input/") {
+                    *s = s[idx..].to_owned();
+                }
+            },
+            serde_json::Value::Array(ref mut a) => {
+                for v in a {
+                    clean_paths(v);
+                }
+            },
+            serde_json::Value::Object(ref mut m) => {
+                clean_map_paths(m);
+            },
+            serde_json::Value::Null |
+            serde_json::Value::Bool(_) |
+            serde_json::Value::Number(_) => {},
+        }
+    }
 
-    assert_eq!(
-        info["TGE"]["used_items"].as_array().unwrap(),
-        &vec![serde_json::Value::from("::bytes::TryGetError")]
-    );
+    fn clean_map_paths(m: &mut serde_json::Map<String, serde_json::Value>) {
+        for (_k, v) in m {
+            clean_paths(v)
+        }
+    }
+
+    /// Assert that specific key/value pairs exist in `info`.  This requires that at least the
+    /// items requested by `test_item_paths` be present.  Also, the paths in `info` must have been
+    /// cleaned by `clean_map_paths` to make them environment-independent.
+    fn common_asserts(info: &serde_json::Map<String, serde_json::Value>) {
+        assert_eq!(
+            info["main"]["uses"].as_array().unwrap(),
+            &vec![serde_json::Value::from("synthetic_usages")]
+        );
+
+        assert_eq!(
+            info["another::bar::CONSTANT"]["uses"].as_array().unwrap(),
+            &vec![serde_json::Value::from("synthetic_usages")]
+        );
+
+        assert_eq!(
+            info["synthetic_usages"]["used_items"].as_array().unwrap(),
+            &vec![
+                serde_json::Value::from("::core"),
+                serde_json::Value::from("::std::macros::eprintln"),
+                serde_json::Value::from("another"),
+                serde_json::Value::from("another::bar"),
+                serde_json::Value::from("another::bar::CONSTANT"),
+                serde_json::Value::from("another::foo"),
+                serde_json::Value::from("another::foo::CONSTANT"),
+                serde_json::Value::from("another::foo::OTHER_CONSTANT"),
+                serde_json::Value::from("main"),
+            ]
+        );
+
+        assert_eq!(
+            info["TGE"]["used_items"].as_array().unwrap(),
+            &vec![serde_json::Value::from("::bytes::TryGetError")]
+        );
+
+        assert_eq!(info["main"]["kind"], serde_json::Value::from("function"));
+        assert_eq!(info["another"]["kind"], serde_json::Value::from("module"));
+        assert_eq!(info["another::bar::CONSTANT"]["kind"], serde_json::Value::from("other"));
+
+        assert_eq!(
+            info["another"]["child_items"].as_array().unwrap(),
+            &vec![
+                serde_json::Value::from("another::MAX"),
+                serde_json::Value::from("another::X"),
+                serde_json::Value::from("another::EnumWithBodiedVariant"),
+                serde_json::Value::from("another::EnumWithFieldedVariant"),
+                serde_json::Value::from("another::foo"),
+                serde_json::Value::from("another::bar"),
+            ]
+        );
+
+        assert_eq!(info["foo"]["file_path"],
+            serde_json::Value::from("example-input/src/foo.rs"));
+        assert_eq!(info["foo"]["is_inline"], serde_json::Value::from(false));
+
+        assert_eq!(info["another"]["file_path"],
+            serde_json::Value::from("example-input/src/main.rs"));
+        assert_eq!(info["another"]["is_inline"], serde_json::Value::from(true));
+    }
+
+    #[test]
+    fn test_item_paths() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![
+                "main".into(),
+                "foo".into(),
+                "another".into(),
+                "another::bar::CONSTANT".into(),
+                "synthetic_usages".into(),
+                "TGE".into(),
+            ],
+            output_path: None,
+            all: false,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        common_asserts(&info);
+        assert_json_snapshot!(info);
+    }
+
+    #[test]
+    fn test_all() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![],
+            output_path: None,
+            all: true,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        common_asserts(&info);
+        assert_json_snapshot!(info);
+    }
+
+    #[test]
+    fn test_crate_root() {
+        let _g = RUST_ANALYZER_MUTEX.lock();
+        let mut info = find_related_decls(Args {
+            cargo_dir_path: std::env::current_dir().unwrap().join("example-input"),
+            item_paths: vec![
+                "$crate".into(),
+            ],
+            output_path: None,
+            all: false,
+        })
+        .unwrap();
+        clean_map_paths(&mut info);
+        assert_json_snapshot!(info);
+    }
 }

@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "find_unsafe",
+    "merge_rust",
+    "related_decls",
+    "rust_util",
+    "split_ffi_entry_points",
+    "split_rust",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+clap = { version = "4.0", features = ["derive"] }
+log = "=0.4.28"
+env_logger = {version = "0.11.8", default-features = false, features = ["color", "auto-color", "humantime"]}
+itertools = "0.14.0"
+insta = { version = "1.46", features = ["json"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+ciborium = "0.2.2"
+
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2.0.106", features = ["full", "visit", "visit-mut"] }
+
+ra_ap_base_db = "=0.0.301"
+ra_ap_hir = "=0.0.301"
+ra_ap_hir_def = "=0.0.301"
+ra_ap_ide_db = "=0.0.301"
+ra_ap_load-cargo = "=0.0.301"
+ra_ap_project_model = "=0.0.301"
+ra_ap_syntax = "=0.0.301"
+ra_ap_vfs = "=0.0.301"
+
+rust_analyzer_ext = { path = "rust_analyzer_ext" }
+rust_util = { path = "rust_util" }
+
+
+# Tools based on rust-analyzer are unusably slow at opt-level=0, so use
+# opt-level=1 for debug builds.
+[profile.dev]
+opt-level = 1

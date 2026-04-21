@@ -686,6 +686,26 @@ class LlmOpNode(Node):
     request = property(lambda self: self._metadata['request'])
     response = property(lambda self: self._metadata['response'])
 
+class CodexAgentOpNode(Node):
+    KIND = 'codex_agent_op'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    raw_prompt: Metadata[NodeId]
+    exit_code: Metadata[int]
+    # `TreeNode` of all potentially-interesting output files.  We save this in
+    # case our logic for filtering the output misses something.
+    raw_output_files: Metadata[NodeId]
+    # JSON-formatted session log, e.g. `.codex/sessions/xxx/rollout-xxx.jsonl`
+    json_session: Metadata[NodeId]
+    # `body` stores the log output
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    raw_output_files = property(lambda self: self._metadata['raw_output_files'])
+    json_session = property(lambda self: self._metadata['json_session'])
+
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -731,15 +751,16 @@ class InlineErrorsOpNode(Node):
     check_json = property(lambda self: self._metadata['check_json'])
 
 class FindUnsafeAnalysisNode(Node):
-    KIND = 'find_unsafe_analysis'
+    KIND = 'find_unsafe_analysis_v2'
     code: Metadata[NodeId]
-    # Commit hash of the `find_unsafe` version that was used
-    commit: Metadata[str]
-    stderr: Metadata[str]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    logs: Metadata[str]
     # `body` stores the JSON output
 
     code = property(lambda self: self._metadata['code'])
-    commit = property(lambda self: self._metadata['commit'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
     stderr = property(lambda self: self._metadata['stderr'])
 
 class EditOpNode(Node):
@@ -750,6 +771,92 @@ class EditOpNode(Node):
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
+
+
+class DefNode(Node):
+    KIND = 'def'
+    # `body` stores the source code of this def
+
+class CrateNode(Node):
+    KIND = 'crate'
+    # Maps each def ID/path to a `DefNode`
+    defs: Metadata[dict[str, NodeId]]
+
+    defs = property(lambda self: self._metadata['defs'])
+
+class SplitOpNode(Node):
+    '''
+    Split a `TreeNode` containing Rust code into a collection of separate
+    `DefNode`s.
+    '''
+    KIND = 'split_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` (a collection of files)
+    code_in: Metadata[NodeId]
+    json_out: Metadata[NodeId]
+    # Output `CrateNode` (a collection of defs)
+    crate_out: Metadata[NodeId]
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code_in = property(lambda self: self._metadata['code_in'])
+    json_out = property(lambda self: self._metadata['json_out'])
+    crate_out = property(lambda self: self._metadata['crate_out'])
+
+class MergeOpNode(Node):
+    '''
+    Merge a collection of `DefNode`s into a `TreeNode` containing Rust source
+    files.  This takes an initial `TreeNode` to use as a template, updates it
+    to contain the provided definitions, and produces a new `TreeNode` as
+    output.
+    '''
+    KIND = 'merge_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` containing source code to use as the template
+    code_in: Metadata[NodeId]
+    # Input `CrateNode` containing (possibly) updated definitions
+    crate_in: Metadata[NodeId]
+    # Output `TreeNode`, produced by merging all the definitions from
+    # `crate_in` into `code_in`.
+    code_out: Metadata[NodeId]
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code_in = property(lambda self: self._metadata['code_in'])
+    crate_in = property(lambda self: self._metadata['crate_in'])
+    code_out = property(lambda self: self._metadata['code_out'])
+
+class RelatedDeclsOpNode(Node):
+    '''
+    Process Rust code to identify all declarations that are related to
+    `query_def_names`.
+    '''
+    KIND = 'related_decls_op'
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # Input `TreeNode` (a collection of files)
+    code: Metadata[NodeId]
+    # List of defs to retrieve information for.  If this is `None`, information
+    # is retrieved for all defs.
+    #
+    # Note it's actually the `cmd` that determines what defs are retrieved.
+    # This field is for informational purposes only.  The two fields are kept
+    # in sync by the logic in `analysis.related_decls`.
+    query_def_names: Metadata[list[str] | None]
+    # The complete JSON output as a `FileNode`.
+    json_out: Metadata[NodeId]
+    # Output `CrateNode` containing defs reduced to just their signatures.
+    sigs_out: Metadata[NodeId]
+    # `body` stores stdout/stderr logging output from `related_decls`.
+
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    code = property(lambda self: self._metadata['code'])
+    query_def_names = property(lambda self: self._metadata['query_def_names'])
+    json_out = property(lambda self: self._metadata['json_out'])
+    sigs_out = property(lambda self: self._metadata['sigs_out'])
 
 
 class WorkflowStepInputsNode(Node):
@@ -777,11 +884,18 @@ NODE_CLASSES = [
     TranspileOpNode,
     SplitFfiOpNode,
     LlmOpNode,
+    CodexAgentOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
     EditOpNode,
+
+    DefNode,
+    CrateNode,
+    SplitOpNode,
+    MergeOpNode,
+    RelatedDeclsOpNode,
 
     WorkflowStepInputsNode,
     WorkflowStepNode,
@@ -821,3 +935,14 @@ def migrate_split_ffi_op(metadata: dict[str, Any]):
     metadata['kind'] = 'split_ffi_op_v2'
     # `commit` field was removed
     del metadata['commit']
+
+@migration('find_unsafe_analysis')
+def migrate_find_unsafe_analysis(metadata: dict[str, Any]):
+    metadata['kind'] = 'find_unsafe_analysis_v2'
+    # `commit` field was removed
+    del metadata['commit']
+    # `cmd` and `exit_code` fields were added
+    metadata['cmd'] = ['find-unsafe', '--stdin-cbor']
+    metadata['exit_code'] = 0
+    # `stderr` was renamed to `logs`
+    metadata['logs'] = metadata['stderr']

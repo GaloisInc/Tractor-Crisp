@@ -59,7 +59,7 @@ RUN cd /opt/c2rust \
 # Note that Hayroll's `prerequisites.bash` pins its git dependencies to
 # specific tags, so we don't have to worry (much) about ensuring we get the
 # right version.
-COPY deps/hayroll /opt/hayroll
+COPY deps/hayroll/prerequisites.bash /opt/hayroll/
 # Trixie's `llvm` defaults to 19 and so that's what `c2rust` is using, too.
 RUN cd /opt/hayroll \
     && ./prerequisites.bash --no-sudo --llvm-version 19 \
@@ -71,6 +71,8 @@ RUN cd /opt/hayroll \
     && mkdir -p dependencies/Maki/build/bin \
     && mv libcpp2c.so dependencies/Maki/build/lib/ \
     && mv cpp2c dependencies/Maki/build/bin/
+
+COPY deps/hayroll/ /opt/hayroll/
 RUN cd /opt/hayroll \
     && cargo-docker-clean.sh ./build.bash --release \
     && ln -f build/hayroll . \

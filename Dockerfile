@@ -111,7 +111,7 @@ RUN apt-get install -y universal-ctags
 # Set up sudo so CRISP can use it for sandboxing
 RUN apt-get install -y sudo
 RUN sed -i -e 's,secure_path=",&/usr/local/cargo/bin:,' /etc/sudoers
-RUN sed -i -e 's,secure_path=",&/opt/hayroll/Hayroll/build:,' /etc/sudoers
+RUN sed -i -e 's,secure_path=",&/opt/hayroll/build:,' /etc/sudoers
 RUN echo 'Defaults env_keep+="RUSTUP_HOME"' >>/etc/sudoers
 
 # CRISP sudo-based sandbox configuration

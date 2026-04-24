@@ -2,8 +2,10 @@
 Rewrite operations using AI agent tools, such as codex-cli
 """
 
-from pathspec.pathspec import PathSpec
 import os
+import re
+
+from pathspec.pathspec import PathSpec
 
 from . import llm
 from .config import Config
@@ -13,24 +15,69 @@ from .sandbox import run_sandbox
 
 AGENT_DEFAULT_MODEL = "gpt-5.4-2026-03-05"
 
-def _codex_command(subcmd: str, args: list[str]) -> list[str]:
-    config_settings = {
-        'model_providers.crisp.name': 'crisp',
-        'model_providers.crisp.base_url': llm.API_BASE,
-        #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
-        'model_providers.crisp.env_key': 'CRISP_API_KEY',
-        'profiles.crisp.model_provider': 'crisp',
-        'profiles.crisp.model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
-        # TODO: figure out the actual context limit and use it here
-        'profiles.crisp.context_length': 128 * 1024,
-    }
-    cmd = ['codex', subcmd]
-    for k, v in config_settings.items():
-        cmd += ['-c', f'{k}={v}']
-    cmd += ['--profile', 'crisp']
-    cmd += args
+_SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 
+def _snapshot_to_family_alias(model: str) -> str:
+    """
+    Convert a pinned snapshot model ID like:
+        gpt-5.4-2026-03-05 -> gpt-5.4
+    """
+    m = _SNAPSHOT_SUFFIX.match(model)
+    return m.group("alias") if m else model
+
+def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> list[str]:
+    cmd = ['codex', subcmd]
+
+    if codex_login:
+        # Use the host's `codex login` credentials (auth.json).  We only
+        # override the model; everything else uses codex's defaults.
+        # The --model flag does not support snapshot-style model identifiers so
+        # we attempt to convert snapshots to model family aliases.
+        model = _snapshot_to_family_alias(llm.API_MODEL or AGENT_DEFAULT_MODEL)
+        cmd += ['--model', model]
+    else:
+        config_settings = {
+            'model_providers.crisp.name': 'crisp',
+            'model_providers.crisp.base_url': llm.API_BASE,
+            #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
+            'model_providers.crisp.env_key': 'CRISP_API_KEY',
+            'profiles.crisp.model_provider': 'crisp',
+            'profiles.crisp.model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
+            # TODO: figure out the actual context limit and use it here
+            'profiles.crisp.context_length': 128 * 1024,
+        }
+        for k, v in config_settings.items():
+            cmd += ['-c', f'{k}={v}']
+        cmd += ['--profile', 'crisp']
+
+    cmd += args
     return cmd
+
+def _inject_codex_auth(sb):
+    """Copy the host's ``auth.json`` into the container's work
+    directory so that codex-cli can authenticate using the host's
+    ``codex login`` session.
+
+    The file only lives for the lifetime of the container and is never
+    written to MVIR.  The ``.codex/`` ignore pattern in ``run_rewrite``
+    also ensures it is excluded from ``commit_dir`` output.
+    """
+
+    codex_home = os.getenv('CODEX_HOME')
+    if codex_home is None:
+        codex_home = os.path.expanduser('~/.codex')
+
+    host_auth = os.path.join(codex_home, 'auth.json')
+    if not os.path.isfile(host_auth):
+        raise CrispError(
+            '--codex-login requires a valid codex login session; '
+            'run `codex login` first')
+
+    with open(host_auth, 'rb') as f:
+        auth_bytes = f.read()
+
+    sb.checkout_file_untracked('.codex/auth.json', auth_bytes)
+
 
 def run_rewrite(
     cfg: Config,
@@ -40,17 +87,25 @@ def run_rewrite(
     test_code: TreeNode,
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
+    codex_login: bool = False,
 ) -> TreeNode:
+    # Print the warning in red so it stands out
+    WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
+        "the sandbox and could theoretically be leaked " \
+        "by commands run by the agent; please make sure " \
+        "to set limits on its usage.\033[0m"
+
+
     if 'CRISP_API_KEY' in os.environ:
-        # Print the warning in red so it stands out
-        print("\033[31mwarning: CRISP_API_KEY is being copied into " \
-              "the sandbox and could theoretically be leaked " \
-              "by commands run by the agent; please make sure " \
-              "to set limits on its usage.\033[0m")
+        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
         sb.checkout(test_code)
+
+        if codex_login:
+            print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
+            _inject_codex_auth(sb)
 
         codex_dir = sb.join(".codex")
         mkdir_codex = ['mkdir', '-p', codex_dir]
@@ -59,7 +114,7 @@ def run_rewrite(
             '--dangerously-bypass-approvals-and-sandbox',
             '--skip-git-repo-check',
             prompt,
-        ])
+        ], codex_login=codex_login)
         print(codex_cmd)
         all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 

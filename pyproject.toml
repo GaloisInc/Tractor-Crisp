@@ -6,6 +6,7 @@ dependencies = [
     "cbor>=1.0.0",
     "docker>=7.1.0",
     "gepa>=0.1.1",
+    "litellm>=1.83.14",
     "pathspec>=1.0.4",
     "pygit2>=1.19.0",
     "requests>=2.32.5",

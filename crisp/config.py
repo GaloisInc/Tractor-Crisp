@@ -97,6 +97,8 @@ class TranspileConfig(ConfigBase):
 
     def __post_init__(self):
         # Check that all artifact names are distinct.
+        config_dir = os.path.dirname(self.config_path)
+        object.__setattr__(self, 'output_dir', os.path.join(config_dir, self.output_dir))
         seen = set()
         for a in self.artifacts:
             assert a.name not in seen, f'duplicate entry for artifact {a.name!r}'

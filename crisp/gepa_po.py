@@ -9,32 +9,33 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
 from dataclasses import dataclass
+import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
-import json
-import litellm
-from llama_cpp import Llama
+import os
 from pathlib import Path
-import re
-import subprocess
-import tempfile
+import random
 from typing import Any
+
+from .config import Config
+from .__main__ import parse_node_id_arg
+from .mvir import MVIR, TreeNode
+from .workflow import Workflow
 
 
 @dataclass
 class TaskInput:
-    #TODO replace fields here with Workflow (in workflow.py) containing the C project which is being run
-    input: str
-    filepath: Path
+    workflow: Workflow
 
 @dataclass
 class TaskTrace:
     task: TaskInput
-    response: str
+    n_llm_input_code: TreeNode
+    n_llm_output_code: TreeNode
     feedback: str
 
 @dataclass
 class TaskOutput:
-    response: str
+    n_code: TreeNode
 
 @dataclass
 class EvaluationResult:
@@ -47,112 +48,73 @@ class ResponseEvaluator:
     def __init__(
         self,
         score_success: float = 1.0,
-        score_compiles_but_unsafe: float = 0.5,
+        score_passtests_but_unsafe: float = 0.5,
+        score_compiles_but_failtests: float = 0.25,
         score_failure: float = 0.0
     ):
         self.score_success = score_success
-        self.score_compiles_but_unsafe = score_compiles_but_unsafe
+        self.score_passtests_but_unsafe = score_passtests_but_unsafe
+        self.score_compiles_but_failtests = score_compiles_but_failtests
         self.score_failure = score_failure
 
-    def __call__(self, response: str) -> EvaluationResult: #TODO consider passing a tree node here instead of `response`, since the tree node can then be passed to compilation and unsafety finding functions
-        m = re.search(r'<code>\n(?P<code>.*)</code>', response, flags=re.DOTALL)
-        code = m.group('code') if m else ''
+    def __call__(
+        self,
+        workflow: Workflow,
+        n_llm_output_code: TreeNode,
+        n_llm_input_code: TreeNode,
+        n_c_code: TreeNode,
+    ) -> EvaluationResult:
 
-        if not code:
-            score = self.score_failure
-            feedback = "The generated response is not in the proper format. Please include safe Rust code as follows:\n<code>\nSafe Rust code\n</code>"
+        # Check for correct format; if not, TreeNode hasn't changed
+        if n_llm_output_code.node_id() == n_llm_input_code.node_id():
+            return EvaluationResult(
+                score = self.score_failure,
+                feedback = "The generated response is not in the proper format."
+            )
 
-        else:
-            with tempfile.NamedTemporaryFile(
-                suffix = '.rs',
-                mode = 'w',
-                encoding = 'utf-8',
-                delete = False
-            ) as f:
-                f.write(code)
-                f.flush()
-                tmp_filepath = f.name
+        # Check for compilation success
+        compile_results = workflow.cargo_check_json_op(n_llm_output_code)
+        if not compile_results.passed:
+            return EvaluationResult(
+                score = self.score_failure,
+                feedback = f"The generated response includes Rust code that cannot compile. Please try again to produce Rust code that can compile, has identical behavior as the input, and is safe.\nHere are the results of attempting to compile:\n{compile_results.body_str()}"
+            )
 
-            can_compile, compile_results = self.compile(tmp_filepath)
-            if not can_compile:
-                score = self.score_failure
-                feedback = f"The generated response includes Rust code that cannot compile. Please try again to produce Rust code that is correct and can compile, as well as safe.\nHere are the results of attempting to compile:\n{compile_results}"
+        # Check for tests passing
+        test_results = workflow.test_op(n_llm_output_code, n_c_code)
+        if not test_results.exit_code == 0:
+            return EvaluationResult(
+                score = self.score_compiles_but_failtests,
+                feedback = f"The generated response includes Rust code that successfully compiles, but does not achieve identical behavior as the input. It fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce Rust code that can compile, achieves the correct functionality by passing tests, and is safe."
+            )
 
-            else:
-                is_safe, unsafety_results = self.is_safe(tmp_filepath)
-                if not is_safe:
-                    score = self.score_compiles_but_unsafe
-                    feedback = f"The generated response includes Rust code that successfully compiles, but is unsafe. Please try again to produce safe Rust code.\nHere is some additional feedback on un-safety that might be useful:\n{unsafety_results}"
+        # Check for un-safety
+        unsafe_results = workflow.find_unsafe_op(n_llm_output_code).body_json()
+        internal_unsafe_fns = []
+        fns_containing_unsafe = []
+        for result in unsafe_results.values():
+            internal_unsafe_fns.extend(result['internal_unsafe_fns'])
+            fns_containing_unsafe.extend(result['fns_containing_unsafe'])
+        total_unsafe = len(internal_unsafe_fns) + len(fns_containing_unsafe)
+        if total_unsafe > 0:
+            return EvaluationResult(
+                score = self.score_passtests_but_unsafe,
+                feedback = f"The generated response includes Rust code that successfully compiles and has identical behavior to the input (i.e. passes tests), but is unsafe. Please try again to produce safe Rust code.\nHere is some additional feedback on un-safety that might be useful:\nNumber of unsafe entities = {total_unsafe}." + (
+                    f"\nInternal unsafe functions are {', '.join(internal_unsafe_fns)}."
+                    if internal_unsafe_fns
+                    else ""
+                ) + (
+                    f"\nFunctions containing unsafe are {', '.join(fns_containing_unsafe)}."
+                    if fns_containing_unsafe
+                    else ""
+                )
+            )
 
-                else:
-                    score = self.score_success
-                    feedback = "The generated response includes Rust code that successfully compiles, and is safe. Good job!"
-
-            Path(tmp_filepath).unlink()
-
+        # Everything works
         return EvaluationResult(
-            score = score,
-            feedback = feedback
+            score = self.score_success,
+            feedback = "The generated response includes Rust code that successfully compiles, has identical behavior to the input (i.e. passes tests), and is safe. Good job!"
         )
-
-    @staticmethod
-    def compile(filepath: str) -> tuple[bool, str]:
-
-        #TODO do this using `workflow.cargo_check_json(treenode)`
-
-        # Create a temporary directory to hold the rlib file
-        with tempfile.TemporaryDirectory() as out_dir:
-            out_dir = Path(out_dir)
-
-            # Try binary
-            r = subprocess.run(
-                ["rustc", filepath, "--out-dir", out_dir],
-                stdout = subprocess.PIPE,
-                stderr = subprocess.PIPE,
-                text = True
-            )
-            if r.returncode == 0:
-                return True, r.stderr
-
-            # Try library
-            r = subprocess.run(
-                ["rustc", "--crate-type=lib", filepath, "--out-dir", out_dir],
-                stdout = subprocess.PIPE,
-                stderr = subprocess.PIPE,
-                text = True
-            )
-            if r.returncode == 0:
-                return True, r.stderr
-
-            return False, r.stderr
-
-    @staticmethod
-    def is_safe(filepath: str) -> tuple[bool, str]:
-
-        #TODO do this using `workflow.find_unsafe_op(treenode).body_json()`
-
-        with open(filepath, 'rb') as f:
-            r = subprocess.run(
-                ["cargo", "run", "--", "--single-file"],
-                cwd = Path(__file__).parent.parent / 'tools/find_unsafe',
-                stdin = f,
-                stdout = subprocess.PIPE,
-                stderr = subprocess.PIPE,
-                text = True
-            )
-        out = json.loads(r.stdout.strip())
-        internal_unsafe_fns = out['input.rs']['internal_unsafe_fns']
-        fns_containing_unsafe = out['input.rs']['fns_containing_unsafe']
-
-        output_str = ''
-        if internal_unsafe_fns:
-            internal_unsafe_fns = ', '.join([f'`{elem}`' for elem in internal_unsafe_fns])
-            output_str += f"Internal unsafe functions are {internal_unsafe_fns}. "
-        if fns_containing_unsafe:
-            fns_containing_unsafe = ', '.join([f'`{elem}`' for elem in fns_containing_unsafe])
-            output_str += f"Functions containing unsafe are {fns_containing_unsafe}. "
-
-        return (not internal_unsafe_fns and not fns_containing_unsafe), output_str
 
 
 class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
@@ -162,12 +124,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         model: str,
         evaluator: Any = ResponseEvaluator()
     ):
-        self.model = model
-        self.llama_cpp_model = None if not self.model.endswith('.gguf') else Llama(
-            model_path = self.model,
-            n_gpu_layers = -1, # put all of model on GPU, i.e. MPS for Apple
-            n_ctx = 0 # 0 = model's default
-        )
+        os.environ['CRISP_API_MODEL'] = model
         self.evaluator = evaluator
 
     def evaluate(
@@ -176,47 +133,45 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         candidate: dict[str,str],
         capture_traces: bool = False
     ) -> EvaluationBatch[TaskTrace, TaskOutput]:
+
         outputs = []
         scores = []
         trajectories = [] if capture_traces else None
 
         for task in batch:
-            messages = [
-                {'role': 'system', 'content': candidate['system_prompt']},
-                {'role': 'user', 'content': task['input']}
-            ]
 
-            # TODO once TaskInput contains Workflow, consider the following code
-            # input_node_id = task.workflow.mvir.tag('current')
-            # input_node: TreeNode = task.workflow.mvir.node(input_node_id)
-            # output_node = task.workflow.llm_safety(input_node, candidate_prompt)
-            # and then `output_node` can be passed to `self.evaluator`
-            # Alternatively, get the contents of the unsafe Rust file from `output_node.files`, then pass that to `self.evaluator()`
+            n_c_code_id = parse_node_id_arg(task['workflow'].mvir, 'c_code')
+            n_c_code = task['workflow'].mvir.node(n_c_code_id)
 
-            # If the Llama CPP model exists (i.e. self.model is GGUF), run that
-            if self.llama_cpp_model is not None:
-                response = self.llama_cpp_model.create_chat_completion(messages = messages)
-                print("==================== OBTAINED LLAMA CPP MODEL RESPONSE ====================")
-                response = response['choices'][0]['message']['content']
+            n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current')
+            n_llm_input_code = task['workflow'].mvir.node(n_llm_input_code_id)
 
-            # Otherwise, use LiteLLM to run self.model
-            else:
-                response = litellm.completion(model = self.model, messages = messages)
-                print("==================== OBTAINED LITELLM MODEL RESPONSE ====================")
-                response = response.choices[0].message.content
+            n_llm_output_code = task['workflow'].llm_gepa(
+                n_code = n_llm_input_code,
+                prompt = candidate['system_prompt']
+            )
 
-            outputs.append(TaskOutput(response = response))
+            outputs.append(TaskOutput(n_code = n_llm_output_code))
 
-            eval_result = self.evaluator(response = response)
+            eval_result = self.evaluator(
+                workflow = task['workflow'],
+                n_llm_output_code = n_llm_output_code,
+                n_llm_input_code = n_llm_input_code,
+                n_c_code = n_c_code
+            )
             scores.append(eval_result.score)
+
             if capture_traces:
                 trajectories.append(
                     TaskTrace(
                         task = task,
-                        response = response,
+                        n_llm_input_code = n_llm_input_code,
+                        n_llm_output_code = n_llm_output_code,
                         feedback = eval_result.feedback
                     )
                 )
+
+            task['workflow'].accept(n_llm_output_code) # the rewritten code now becomes the 'current' node
 
         print("==================== RETURNING EVALUATION BATCH ====================")
         return EvaluationBatch(
@@ -232,14 +187,97 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         components_to_update: list[str] # pylint: disable=unused-argument # required as per GEPA
     ) -> dict[str, list[dict[str, Any]]]:
         dataset = {'system_prompt': []}
-
         for traj in (eval_batch.trajectories or []):
             dataset['system_prompt'].append(
                 {
-                    "Inputs": traj.task['input'],
-                    "Generated Outputs": traj.response,
-                    "Feedback": traj.feedback,
+                    "Inputs": _get_contents_of_files_matching_patterns(
+                        node = traj.n_llm_input_code,
+                        patterns = traj.task['workflow'].cfg.src_globs,
+                        mvir = traj.task['workflow'].mvir
+                    ),
+                    "Generated Outputs": _get_contents_of_files_matching_patterns(
+                        node = traj.n_llm_output_code,
+                        patterns = traj.task['workflow'].cfg.src_globs,
+                        mvir = traj.task['workflow'].mvir
+                    ),
+                    "Feedback": traj.feedback
                 }
             )
-
         return dataset
+
+
+def _get_contents_of_files_matching_patterns(
+    node: TreeNode,
+    patterns: list[str],
+    mvir: MVIR,
+    separator: str = '\n\n'
+) -> str:
+    """
+    Get the contents of a node's files whose paths match given patterns.
+
+    Inputs:
+    - node: The node whose files to look at.
+    - patterns: List of string path patterns. Expected to contain wildcards. Any file in `node.files` which matches any pattern *from the right* will be considered.
+    - mvir: The MVIR in consideration.
+    - separator: After getting matching files, extract their body contents and concatenate the strings using this separator.
+
+    Output:
+    - The concatenated string of the body contents. Example:
+        Say the given `node` has files:
+        ```
+        {
+            'a/b/c/translated_rust/src/lib.rs': <node_id_1>,
+            'a/translated_rust/b/c/lib.rs': <node_id_2>,
+            'a/b/translated_rust/src/b/main.rs': <node_id_2>
+        }
+        and `patterns` is:
+        ```
+        [
+            'translated_rust/src/*.rs',
+            'translated_rust/src/*/*.rs
+        ]
+        ```
+        then <node_id_1> and <node_id_2> will match. Their bodies will be concatenated and returned.
+    """
+    file_ids = [file_id for path,file_id in node.files.items() if any(Path(path).match(f'**/{pattern}') for pattern in patterns)]
+    contents = separator.join(mvir.node(file_id).body_str() for file_id in file_ids)
+    return contents
+
+
+def do_gepa(
+    dataset_path: str | Path,
+    seed_prompt: str,
+    task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.4-2026-03-05'),
+    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.4-2026-03-05'),
+    trainset_frac: float = 0.5,
+    max_metric_calls: int = 150
+):
+
+    trainset, valset = [], []
+    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir()]
+    random.shuffle(project_folders)
+
+    for i,project_folder in enumerate(project_folders):
+        cfg = Config.from_toml_file(
+            str(project_folder / 'crisp.toml'),
+            mvir_storage_dir = str(project_folder / 'crisp-storage')
+        )
+        mvir = MVIR(cfg.mvir_storage_dir, '.')
+        workflow = Workflow(cfg, mvir)
+        task_input = {'workflow': workflow}
+        (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
+
+    adapter = RustAdapter(model = task_lm)
+
+    gepa_result = gepa.optimize(
+        seed_candidate = {'system_prompt': seed_prompt},
+        trainset = trainset,
+        valset = valset,
+        adapter = adapter,
+        max_metric_calls = max_metric_calls,
+        reflection_lm = reflection_lm
+    )
+
+    print("==================== START GEPA OPTIMIZED PROMPT ====================")
+    print(gepa_result.best_candidate['system_prompt'])
+    print("==================== END GEPA OPTIMIZED PROMPT ====================")

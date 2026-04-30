@@ -207,9 +207,10 @@ def step(f):
 
 
 class Workflow:
-    def __init__(self, cfg: Config, mvir: MVIR):
+    def __init__(self, cfg: Config, mvir: MVIR, codex_login: bool = False):
         self.cfg = cfg
         self.mvir = mvir
+        self.codex_login = codex_login
         self._step_depth = 0
 
     def accept(self, code: TreeNode, reason = None):
@@ -986,6 +987,7 @@ class Workflow:
             after_refactoring_instruction = after_refactoring_instruction,
         )
         return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
+            codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ])

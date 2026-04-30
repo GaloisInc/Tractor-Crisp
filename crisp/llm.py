@@ -230,7 +230,8 @@ def run_rewrite(
         glob_filter: str | list[str] | None = None,
         format_kwargs: dict = {},
         think: bool = False,
-        ) -> TreeNode:
+        separate_system_prompt: bool = False
+        ) -> tuple[TreeNode, LlmOpNode]:
     model = API_MODEL or cfg.model
     if model is None:
         model = get_default_model()
@@ -245,27 +246,36 @@ def run_rewrite(
         file_formatter = llm_format.get_file_formatter(LLM_FILE_FORMATTER)
     input_files_str, short_path_map = file_formatter.emit_files(
         mvir, input_code, glob_filter=glob_filter)
-    prompt = prompt_fmt.format(
-        input_files=input_files_str,
-        output_instructions=file_formatter.get_output_instructions(),
-        output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
-        **format_kwargs,
-    )
-    prompt_without_files = prompt_fmt.format(
-        # Substitute in the literal string `{input_files}` for `{input_files}`,
-        # producing a version of the prompt where all variables are substituted
-        # except for `input_files`.  This is the version we record in the
-        # `LlmOpNode`, since the input files are already available from the
-        # `old_code` metadata field.
-        input_files='{input_files}',
-        output_instructions=file_formatter.get_output_instructions(),
-        output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
-        **format_kwargs,
-    )
 
-    req_messages = [
-        {'role': 'user', 'content': prompt},
-    ]
+    if not separate_system_prompt:
+        prompt = prompt_fmt.format(
+            input_files=input_files_str,
+            output_instructions=file_formatter.get_output_instructions(),
+            output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
+            **format_kwargs,
+        )
+        prompt_without_files = prompt_fmt.format(
+            # Substitute in the literal string `{input_files}` for `{input_files}`,
+            # producing a version of the prompt where all variables are substituted
+            # except for `input_files`.  This is the version we record in the
+            # `LlmOpNode`, since the input files are already available from the
+            # `old_code` metadata field.
+            input_files='{input_files}',
+            output_instructions=file_formatter.get_output_instructions(),
+            output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
+            **format_kwargs,
+        )
+        req_messages = [
+            {'role': 'user', 'content': prompt},
+        ]
+
+    else:
+        prompt_without_files = prompt_fmt
+        req_messages = [
+            {'role': 'system', 'content': prompt_without_files},
+            {'role': 'user', 'content': input_files_str}
+        ]
+
     prefill = model_cfg.prefill if not think else model_cfg.prefill_think
     if len(prefill) > 0:
         req_messages.append({'role': 'assistant', 'content': prefill})

@@ -245,18 +245,33 @@ def _get_contents_of_files_matching_patterns(
 
 
 def do_gepa(
-    dataset_path: str | Path,
-    seed_prompt: str,
-    task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.4-2026-03-05'),
-    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.4-2026-03-05'),
+    dataset_path: Path,
+    seed_prompt_path: Path,
+    task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
+    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
     trainset_frac: float = 0.5,
     max_metric_calls: int = 150
 ):
+    """
+    Run GEPA optimization for converting unsafe Rust to safe Rust.
 
+    Inputs:
+    - dataset_path: Path to a corpus folder, e.g. B01_organic.
+    - seed_prompt_path: Path to a text file containing the seed prompt to be used for optimization.
+    - task_lm: The LM inside the loop for GEPA.
+    - reflection_lm: The LM outside the loop for GEPA.
+    - trainset_frac: Fraction of the data to use for training. Remaining is used for validation.
+    - max_metric_calls: Required by GEPA.
+    """
+
+    # Get seed prompt
+    with open(seed_prompt_path, 'r', encoding='utf-8') as f:
+        seed_prompt = f.read()
+
+    # Create datasets
     trainset, valset = [], []
     project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir()]
     random.shuffle(project_folders)
-
     for i,project_folder in enumerate(project_folders):
         cfg = Config.from_toml_file(
             str(project_folder / 'crisp.toml'),
@@ -267,8 +282,10 @@ def do_gepa(
         task_input = {'workflow': workflow}
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
+    # Instantiate GEPA adapter
     adapter = RustAdapter(model = task_lm)
 
+    # Run GEPA optimization
     gepa_result = gepa.optimize(
         seed_candidate = {'system_prompt': seed_prompt},
         trainset = trainset,
@@ -278,6 +295,7 @@ def do_gepa(
         reflection_lm = reflection_lm
     )
 
+    # Print optimization results
     print("==================== START GEPA OPTIMIZED PROMPT ====================")
     print(gepa_result.best_candidate['system_prompt'])
     print("==================== END GEPA OPTIMIZED PROMPT ====================")

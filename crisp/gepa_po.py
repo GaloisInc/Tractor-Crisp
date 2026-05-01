@@ -174,7 +174,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
                 )
 
-            task['workflow'].accept(n_llm_output_code) # the rewritten code now becomes the 'current' node
+            # task['workflow'].accept(n_llm_output_code) # the rewritten code now becomes the 'current' node
 
         print("==================== RETURNING EVALUATION BATCH ====================")
         return EvaluationBatch(

@@ -219,7 +219,7 @@ def evaluate_rust(
 if __name__ == "__main__":
 
     ## Run ##
-    seed_prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/seed_prompt.txt'
+    seed_prompt_path = Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompt.txt'
     with open(seed_prompt_path, 'r', encoding='utf-8') as f:
         seed_prompt = f.read()
     run_rust(
@@ -235,7 +235,7 @@ if __name__ == "__main__":
     # At the moment, done manually by copy-pasting from CLI
 
     ## Evaluate ##
-    prompt_path = Path(__file__).resolve().parent / 'gepa_found_prompts/20260326_gpt5p4_gpt5p4.txt'
+    prompt_path = Path(__file__).resolve().parent.parent / 'gepa_artifacts/20260326_gpt5p4_gpt5p4.txt'
     with open(prompt_path, 'r', encoding='utf-8') as f:
         prompt = f.read()
     for dataset_path in [

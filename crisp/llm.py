@@ -31,7 +31,7 @@ def sse_events(resp):
     acc = bytearray()
 
     try:
-        for line in resp.iter_lines():
+        for line in resp.iter_lines(decode_unicode=False):
             if len(line) == 0 or line.isspace():
                 yield bytes(acc)
                 acc.clear()

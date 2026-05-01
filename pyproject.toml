@@ -7,10 +7,12 @@ dependencies = [
     "docker>=7.1.0",
     "gepa>=0.1.1",
     "litellm>=1.83.14",
+    "pandas>=3.0.2",
     "pathspec>=1.0.4",
     "pygit2>=1.19.0",
     "requests>=2.32.5",
     "toml>=0.10.2",
+    "tqdm>=4.67.3",
 ]
 
 [project.scripts]

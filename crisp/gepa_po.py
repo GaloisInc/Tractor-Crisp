@@ -8,12 +8,15 @@ Note: Code here is inspired from adapters/default_adapter/default_adapter.py
 in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
+import csv
 from dataclasses import dataclass
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
+import pandas as pd
 from pathlib import Path
 import random
+from tqdm import tqdm
 from typing import Any
 
 from .config import Config
@@ -299,3 +302,95 @@ def do_gepa(
     print("==================== START GEPA OPTIMIZED PROMPT ====================")
     print(gepa_result.best_candidate['system_prompt'])
     print("==================== END GEPA OPTIMIZED PROMPT ====================")
+
+
+def evaluate_gepa_found_prompt(
+    dataset_path: Path,
+    prompt_path: Path,
+    model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
+    output_csv_path: Path | None = None
+):
+    """
+    Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
+
+    Inputs:
+    - dataset_path: Path to a corpus folder, e.g. B01_organic.
+    - prompt_path: Path to a text file containing the prompt to be used for evaluating.
+    - model: The LM to run the prompt on.
+    - output_csv_path: Save results to this CSV.
+        - If None, set to `<prompt_path containing folder> / eval_<prompt_name>_<dataset_name>.csv`
+        - File will be appended to if it already exists
+    """
+
+    # Set model
+    os.environ['CRISP_API_MODEL'] = model
+
+    # Get prompt
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        prompt = f.read()
+
+    # Get project folders
+    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir())
+
+    # Load response evaluator
+    response_evaluator = ResponseEvaluator()
+
+    # If it exists, read output CSV and get done files
+    if output_csv_path is None:
+        output_csv_path = prompt_path.parent / f'eval_{prompt_path.stem}_{dataset_path.name}.csv'
+    output_csv_existed = False
+    done_already = set()
+    if output_csv_path.exists():
+        output_csv_existed = True
+        output_csv = pd.read_csv(output_csv_path)
+        done_already = set(output_csv['filepath'])
+        del output_csv
+
+    # Write to output CSV
+    with open(output_csv_path, 'a', encoding='utf-8') as csvfile:
+        csvwriter = csv.writer(csvfile)
+
+        # Write header if this is the first time output CSV is being written to
+        if not output_csv_existed:
+            csvwriter.writerow([
+                'project_folder',
+                'score'
+            ])
+
+        # Iterate
+        for project_folder in tqdm(project_folders):
+
+            # Check if already done
+            if project_folder.name in done_already:
+                continue
+
+            # Create mvir and workflow
+            cfg = Config.from_toml_file(
+                str(project_folder / 'crisp.toml'),
+                mvir_storage_dir = str(project_folder / 'crisp-storage')
+            )
+            mvir = MVIR(cfg.mvir_storage_dir, '.')
+            workflow = Workflow(cfg, mvir)
+
+            # Get relevant nodes
+            n_c_code_id = parse_node_id_arg(mvir, 'c_code')
+            n_c_code = mvir.node(n_c_code_id)
+            n_llm_input_code_id = parse_node_id_arg(mvir, 'current')
+            n_llm_input_code = mvir.node(n_llm_input_code_id)
+
+            # LLM rewriting
+            n_llm_output_code = workflow.llm_gepa(n_code=n_llm_input_code, prompt=prompt)
+
+            # Get score
+            score = response_evaluator(
+                workflow = workflow,
+                n_llm_output_code = n_llm_output_code,
+                n_llm_input_code = n_llm_input_code,
+                n_c_code = n_c_code
+            ).score
+
+            # Write results
+            csvwriter.writerow([
+                project_folder.name,
+                score
+            ])

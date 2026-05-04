@@ -17,11 +17,10 @@ if __name__ == '__main__':
     )
 
     for prompt_name in [
-        '20260326_gpt5p4_gpt5p4',
         'seed_prompt_2'
     ]:
         evaluate_gepa_found_prompt(
             dataset_path = Path(__file__).resolve().parent.parent / 'Test-Corpus/Public-Tests/B01_organic',
             prompt_path = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}.txt',
-            model = os.getenv('CRISP_API_MODEL', 'gpt-5.5')
+            model = 'gpt-5.5'
         )

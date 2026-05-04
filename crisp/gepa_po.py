@@ -174,7 +174,14 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
                 )
 
-            # task['workflow'].accept(n_llm_output_code) # the rewritten code now becomes the 'current' node
+            # ================== # ================== # ================== # ================== #
+            #NOTE: The following commented-out line makes the rewritten code the 'current' node
+            # It is recommended to *not* do this, since this reduces the performance of GEPA
+            # since the optimization goalposts are being changed by changing the 'current' node
+            # Hence, keep the following line commented out
+            # ================== # ================== # ================== # ================== #
+            # task['workflow'].accept(n_llm_output_code)
+            # ================== # ================== # ================== # ================== #
 
         print("==================== RETURNING EVALUATION BATCH ====================")
         return EvaluationBatch(

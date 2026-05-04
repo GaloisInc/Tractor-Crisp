@@ -16,7 +16,6 @@ import os
 import pandas as pd
 from pathlib import Path
 import random
-from tqdm import tqdm
 from typing import Any
 
 from .config import Config
@@ -365,7 +364,7 @@ def evaluate_gepa_found_prompt(
             ])
 
         # Iterate
-        for project_folder in tqdm(project_folders):
+        for project_folder in project_folders:
 
             # Check if already done
             if project_folder.name in done_already:

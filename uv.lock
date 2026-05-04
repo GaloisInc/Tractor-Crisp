@@ -226,7 +226,6 @@ dependencies = [
     { name = "pygit2" },
     { name = "requests" },
     { name = "toml" },
-    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -240,7 +239,6 @@ requires-dist = [
     { name = "pygit2", specifier = ">=1.19.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "toml", specifier = ">=0.10.2" },
-    { name = "tqdm", specifier = ">=4.67.3" },
 ]
 
 [[package]]

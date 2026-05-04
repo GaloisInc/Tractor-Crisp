@@ -19,9 +19,13 @@ import random
 from typing import Any
 
 from .config import Config
+from .error import CrispError
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow
+
+
+NUM_LLM_CALL_REPEATS = 3
 
 
 @dataclass
@@ -148,10 +152,17 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current')
             n_llm_input_code = task['workflow'].mvir.node(n_llm_input_code_id)
 
-            n_llm_output_code = task['workflow'].llm_gepa(
-                n_code = n_llm_input_code,
-                prompt = candidate['system_prompt']
-            )
+            for rep in range(1, NUM_LLM_CALL_REPEATS+1):
+                try:
+                    n_llm_output_code = task['workflow'].llm_gepa(
+                        n_code = n_llm_input_code,
+                        prompt = candidate['system_prompt']
+                    )
+                except CrispError as e:
+                    if rep < NUM_LLM_CALL_REPEATS:
+                        continue
+                    raise e
+                break
 
             outputs.append(TaskOutput(n_code = n_llm_output_code))
 

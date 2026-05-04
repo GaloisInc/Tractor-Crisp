@@ -55,9 +55,8 @@ def sse_events(resp):
     except (
         requests.exceptions.ChunkedEncodingError,
         requests.exceptions.ConnectionError
-    ):
-        if acc:
-            yield bytes(acc)
+    ) as e:
+        raise CrispError('Could not parse LLM API request response') from e
 
     # If there are bytes remaining in `acc`, don't yield them.  "If the file
     # ends in the middle of an event, before the final empty line, the

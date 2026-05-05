@@ -1,5 +1,5 @@
 """
-Helper classes / functions for GEPA prompt optimization.
+Code for GEPA prompt optimization.
 
 Note: This file is named gepa_po.py and not gepa.py to
 avoid import issues, since the library is also called gepa.

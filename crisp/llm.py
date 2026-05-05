@@ -29,26 +29,34 @@ def sse_events(resp):
     # A single message may span multiple lines.  We combine the lines in this
     # accumulator so we can yield the whole message as a unit.
     acc = bytearray()
-    for line in resp.iter_lines():
-        if len(line) == 0 or line.isspace():
-            yield bytes(acc)
-            acc.clear()
-            continue
-        key, sep, value = line.partition(b':')
-        # If `sep` is missing, no special handling is required.  "Otherwise,
-        # the string is not empty but does not contain a U+003A COLON character
-        # (:).  Process the field using the steps described below, using the
-        # whole line as the field name, and the empty string as the field
-        # value."  Note that this matches the behavior of `partition`.
-        if key.lower() != b'data':
-            print('unknown SSE key %r in %r' % (key, line))
-            continue
-        # "Collect the characters on the line after the first U+003A COLON
-        # character (:), and let `value` be that string. If `value` starts with
-        # a U+0020 SPACE character, remove it from `value`."
-        if value.startswith(b' '):
-            value = value[1:]
-        acc.extend(value)
+
+    try:
+        for line in resp.iter_lines(decode_unicode=False):
+            if len(line) == 0 or line.isspace():
+                yield bytes(acc)
+                acc.clear()
+                continue
+            key, sep, value = line.partition(b':')
+            # If `sep` is missing, no special handling is required.  "Otherwise,
+            # the string is not empty but does not contain a U+003A COLON character
+            # (:).  Process the field using the steps described below, using the
+            # whole line as the field name, and the empty string as the field
+            # value."  Note that this matches the behavior of `partition`.
+            if key.lower() != b'data':
+                print('unknown SSE key %r in %r' % (key, line))
+                continue
+            # "Collect the characters on the line after the first U+003A COLON
+            # character (:), and let `value` be that string. If `value` starts with
+            # a U+0020 SPACE character, remove it from `value`."
+            if value.startswith(b' '):
+                value = value[1:]
+            acc.extend(value)
+
+    except (
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.ConnectionError
+    ) as e:
+        raise CrispError('Could not parse LLM API request response') from e
 
     # If there are bytes remaining in `acc`, don't yield them.  "If the file
     # ends in the middle of an event, before the final empty line, the

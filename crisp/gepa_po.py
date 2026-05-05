@@ -270,7 +270,8 @@ def do_gepa(
     task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
     trainset_frac: float = 0.5,
-    max_metric_calls: int = 150
+    max_metric_calls: int = 150,
+    optimized_prompt_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
 ):
     """
     Run GEPA optimization for converting unsafe Rust to safe Rust.
@@ -282,7 +283,11 @@ def do_gepa(
     - reflection_lm: The LM outside the loop for GEPA.
     - trainset_frac: Fraction of the data to use for training. Remaining is used for validation.
     - max_metric_calls: Required by GEPA.
+    - optimized_prompt_folder: The new prompt will be saved as `prompt.txt` in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
     """
+
+    # Create optimized prompt folder
+    optimized_prompt_folder.mkdir(parents=True, exist_ok=False)
 
     # Get seed prompt
     with open(seed_prompt_path, 'r', encoding='utf-8') as f:
@@ -315,15 +320,14 @@ def do_gepa(
         reflection_lm = reflection_lm
     )
 
-    # Print optimization results
-    print("==================== START GEPA OPTIMIZED PROMPT ====================")
-    print(gepa_result.best_candidate['system_prompt'])
-    print("==================== END GEPA OPTIMIZED PROMPT ====================")
+    # Save optimization results
+    with open(optimized_prompt_folder / 'prompt.txt', 'w', encoding='utf-8') as f:
+        f.write(gepa_result.best_candidate['system_prompt'])
 
 
 def evaluate_gepa_found_prompt(
     dataset_path: Path,
-    prompt_path: Path,
+    optimized_prompt_folder: Path,
     model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
     output_csv_path: Path | None = None
 ):
@@ -331,11 +335,11 @@ def evaluate_gepa_found_prompt(
     Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
 
     Inputs:
-    - dataset_path: Path to a corpus folder, e.g. B01_organic.
-    - prompt_path: Path to a text file containing the prompt to be used for evaluating.
+    - dataset_path: Path to a corpus folder, e.g. .../B01_organic.
+    - optimized_prompt_folder: Path to a folder containing the prompt to be used for evaluating inside `prompt.txt`.
     - model: The LM to run the prompt on.
     - output_csv_path: Save results to this CSV.
-        - If None, set to `<prompt_path containing folder> / eval_<prompt_name>_<dataset_name>.csv`
+        - If None, set to `<optimized_prompt_folder> / results_<dataset_name>_<model>.csv`
         - File will be appended to if it already exists
     """
 
@@ -343,7 +347,7 @@ def evaluate_gepa_found_prompt(
     os.environ['CRISP_API_MODEL'] = model
 
     # Get prompt
-    with open(prompt_path, 'r', encoding='utf-8') as f:
+    with open(optimized_prompt_folder / 'prompt.txt', 'r', encoding='utf-8') as f:
         prompt = f.read()
 
     # Get project folders
@@ -354,7 +358,7 @@ def evaluate_gepa_found_prompt(
 
     # If it exists, read output CSV and get done files
     if output_csv_path is None:
-        output_csv_path = prompt_path.parent / f'eval_{prompt_path.stem}_{dataset_path.name}.csv'
+        output_csv_path = optimized_prompt_folder / f'results_{dataset_path.name}_{model}.csv'
     output_csv_existed = False
     done_already = set()
     if output_csv_path.exists():

@@ -6,13 +6,14 @@ use ra_ap_ide_db::RootDatabase;
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
 use ra_ap_syntax::SyntaxNode;
+use ra_ap_vfs::Vfs;
 use rust_analyzer_ext::crates;
 use rust_util::rewrite::{FlatTokens, OutputBuffer, TokenIndex, render_output};
 use std::collections::HashSet;
 use std::fs;
 use std::iter;
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use syn;
 use syn::spanned::Spanned;
@@ -369,6 +370,8 @@ fn main() {
         load_out_dirs_from_check: true,
         with_proc_macro_server: ProcMacroServerChoice::Sysroot,
         prefill_caches: false,
+        num_worker_threads: 1,
+        proc_macro_processes: 1,
     };
 
     let (db, vfs, _proc_macro_client) = ra_ap_load_cargo::load_workspace_at(
@@ -379,19 +382,30 @@ fn main() {
     )
     .unwrap();
 
-    let sema = Semantics::new(&db);
+    ra_ap_hir::attach_db(&db, || {
+        main_impl(&args, &db, vfs, cargo_dir_path)
+    })
+}
+
+fn main_impl(
+    args: &Args,
+    db: &RootDatabase,
+    vfs: Vfs,
+    cargo_dir_path: &Path,
+) {
+    let sema = Semantics::new(db);
 
     let crates = crates::find_in_dir(&sema, &vfs, cargo_dir_path);
 
     let mut files = Vec::new();
     let mut files_seen = HashSet::new();
     for &krate in &crates {
-        for m in krate.modules(&db) {
-            let src = m.definition_source(&db);
+        for m in krate.modules(db) {
+            let src = m.definition_source(db);
             let node = src.value.node();
-            if let Some(editioned_file_id) = m.as_source_file_id(&db) {
+            if let Some(editioned_file_id) = m.as_source_file_id(db) {
                 sema.parse(editioned_file_id);
-                let file_id = editioned_file_id.file_id(&db);
+                let file_id = editioned_file_id.file_id(db);
                 let vfs_path = vfs.file_path(file_id);
                 if let Some(path) = vfs_path.as_path() {
                     if files_seen.insert(path) {
@@ -419,7 +433,7 @@ fn main() {
 
         let mut ast: syn::File = syn::parse2(ts.clone()).unwrap();
         let mut v = AddDerivedItemVisitor(|i: &mut syn::Item| -> Option<syn::Item> {
-            add_ffi_wrapper(&args, &db, &sema, root.clone(), i)
+            add_ffi_wrapper(args, db, &sema, root.clone(), i)
         });
         v.visit_file_mut(&mut ast);
 

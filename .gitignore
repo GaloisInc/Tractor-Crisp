@@ -10,3 +10,13 @@ target/
 
 /crisp-bwrap.toml
 /bwrap-sandbox/
+
+# GEPA-related ignored files
+gepa_setup_initial.sh
+gepa_setup_rerun.sh
+scripts/expt_gepa.py
+scripts/expt_gepa_via_dspy.py
+
+# Ignore scripts that have been subsumed by CRISP workflow
+scripts/run_c2rust_and_get_datasets.py
+scripts/llm_unsafec2rust_to_saferust.py

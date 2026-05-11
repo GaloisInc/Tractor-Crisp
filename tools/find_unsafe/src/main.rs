@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{self, PathBuf};
-use ciborium;
 use clap::Parser;
+use proc_macro2::{TokenStream, TokenTree};
 use serde::Serialize;
-use syn::{self, Attribute, ExprUnsafe, Ident, ItemFn, ItemStatic, Meta, Path, StaticMutability};
+use syn::{self, Attribute, ExprUnsafe, Ident, ItemFn, ItemMacro, ItemStatic, Macro, Meta, Path, StaticMutability};
 use syn::visit::{self, Visit};
 
 // Include test files to ensure they compile.
@@ -13,6 +13,8 @@ use syn::visit::{self, Visit};
 mod test_funcs;
 #[allow(warnings)]
 mod test_statics;
+#[allow(warnings)]
+mod test_macros;
 
 fn is_link_attr(attr: &Attribute) -> bool {
     is_link_attr_meta(&attr.meta)
@@ -51,6 +53,17 @@ fn fn_is_exported(f: &ItemFn) -> bool {
     f.attrs.iter().any(is_link_attr)
 }
 
+fn token_stream_contains_unsafe(tokens: TokenStream) -> bool {
+    for token in tokens {
+        match token {
+            TokenTree::Ident(ident) if ident == "unsafe" => return true,
+            TokenTree::Group(group) if token_stream_contains_unsafe(group.stream()) => return true,
+            _ => { continue }
+        }
+    }
+    false
+}
+
 
 #[derive(Clone, Debug, Default)]
 #[derive(Serialize)]
@@ -63,6 +76,10 @@ struct Output {
     statics_containing_unsafe: HashSet<String>,
     /// Static that are mutable, regardless of unsafe.
     mutable_statics: HashSet<String>,
+    /// Macro invocations that contain an unsafe token, and don't belong to an item (ex global invocations).
+    global_macro_invocations_containing_unsafe: HashSet<String>,
+    /// Macro definitions (macro_rules!) that contain an unsafe token.
+    macro_definitions_containing_unsafe: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +131,44 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
             None => <_>::default(),
         };
         visit::visit_expr_unsafe(self, x);
+    }
+
+    // This matches both `macro_rules! m { }` definitions as well item macro invocations,
+    // (ex. `m!()`). ItemMacro::ident would be `Some(m)` in the first case, and `None`
+    // in the second case.
+    fn visit_item_macro(&mut self, item_mac: &'ast ItemMacro) {
+        let Some(name) = item_mac.ident.as_ref().map(|i| i.to_string()) else {
+            // This is an invocation, pass it along.
+            visit::visit_item_macro(self, item_mac);
+            return;
+        };
+        
+        // This is a macro_rules! definition.
+        if token_stream_contains_unsafe(item_mac.mac.tokens.clone()) {
+            self.out.macro_definitions_containing_unsafe.insert(name);
+        }
+    }
+
+    // This matches all macros generically. The only exception is `macro_rules!` definitions,
+    // which are intercepted by Self::visit_item_macro and not passed down.
+    fn visit_macro(&mut self, mac: &'ast Macro) {
+        let Path {leading_colon, segments } = &mac.path;
+        let name: String = leading_colon
+            .iter()
+            .map(|_| Default::default())
+            .chain(segments
+                .iter()
+                .map(|seg| seg.ident.to_string()))
+            .collect::<Vec<_>>()
+            .join("::");
+
+        if token_stream_contains_unsafe(mac.tokens.clone()) {
+            // Attribute unsafe usage in macro invocation to the function we're in, if we can
+            match &self.current_item {
+                Some(ItemKind::Fn(ident)) | Some(ItemKind::Static(ident)) => self.out.fns_containing_unsafe.insert(ident.to_string()),
+                None => self.out.global_macro_invocations_containing_unsafe.insert(name),
+            };
+        }
     }
 }
 
@@ -289,6 +344,37 @@ mod tests {
         ].into_iter().map(String::from).collect());
     }
 
+    #[test]
+    fn test_macros() {
+        let file = include_str!("test_macros.rs");
+        let ast = syn::parse_str(file).unwrap();
+
+        let mut v = Visitor::default();
+        v.visit_file(&ast);
+        let Output {
+            global_macro_invocations_containing_unsafe,
+            macro_definitions_containing_unsafe,
+            fns_containing_unsafe,
+            ..
+        } = v.out;
+
+        assert_eq!(global_macro_invocations_containing_unsafe, [
+            "unsafe_within_invocation2"
+       ].into_iter().map(String::from).collect());
+       
+        assert_eq!(macro_definitions_containing_unsafe, [
+            "unsafe_ExprMacro",
+            "unsafe_ItemMacro",
+            "false_positive",
+            "unsafe_StmtMacro",
+            "unsafe_TypeMacro"
+       ].into_iter().map(String::from).collect());
+
+        assert_eq!(fns_containing_unsafe, [
+            "demo"
+       ].into_iter().map(String::from).collect());       
+    }
+    
     #[test]
     fn test_is_link_attr_no_mangle() {
         let attr: Attribute = parse_quote!(#[no_mangle]);

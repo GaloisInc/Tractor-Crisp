@@ -235,7 +235,7 @@ mod tests {
     use syn::parse_quote;
 
     #[test]
-    fn test_macros() {
+    fn test_funcs() {
         let file = include_str!("test_funcs.rs");
         let ast = syn::parse_str(file).unwrap();
 

@@ -44,11 +44,11 @@ fn main() {
     let src_dir = opt_src_dir.as_ref().map_or(Path::new("."), |x| Path::new(x));
     let src_dir_abs = path::absolute(&src_dir).unwrap();
 
-    // FIND_UNSAFE2_OUTPUT_DIR handling
-    const OUTPUT_DIR_VAR: &str = "FIND_UNSAFE2_OUTPUT_DIR";
-    let opt_output_dir = env::var_os(OUTPUT_DIR_VAR);
-    let output_dir = opt_output_dir.as_ref().map_or(Path::new("out"), |x| Path::new(x));
-    let output_dir_abs = path::absolute(&output_dir).unwrap();
+    // FIND_UNSAFE2_JSON_DIR handling
+    const JSON_DIR_VAR: &str = "FIND_UNSAFE2_JSON_DIR";
+    let opt_json_dir = env::var_os(JSON_DIR_VAR);
+    let json_dir = opt_json_dir.as_ref().map_or(Path::new("find_unsafe2_json"), |x| Path::new(x));
+    let json_dir_abs = path::absolute(&json_dir).unwrap();
 
     let opt_cargo_bin = env::var_os("CARGO");
     let cargo_bin = opt_cargo_bin.as_ref().map_or(Path::new("cargo"), |x| Path::new(x));
@@ -62,7 +62,7 @@ fn main() {
         .env(LIB_PATH_VAR, new_lib_path)
         .env("RUSTC_WRAPPER", wrapper_exe)
         .env(SRC_DIR_VAR, src_dir_abs)
-        .env(OUTPUT_DIR_VAR, output_dir_abs);
+        .env(JSON_DIR_VAR, json_dir_abs);
     eprintln!("exec: {cmd:?}");
     let err = cmd.exec();
     panic!("exec failed: {:?}", err);

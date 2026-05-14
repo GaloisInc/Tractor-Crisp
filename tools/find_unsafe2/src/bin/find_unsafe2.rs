@@ -21,11 +21,11 @@ fn main() {
     assert!(src_dir.is_absolute(),
         "expected $FIND_UNSAFE2_SRC_DIR to be an absolute path, but got {:?}", src_dir);
 
-    let output_dir = env::var("FIND_UNSAFE2_OUTPUT_DIR").unwrap();
-    let output_dir = Path::new(&output_dir);
-    assert!(output_dir.is_absolute(),
-        "expected $FIND_UNSAFE2_OUTPUT_DIR to be an absolute path, but got {:?}", output_dir);
-    fs::create_dir_all(&output_dir).unwrap();
+    let json_dir = env::var("FIND_UNSAFE2_JSON_DIR").unwrap();
+    let json_dir = Path::new(&json_dir);
+    assert!(json_dir.is_absolute(),
+        "expected $FIND_UNSAFE2_JSON_DIR to be an absolute path, but got {:?}", json_dir);
+    fs::create_dir_all(&json_dir).unwrap();
 
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
@@ -48,7 +48,7 @@ fn main() {
         if found_src {
             let out = find_unsafe2::process(tcx);
 
-            let out_path = output_dir.join(format!("{}.json", rustc_public::local_crate().name));
+            let out_path = json_dir.join(format!("{}.json", rustc_public::local_crate().name));
             serde_json::to_writer(
                 File::create(&out_path).unwrap(),
                 &out,

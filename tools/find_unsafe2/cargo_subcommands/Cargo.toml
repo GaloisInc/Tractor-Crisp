@@ -1,0 +1,6 @@
+[package]
+name = "find_unsafe2_cargo_subcommands"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

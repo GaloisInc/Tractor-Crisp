@@ -1,0 +1,6 @@
+[package]
+name = "find_unsafe2"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "find_unsafe",
+    "find_unsafe2",
     "merge_rust",
     "related_decls",
     "rust_util",

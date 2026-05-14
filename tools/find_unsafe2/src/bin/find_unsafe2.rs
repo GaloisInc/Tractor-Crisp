@@ -8,7 +8,9 @@ extern crate rustc_middle;
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::fs::{self, File};
 use std::path::Path;
+use indexmap::IndexMap;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{DefId, CrateDef};
 use rustc_public::error::CompilerError;
@@ -21,6 +23,7 @@ use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
 use rustc_public::rustc_internal;
 use rustc_public::ty::{TyKind, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind};
+use serde::{Serialize, Deserialize};
 
 
 trait Visitor<'a> {
@@ -226,17 +229,17 @@ struct FunctionVisitor<'a> {
     /// Which statics this function mentions, and how many times for each.  If the function
     /// mentions a `static mut`, we assume it's unsafe, even though `&raw mut S` is actually a safe
     /// operation on its own.
-    uses_statics: HashMap<StaticDef, usize>,
+    uses_statics: IndexMap<StaticDef, usize>,
     /// Which functions this function mentions, and how many times for each.  We don't consider
     /// mentions of unsafe or extern functions to be inherently unsafe; we count unsafe calls
     /// explicitly in a separate field.
-    uses_fns: HashMap<FnDef, usize>,
+    uses_fns: IndexMap<FnDef, usize>,
     /// Which struct/union fields this function mentions, and how many times for each.  This
     /// includes both field projections and struct/union literals.  For example, `Struct1(1, 2)` or
     /// `Struct2 { x: 3, y: 4 }` counts as a use of both fields of the struct.  If the function
     /// mentions a union field, we assume it's unsafe, even though creating a union value with a
     /// union literal is actually safe.
-    uses_fields: HashMap<(AdtDef, FieldIdx), usize>,
+    uses_fields: IndexMap<(AdtDef, FieldIdx), usize>,
     /// Number of calls to unsafe functions within the current function.  This includes both direct
     /// calls and indirect calls via function pointers.
     calls_unsafe: usize,
@@ -248,9 +251,9 @@ impl<'a> FunctionVisitor<'a> {
     pub fn new(body: &'a Body) -> FunctionVisitor<'a> {
         FunctionVisitor {
             body,
-            uses_statics: HashMap::new(),
-            uses_fns: HashMap::new(),
-            uses_fields: HashMap::new(),
+            uses_statics: IndexMap::new(),
+            uses_fns: IndexMap::new(),
+            uses_fields: IndexMap::new(),
             calls_unsafe: 0,
             derefs_raw_ptr: 0,
         }
@@ -341,31 +344,32 @@ impl Visitor<'_> for FunctionVisitor<'_> {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Outputs {
-    fns: HashMap<String, FunctionOutputs>,
+    fns: IndexMap<String, FunctionOutputs>,
 
     // TODO: Unsafety: crate implements `unsafe trait`s.
     // TODO: Progress: struct field type contains raw pointers
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct FunctionOutputs {
     /// Unsafety: function dereferences raw pointers.
     derefs_raw_ptr: usize,
     /// Unsafety: function calls `unsafe fn`s.
     calls_unsafe: usize,
     /// Unsafety: function mentions `static mut`s.
-    uses_static_mut: HashMap<String, usize>,
+    uses_static_mut: IndexMap<String, usize>,
     /// Unsafety: function mentions union fields.
-    uses_union_field: HashMap<String, usize>,
+    uses_union_field: IndexMap<String, usize>,
 
     /// Progress: function mentions imported `extern` `fn`s.
-    uses_foreign_fn: HashMap<String, usize>,
+    uses_foreign_fn: IndexMap<String, usize>,
     // TODO: Progress: function signature type contains raw pointers
 }
 
-fn process(tcx: TyCtxt) {
+
+fn process(tcx: TyCtxt) -> Outputs {
     eprintln!("PROCESS: found crate {:?}", rustc_public::local_crate().name);
     let items = rustc_public::all_local_items();
 
@@ -400,7 +404,7 @@ fn process(tcx: TyCtxt) {
     };
 
     let mut out = Outputs {
-        fns: HashMap::new(),
+        fns: IndexMap::new(),
     };
     for item in items {
         eprintln!("item {item:?}");
@@ -427,7 +431,8 @@ fn process(tcx: TyCtxt) {
             assert!(old.is_none(), "duplicate entry for {:?}", item.name());
         }
     }
-    eprintln!("{:#?}", out);
+
+    out
 }
 
 
@@ -436,6 +441,12 @@ fn main() {
     let src_dir = Path::new(&src_dir);
     assert!(src_dir.is_absolute(),
         "expected $FIND_UNSAFE2_SRC_DIR to be an absolute path, but got {:?}", src_dir);
+
+    let output_dir = env::var("FIND_UNSAFE2_OUTPUT_DIR").unwrap();
+    let output_dir = Path::new(&output_dir);
+    assert!(output_dir.is_absolute(),
+        "expected $FIND_UNSAFE2_OUTPUT_DIR to be an absolute path, but got {:?}", output_dir);
+    fs::create_dir_all(&output_dir).unwrap();
 
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
@@ -456,7 +467,13 @@ fn main() {
 
         // Only process the current crate if it's inside the `SRC_DIR`.
         if found_src {
-            process(tcx);
+            let out = process(tcx);
+
+            let out_path = output_dir.join(format!("{}.json", rustc_public::local_crate().name));
+            serde_json::to_writer(
+                File::create(&out_path).unwrap(),
+                &out,
+            ).unwrap();
         }
 
         ControlFlow::<(), ()>::Continue(())

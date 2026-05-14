@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{self, Path};
 use std::process::{self, Command};
 use std::os::unix::process::CommandExt;
 
@@ -42,7 +42,13 @@ fn main() {
     const SRC_DIR_VAR: &str = "FIND_UNSAFE2_SRC_DIR";
     let opt_src_dir = env::var_os(SRC_DIR_VAR);
     let src_dir = opt_src_dir.as_ref().map_or(Path::new("."), |x| Path::new(x));
-    let src_dir_abs = src_dir.canonicalize().unwrap();
+    let src_dir_abs = path::absolute(&src_dir).unwrap();
+
+    // FIND_UNSAFE2_OUTPUT_DIR handling
+    const OUTPUT_DIR_VAR: &str = "FIND_UNSAFE2_OUTPUT_DIR";
+    let opt_output_dir = env::var_os(OUTPUT_DIR_VAR);
+    let output_dir = opt_output_dir.as_ref().map_or(Path::new("out"), |x| Path::new(x));
+    let output_dir_abs = path::absolute(&output_dir).unwrap();
 
     let opt_cargo_bin = env::var_os("CARGO");
     let cargo_bin = opt_cargo_bin.as_ref().map_or(Path::new("cargo"), |x| Path::new(x));
@@ -55,7 +61,8 @@ fn main() {
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)
         .env("RUSTC_WRAPPER", wrapper_exe)
-        .env(SRC_DIR_VAR, src_dir_abs);
+        .env(SRC_DIR_VAR, src_dir_abs)
+        .env(OUTPUT_DIR_VAR, output_dir_abs);
     eprintln!("exec: {cmd:?}");
     let err = cmd.exec();
     panic!("exec failed: {:?}", err);

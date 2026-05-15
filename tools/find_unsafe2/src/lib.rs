@@ -149,7 +149,9 @@ pub struct Outputs {
     pub fns: IndexMap<String, FunctionOutputs>,
 
     // TODO: Unsafety: crate implements `unsafe trait`s.
-    // TODO: Progress: struct field type contains raw pointers
+    // TODO: Unsafety: crate contains `unsafe extern` imports.
+
+    // TODO: Progress: struct field type contains raw pointers.
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -159,13 +161,24 @@ pub struct FunctionOutputs {
     /// Unsafety: function calls `unsafe fn`s.
     pub calls_unsafe: usize,
     /// Unsafety: function mentions `static mut`s.
+    ///
+    /// This is overapproximated: we count any mention of a static `S` as an access, even though
+    /// some mentions, like `&raw mut S`, don't access memory and thus are safe.  This information
+    /// is derived from `FunctionVisitor::uses_statics`, which counts all mentions for dependency
+    /// tracking purposes.
     pub uses_static_mut: IndexMap<String, usize>,
     /// Unsafety: function mentions union fields.
+    ///
+    /// This is overapproximated: we treat union construction `U { x: 1 }` as an unsafe use of the
+    /// field `U.x`, even though this is a safe operation.  This information is derived from
+    /// `FunctionVisitor::uses_fields`, which counts all mentions of each struct or union field for
+    /// dependency tracking purposes.
     pub uses_union_field: IndexMap<String, usize>,
+    // TODO: Unsafety: function is declared with unsafe attributes.
 
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
-    // TODO: Progress: function signature type contains raw pointers
+    // TODO: Progress: function signature type contains raw pointers.
 }
 
 

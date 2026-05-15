@@ -1,0 +1,120 @@
+#![feature(rustc_private)]
+extern crate rustc_public;
+
+// Required by rustc_public::run! macro
+extern crate rustc_driver;
+extern crate rustc_interface;
+extern crate rustc_middle;
+
+use std::env;
+use std::fs::{self, File};
+use std::hash::Hash;
+use std::path::Path;
+use std::process;
+use indexmap::IndexMap;
+use rustc_public::error::CompilerError;
+use serde_json;
+use find_unsafe2::{self, Outputs, FunctionOutputs};
+
+
+/// Check whether the unsafe operations recorded in `new` are a subset of those recorded in `old`.
+/// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
+/// found any such things.
+fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
+    let Outputs { ref fns } = *new;
+    let mut ok = true;
+
+    let empty_fn = FunctionOutputs {
+        derefs_raw_ptr: 0,
+        calls_unsafe: 0,
+        uses_static_mut: Default::default(),
+        uses_union_field: Default::default(),
+        uses_foreign_fn: Default::default(),
+    };
+    for (fn_name, new_fn) in fns {
+        let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
+        ok &= check_function_outputs(fn_name, old_fn, new_fn);
+    }
+
+    ok
+}
+
+fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutputs) -> bool {
+    let FunctionOutputs {
+        derefs_raw_ptr, calls_unsafe,
+        ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
+    } = *new;
+    let mut ok = true;
+
+    ok &= check_count(old.derefs_raw_ptr, derefs_raw_ptr,
+        || format!("{name}: raw pointer derefs"));
+    ok &= check_count(old.calls_unsafe, calls_unsafe,
+        || format!("{name}: unsafe function calls"));
+
+    ok &= check_count_map(&old.uses_static_mut, uses_static_mut,
+        |k| format!("{name}: uses of static mut {k}"));
+    ok &= check_count_map(&old.uses_union_field, uses_union_field,
+        |k| format!("{name}: uses of union field {k}"));
+    ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
+        |k| format!("{name}: uses of foreign fn {k}"));
+
+    ok
+}
+
+fn check_count_map<K: Hash + Eq>(
+    old: &IndexMap<K, usize>,
+    new: &IndexMap<K, usize>,
+    mut desc: impl FnMut(&K) -> String,
+) -> bool {
+    let mut ok = true;
+    for (k, &new_count) in new {
+        let old_count = old.get(k).copied().unwrap_or(0);
+        ok &= check_count(old_count, new_count, || desc(k));
+    }
+    ok
+}
+
+fn check_count(old: usize, new: usize, desc: impl FnOnce() -> String) -> bool {
+    if new > old {
+        println!("{} increased: {old} -> {new}", desc());
+        false
+    } else {
+        true
+    }
+}
+
+
+fn main() {
+    let json_dir = env::var("FIND_UNSAFE2_JSON_DIR").unwrap();
+    let json_dir = Path::new(&json_dir);
+    assert!(json_dir.is_absolute(),
+        "expected $FIND_UNSAFE2_JSON_DIR to be an absolute path, but got {:?}", json_dir);
+
+    let args = env::args().collect::<Vec<_>>();
+    let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
+        let json_path = json_dir.join(format!("{}.json", rustc_public::local_crate().name));
+        if !fs::exists(&json_path).unwrap() {
+            return ControlFlow::<(), ()>::Continue(());
+        }
+
+        let old_out: Outputs = serde_json::from_reader(
+            File::open(&json_path).unwrap(),
+        ).unwrap();
+
+        let new_out = find_unsafe2::process(tcx);
+
+        let ok = check_outputs(&old_out, &new_out);
+        if !ok {
+            process::exit(1);
+        }
+
+        ControlFlow::<(), ()>::Continue(())
+    });
+
+    match r {
+        Ok(()) => {},
+        Err(CompilerError::Failed) => panic!("compilation failed"),
+        Err(CompilerError::Interrupted(())) => {},
+        Err(CompilerError::Skipped) => {},
+    }
+}

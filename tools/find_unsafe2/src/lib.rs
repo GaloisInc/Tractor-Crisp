@@ -1,10 +1,6 @@
 #![feature(rustc_private)]
-extern crate rustc_public;
-
-// Required by rustc_public::run! macro
-extern crate rustc_driver;
-extern crate rustc_interface;
 extern crate rustc_middle;
+extern crate rustc_public;
 
 use std::collections::HashMap;
 use indexmap::IndexMap;

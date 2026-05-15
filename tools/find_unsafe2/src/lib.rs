@@ -170,7 +170,6 @@ pub struct FunctionOutputs {
 
 
 pub fn process(tcx: TyCtxt) -> Outputs {
-    eprintln!("PROCESS: found crate {:?}", rustc_public::local_crate().name);
     let items = rustc_public::all_local_items();
 
     let mut is_static_mut = {
@@ -207,7 +206,6 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         fns: IndexMap::new(),
     };
     for item in items {
-        eprintln!("item {item:?}");
         if let Some(body) = item.body() {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);

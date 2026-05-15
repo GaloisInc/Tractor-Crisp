@@ -464,6 +464,7 @@ name = "find_unsafe2"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "insta",
  "serde",
  "serde_json",
 ]

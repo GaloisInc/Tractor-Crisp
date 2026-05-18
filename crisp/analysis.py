@@ -15,7 +15,7 @@ from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
-    RelatedDeclsOpNode,
+    RelatedDeclsOpNode, FindUnsafe2AnalysisNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -379,13 +379,12 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
     exit_code, logs = sb.run(cmd_wrapped)
 
     if exit_code == 0:
-        if isinstance(logs, bytes):
-            logs = logs.decode()
-
         json = sb.commit_file('unsafe.json').body_str()
     else:
         json = ''
-        crate_out = CrateNode.new(mvir, defs = {})
+
+    if isinstance(logs, bytes):
+        logs = logs.decode()
 
     n_op = FindUnsafeAnalysisNode.new(
         mvir,
@@ -401,10 +400,56 @@ def _find_unsafe_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
         raise CrispError('find_unsafe failed', n_op)
     return n_op
 
-def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> CompileCommandsOpNode:
+def find_unsafe(cfg: Config, mvir: MVIR, code: TreeNode) -> FindUnsafeAnalysisNode:
     with run_sandbox(cfg, mvir) as sb:
         cmd = ['find-unsafe', '--dir', sb.join('.')]
         n_op = _find_unsafe_impl(cfg, mvir, sb, code, cmd)
+    return n_op
+
+
+UNSAFE_JSON_DIR = 'unsafe_json'
+
+@analysis
+def _find_unsafe2_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
+        code: TreeNode, cmd: list[str]) -> FindUnsafe2AnalysisNode:
+    sb.checkout(code)
+
+    cmd_wrapped = ['sh', '-c', shlex.join(cmd)]
+    exit_code, logs = sb.run(cmd_wrapped)
+
+    if exit_code == 0:
+        if isinstance(logs, bytes):
+            logs = logs.decode()
+
+        unsafe_json = sb.commit_dir(UNSAFE_JSON_DIR)
+    else:
+        unsafe_json = TreeNode.new(mvir, files = {})
+
+    n_op = FindUnsafe2AnalysisNode.new(
+        mvir,
+        body = logs,
+        code = code.node_id(),
+        cmd = cmd,
+        exit_code = exit_code,
+        unsafe_json = unsafe_json.node_id(),
+    )
+    if exit_code != 0:
+        raise CrispError('find_unsafe2 failed', n_op)
+    return n_op
+
+def find_unsafe2(cfg: Config, mvir: MVIR, code: TreeNode) -> FindUnsafe2AnalysisNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+    cargo_toml_path = os.path.join(cargo_dir, 'Cargo.toml')
+
+    with run_sandbox(cfg, mvir) as sb:
+        cmd = [
+            'env',
+            f'FIND_UNSAFE2_SRC_DIR={sb.join(cargo_dir)}',
+            f'FIND_UNSAFE2_JSON_DIR={sb.join("unsafe_json")}',
+            'cargo', 'find-unsafe2',
+            '--manifest-path', sb.join(cargo_toml_path),
+        ]
+        n_op = _find_unsafe2_impl(cfg, mvir, sb, code, cmd)
     return n_op
 
 

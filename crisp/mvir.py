@@ -763,6 +763,20 @@ class FindUnsafeAnalysisNode(Node):
     exit_code = property(lambda self: self._metadata['exit_code'])
     stderr = property(lambda self: self._metadata['stderr'])
 
+class FindUnsafe2AnalysisNode(Node):
+    KIND = 'find_unsafe2_analysis'
+    code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # `TreeNode` containing the generated JSON files
+    unsafe_json: Metadata[NodeId]
+    # `body` stores the log output
+
+    code = property(lambda self: self._metadata['code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    unsafe_json = property(lambda self: self._metadata['unsafe_json'])
+
 class EditOpNode(Node):
     KIND = 'edit_op'
     old_code: Metadata[NodeId]
@@ -889,6 +903,7 @@ NODE_CLASSES = [
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
+    FindUnsafe2AnalysisNode,
     EditOpNode,
 
     DefNode,

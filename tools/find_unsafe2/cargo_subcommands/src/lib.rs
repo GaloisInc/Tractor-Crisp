@@ -46,10 +46,11 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let json_dir = opt_json_dir.as_ref().map_or(Path::new("find_unsafe2_json"), |x| Path::new(x));
     let json_dir_abs = path::absolute(&json_dir).unwrap();
 
-    let opt_cargo_bin = env::var_os("CARGO");
-    let cargo_bin = opt_cargo_bin.as_ref().map_or(Path::new("cargo"), |x| Path::new(x));
-
-    let mut cmd = Command::new(cargo_bin);
+    // Use `cargo +toolchain` instead of `$CARGO` here in case the parent `cargo` process is from a
+    // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is
+    // too far apart in version, its `cargo` might be incompatible with `find_unsafe2`'s wrapped
+    // `rustc`.
+    let mut cmd = Command::new("cargo");
     if let Some(toolchain) = opt_toolchain {
         cmd.arg(format!("+{toolchain}"));
     }

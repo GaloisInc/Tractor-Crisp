@@ -2,6 +2,10 @@
 extern crate rustc_middle;
 extern crate rustc_public;
 
+// `rustc_driver` is not used directly, but must be present to avoid "error: crate `rustc_middle`
+// required to be available in rlib format, but was not found in this form" when running tests.
+extern crate rustc_driver;
+
 use std::collections::HashMap;
 use indexmap::IndexMap;
 use rustc_middle::ty::TyCtxt;

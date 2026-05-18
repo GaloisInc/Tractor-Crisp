@@ -4,8 +4,9 @@
 FROM docker.io/rust:trixie AS tractor-crisp-user
 
 # rust-analyzer 0.0.329 (used by tools/*) requires Rust 1.93 at minimum
-RUN rustup default 1.93.1
-RUN rustup +1.93.1 component add rustfmt
+# find_unsafe2 requires a specific nightly and rustc-internal components
+RUN rustup default nightly-2026-05-11
+RUN rustup +nightly-2026-05-11 component add rustfmt rustc-dev rust-src llvm-tools
 
 RUN apt-get update
 
@@ -49,8 +50,9 @@ COPY deps/c2rust /opt/c2rust
 RUN cd /opt/c2rust \
     && uv venv \
     && uv pip install -r scripts/requirements.txt
-RUN cargo-docker-clean.sh cargo install --locked --path /opt/c2rust/c2rust
 # `cd` to resolve the `rust-toolchain.toml`.
+RUN cd /opt/c2rust \
+    && cargo-docker-clean.sh cargo install --locked --path /opt/c2rust/c2rust
 RUN cd /opt/c2rust \
     && cargo-docker-clean.sh cargo install --locked --path c2rust-refactor
 

@@ -330,29 +330,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     # `--llm-mode agent` should be handled at a higher level.
                     assert False, f'unexpected llm_mode {mode!r}'
 
-            for repair_try in range(3):
-                try:
-                    n_op_check = w.cargo_check_json_op(n_new_code)
-                    if not n_op_check.passed:
-                        n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
-
-                        n_op_check = w.cargo_check_json_op(n_new_code)
-                        if not n_op_check.passed:
-                            # If we failed to fix the compile errors, don't bother
-                            # trying to run tests.  This still counts as a repair
-                            # attempt.
-                            continue
-
-                    n_op_test = w.test_op(n_new_code, n_c_code)
-                    if n_op_test.exit_code == 0:
-                        w.accept(n_new_code, ('main', 'safety', safety_try))
-                        n_code = n_new_code
-                        break
-
-                    n_new_code = w.llm_repair(n_new_code, n_op_test)
-                except CrispError as e:
-                    print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
-                    traceback.print_exc()
+            n_new_code = safety_loop_validate_and_repair(w, n_new_code, n_c_code)
+            if n_new_code is not None:
+                w.accept(n_new_code, ('main', 'safety', safety_try))
+                n_code = n_new_code
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
@@ -365,6 +346,39 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def safety_loop_validate_and_repair(w, n_new_code, n_c_code) -> TreeNode | None:
+    """
+    Validate `n_new_code`.  If it fails validation, try to repair it.  Returns
+    a version that passes validation (after zero or more repair attempts), or
+    `None` if no passing version was found.
+    """
+    for repair_try in range(3):
+        try:
+            n_op_check = w.cargo_check_json_op(n_new_code)
+            if not n_op_check.passed:
+                n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
+
+                n_op_check = w.cargo_check_json_op(n_new_code)
+                if not n_op_check.passed:
+                    # If we failed to fix the compile errors, don't bother
+                    # trying to run tests.  This still counts as a repair
+                    # attempt.
+                    continue
+
+            n_op_test = w.test_op(n_new_code, n_c_code)
+            if n_op_test.exit_code == 0:
+                return n_new_code
+
+            n_new_code = w.llm_repair(n_new_code, n_op_test)
+        except CrispError as e:
+            print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
+            traceback.print_exc()
+
+    # None of the new versions passed the checks.
+    return None
+
+
 
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')

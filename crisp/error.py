@@ -13,6 +13,10 @@ class CrispError(Exception):
     def __init__(self, message, node_id = None):
         super().__init__(message)
         self.message = message
+
+        from .mvir import Node
+        if isinstance(node_id, Node):
+            node_id = node_id.node_id()
         self.node_id = node_id
 
     def __str__(self):

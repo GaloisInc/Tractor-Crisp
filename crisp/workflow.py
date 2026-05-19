@@ -735,6 +735,18 @@ class Workflow:
         return analysis.find_unsafe(self.cfg, self.mvir, n_code)
 
     @step
+    def count_unsafe2(self, n_code: TreeNode) -> int:
+        mvir = self.mvir
+        n_op = self.find_unsafe2_op(n_code)
+        n_json = mvir.node(n_op.unsafe_json)
+        total = 0
+        for n_json_file_id in n_json.files.values():
+            n_json_file = mvir.node(n_json_file_id)
+            total += n_json_file.body_json()['total_unsafe']
+        print('%d unsafe operations remaining' % total)
+        return total
+
+    @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:
         return analysis.find_unsafe2(self.cfg, self.mvir, n_code)
 

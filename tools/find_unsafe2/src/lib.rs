@@ -147,6 +147,11 @@ impl Visitor<'_> for FunctionVisitor<'_> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Outputs {
+    /// Sum of all unsafe counts from all functions and items, except for FFI entry points.
+    ///
+    /// This includes only unsafety metrics, not progress metrics.
+    pub total_unsafe: usize,
+
     pub fns: IndexMap<String, FunctionOutputs>,
 
     // TODO: Unsafety: crate implements `unsafe trait`s.
@@ -184,6 +189,24 @@ pub struct FunctionOutputs {
     /// Whether this function is an FFI entry point.  Specifically, this is set when the function
     /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
     pub is_ffi_entry_point: bool,
+}
+
+impl FunctionOutputs {
+    fn total_unsafe(&self) -> usize {
+        let FunctionOutputs {
+            derefs_raw_ptr, calls_unsafe,
+            ref uses_static_mut, ref uses_union_field,
+            // Progress, not safety
+            uses_foreign_fn: _,
+            // Other
+            is_ffi_entry_point: _,
+        } = *self;
+
+        derefs_raw_ptr
+            + calls_unsafe
+            + uses_static_mut.values().copied().sum::<usize>()
+            + uses_union_field.values().copied().sum::<usize>()
+    }
 }
 
 
@@ -242,6 +265,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
     };
 
     let mut out = Outputs {
+        total_unsafe: 0,
         fns: IndexMap::new(),
     };
     for item in items {
@@ -266,6 +290,9 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
                 is_ffi_entry_point: is_ffi_entry_point(item),
             };
+            if !value.is_ffi_entry_point {
+                out.total_unsafe += value.total_unsafe();
+            }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate entry for {:?}", item.name());
         }

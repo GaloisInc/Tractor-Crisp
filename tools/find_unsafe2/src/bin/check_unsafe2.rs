@@ -21,7 +21,7 @@ use find_unsafe2::{self, Outputs, FunctionOutputs};
 /// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
 /// found any such things.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
-    let Outputs { ref fns } = *new;
+    let Outputs { total_unsafe: _, ref fns } = *new;
     let mut ok = true;
 
     let empty_fn = FunctionOutputs {

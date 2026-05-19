@@ -367,10 +367,16 @@ def safety_loop_validate_and_repair(w, n_new_code, n_c_code) -> TreeNode | None:
                     continue
 
             n_op_test = w.test_op(n_new_code, n_c_code)
-            if n_op_test.exit_code == 0:
-                return n_new_code
+            if n_op_test.exit_code != 0:
+                n_new_code = w.llm_repair(n_new_code, n_op_test)
 
-            n_new_code = w.llm_repair(n_new_code, n_op_test)
+                n_op_test = w.test_op(n_new_code, n_c_code)
+                if n_op_test.exit_code != 0:
+                    continue
+
+            # All validation steps passed, so return the new version.
+            return n_new_code
+
         except CrispError as e:
             print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
             traceback.print_exc()

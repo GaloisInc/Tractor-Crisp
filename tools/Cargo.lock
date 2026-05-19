@@ -460,6 +460,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "find_unsafe2"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "insta",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "find_unsafe2_cargo_subcommands"
+version = "0.1.0"
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

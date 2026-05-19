@@ -1,0 +1,7 @@
+---
+source: find_unsafe2/tests/example.rs
+expression: stdout
+---
+lib::fake_safe_puts: unsafe function calls increased: 0 -> 1
+lib::fake_safe_puts: uses of foreign fn lib::puts increased: 0 -> 1
+lib::deref_ptr: raw pointer derefs increased: 0 -> 1

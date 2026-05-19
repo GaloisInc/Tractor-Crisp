@@ -777,6 +777,20 @@ class FindUnsafe2AnalysisNode(Node):
     exit_code = property(lambda self: self._metadata['exit_code'])
     unsafe_json = property(lambda self: self._metadata['unsafe_json'])
 
+class CheckUnsafe2AnalysisNode(Node):
+    KIND = 'check_unsafe2_analysis'
+    code: Metadata[NodeId]
+    # `TreeNode` containing the previous JSON files to compare against
+    unsafe_json: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # `body` stores the log output
+
+    code = property(lambda self: self._metadata['code'])
+    unsafe_json = property(lambda self: self._metadata['unsafe_json'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+
 class EditOpNode(Node):
     KIND = 'edit_op'
     old_code: Metadata[NodeId]
@@ -904,6 +918,7 @@ NODE_CLASSES = [
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
     FindUnsafe2AnalysisNode,
+    CheckUnsafe2AnalysisNode,
     EditOpNode,
 
     DefNode,

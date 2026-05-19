@@ -18,7 +18,7 @@ from .mvir import (
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
-    RelatedDeclsOpNode, FindUnsafe2AnalysisNode,
+    RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -737,6 +737,11 @@ class Workflow:
     @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:
         return analysis.find_unsafe2(self.cfg, self.mvir, n_code)
+
+    @step
+    def check_unsafe2_op(
+            self, n_code: TreeNode, n_unsafe_json: TreeNode) -> CheckUnsafe2AnalysisNode:
+        return analysis.check_unsafe2(self.cfg, self.mvir, n_code, n_unsafe_json)
 
     @step
     def llm_safety(

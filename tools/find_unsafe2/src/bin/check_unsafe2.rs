@@ -30,6 +30,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         uses_static_mut: Default::default(),
         uses_union_field: Default::default(),
         uses_foreign_fn: Default::default(),
+        is_ffi_entry_point: false,
     };
     for (fn_name, new_fn) in fns {
         let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
@@ -40,9 +41,15 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
 }
 
 fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutputs) -> bool {
+    if old.is_ffi_entry_point {
+        // Allow increasing unsafe within FFI entry points.
+        return true;
+    }
+
     let FunctionOutputs {
         derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
+        is_ffi_entry_point,
     } = *new;
     let mut ok = true;
 
@@ -57,6 +64,9 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         |k| format!("{name}: uses of union field {k}"));
     ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
         |k| format!("{name}: uses of foreign fn {k}"));
+
+    ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
+        || format!("{name}: FFI export flag"));
 
     ok
 }
@@ -74,9 +84,20 @@ fn check_count_map<K: Hash + Eq>(
     ok
 }
 
+/// Check a numeric "badness" count.  If the number increased, report an error.
 fn check_count(old: usize, new: usize, desc: impl FnOnce() -> String) -> bool {
     if new > old {
         println!("{} increased: {old} -> {new}", desc());
+        false
+    } else {
+        true
+    }
+}
+
+/// Check the state of a "bad" flag.  If it changed from `false` to `true`, report an error.
+fn check_bad_flag(old: bool, new: bool, desc: impl FnOnce() -> String) -> bool {
+    if !old && new {
+        println!("{} changed: false -> true", desc());
         false
     } else {
         true

@@ -8,8 +8,9 @@ extern crate rustc_driver;
 
 use std::collections::HashMap;
 use indexmap::IndexMap;
+use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::{DefId, CrateDef};
+use rustc_public::{DefId, CrateDef, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
     AggregateKind,
@@ -179,6 +180,10 @@ pub struct FunctionOutputs {
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
     // TODO: Progress: function signature type contains raw pointers.
+
+    /// Whether this function is an FFI entry point.  Specifically, this is set when the function
+    /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
+    pub is_ffi_entry_point: bool,
 }
 
 
@@ -215,6 +220,27 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         }
     };
 
+    let is_ffi_entry_point = move |item: CrateItem| {
+        if item.is_foreign_item() {
+            // FFI imports are not entry points.
+            return false;
+        }
+        if !matches!(item.kind(), ItemKind::Fn /* | ItemKind::Static*/) {
+            // Only `fn`s and `static`s can be exported.
+            //
+            // However, since statics have no inputs (only outputs), we expect they should almost
+            // never need unsafe code internally.  So we don't apply the entry-point flag, which
+            // allows internal unsafe code.
+            //
+            // TODO: do set the flag on statics (for accuracy) but filter them out elsewhere
+            return false;
+        }
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
+        let attrs = tcx.codegen_fn_attrs(internal_def_id);
+        attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
+            || attrs.symbol_name.is_some()
+    };
+
     let mut out = Outputs {
         fns: IndexMap::new(),
     };
@@ -237,6 +263,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 uses_foreign_fn: v.uses_fns.iter().filter_map(|(&fd, &count)| {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
                 }).collect(),
+
+                is_ffi_entry_point: is_ffi_entry_point(item),
             };
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate entry for {:?}", item.name());

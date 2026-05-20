@@ -81,6 +81,22 @@ Compiler logs:
 ```
 '''
 
+LLM_REPAIR_SAFETY_PROMPT = '''
+A recent change to this Rust code added new unsafety that wasn't present
+before.  See the report below and fix the indicated sources of unsafety.  Avoid
+adding new unsafe code, as it will be rejected by the same check.
+
+{output_instructions}
+
+{input_files}
+
+Unsafety report:
+
+```
+{logs}
+```
+'''
+
 LLM_PROMPT_REPAIR_CALL_SITES = '''
 The file `ffi.rs` below contains FFI wrapper functions, which expose various Rust functions to C. The signatures of the underlying Rust functions have changed; please update the wrappers to match.
 
@@ -106,18 +122,11 @@ HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry poin
 
 {after_refactoring_instruction}
 
-You can measure the amount of unsafe code remaining using this command:
+Your changes must not introduce new unsafe code within implementation functions.  You can check your work using this command:
 ```sh
-find-unsafe --dir {cargo_dir_path} \
-    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length) + (.statics_containing_unsafe | length) + (.mutable_statics | length) + (.global_macro_invocations_containing_unsafe | length) + (.macro_definitions_containing_unsafe | length)] | add'
+cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
-This counts:
-- All non-FFI-related functions that are either `unsafe fn` or contain unsafe code interally.
-- All static items that contain unsafe.
-- All static mutable items, whether or not they contain unsafe.
-- All macro definitions and invocations that contain unsafe.
-
-Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
+This will report an error for any unsafe code that was improperly added during your edits.
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
@@ -736,15 +745,18 @@ class Workflow:
 
     @step
     def count_unsafe2(self, n_code: TreeNode) -> int:
-        mvir = self.mvir
-        n_op = self.find_unsafe2_op(n_code)
-        n_json = mvir.node(n_op.unsafe_json)
+        n_json = self.find_unsafe2_json(n_code)
         total = 0
         for n_json_file_id in n_json.files.values():
-            n_json_file = mvir.node(n_json_file_id)
+            n_json_file = self.mvir.node(n_json_file_id)
             total += n_json_file.body_json()['total_unsafe']
         print('%d unsafe operations remaining' % total)
         return total
+
+    @step
+    def find_unsafe2_json(self, n_code: TreeNode) -> TreeNode:
+        n_op = self.find_unsafe2_op(n_code)
+        return self.mvir.node(n_op.unsafe_json)
 
     @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:
@@ -754,6 +766,13 @@ class Workflow:
     def check_unsafe2_op(
             self, n_code: TreeNode, n_unsafe_json: TreeNode) -> CheckUnsafe2AnalysisNode:
         return analysis.check_unsafe2(self.cfg, self.mvir, n_code, n_unsafe_json)
+
+    @step
+    def compare_unsafe2_op(
+            self, n_old_code: TreeNode, n_new_code: TreeNode) -> CheckUnsafe2AnalysisNode:
+        n_find_op = self.find_unsafe2_op(n_old_code)
+        n_unsafe_json = self.mvir.node(n_find_op.unsafe_json)
+        return self.check_unsafe2_op(n_new_code, n_unsafe_json)
 
     @step
     def llm_safety(
@@ -811,6 +830,27 @@ class Workflow:
                 self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'stderr': stderr},
+                think = True)
+
+    @step
+    def llm_repair_safety(
+        self,
+        n_code: TreeNode,
+        n_op_check: CargoCheckJsonAnalysisNode,
+    ) -> TreeNode:
+        n_new_code, n_op_llm = self.llm_repair_safety_op(n_code, n_op_check)
+        return n_new_code
+
+    @step
+    def llm_repair_safety_op(
+        self,
+        n_code: TreeNode,
+        n_op_check: CheckUnsafe2AnalysisNode,
+    ) -> tuple[TreeNode, LlmOpNode]:
+        return llm.run_rewrite(
+                self.cfg, self.mvir, LLM_REPAIR_SAFETY_PROMPT, n_code,
+                glob_filter = self.cfg.src_globs,
+                format_kwargs = {'logs': n_op_check.body_str()},
                 think = True)
 
     @step
@@ -1000,7 +1040,7 @@ class Workflow:
     def agent_safety(
         self,
         n_code: TreeNode,
-        n_test_code: TreeNode,
+        n_test_code: TreeNode | None = None,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
     ) -> TreeNode:
@@ -1013,16 +1053,24 @@ class Workflow:
         else:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
 
+        extra_code = [
+            self.find_unsafe2_json(n_code),
+        ]
+        if n_test_code is not None:
+            extra_code.append(n_test_code)
+
         prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
-            initial_unsafe_count = self.count_unsafe(n_code),
             after_refactoring_instruction = after_refactoring_instruction,
         )
-        return agent.run_rewrite(cfg, mvir, prompt, n_code, n_test_code,
+        return agent.run_rewrite(cfg, mvir, prompt, n_code,
+            extra_code = extra_code,
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
-            ])
+            ],
+            find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+        )
 
     @step
     def agent_safety_no_tests(
@@ -1031,4 +1079,4 @@ class Workflow:
     ) -> TreeNode:
         cfg, mvir = self.cfg, self.mvir
         n_test_code = TreeNode.new(mvir, files={})
-        return self.agent_safety(n_code, n_test_code, provide_test_cmd = False)
+        return self.agent_safety(n_code, provide_test_cmd = False)

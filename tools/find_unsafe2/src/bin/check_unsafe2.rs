@@ -24,7 +24,12 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     let Outputs { total_unsafe: _, ref fns } = *new;
     let mut ok = true;
 
+    // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
+    // but not in `old`.  All unsafety and progress metrics are set to zero, so if the agent adds a
+    // new unsafe function that wasn't present before, we detect that as a regression.
     let empty_fn = FunctionOutputs {
+        is_unsafe_fn: false,
+        is_mut_static: false,
         derefs_raw_ptr: 0,
         calls_unsafe: 0,
         uses_static_mut: Default::default(),
@@ -47,11 +52,16 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     }
 
     let FunctionOutputs {
-        derefs_raw_ptr, calls_unsafe,
+        is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
         is_ffi_entry_point,
     } = *new;
     let mut ok = true;
+
+    ok &= check_bad_flag(old.is_unsafe_fn, is_unsafe_fn,
+        || format!("{name}: `unsafe` qualifier"));
+    ok &= check_bad_flag(old.is_mut_static, is_mut_static,
+        || format!("{name}: `mut` qualifier"));
 
     ok &= check_count(old.derefs_raw_ptr, derefs_raw_ptr,
         || format!("{name}: raw pointer derefs"));

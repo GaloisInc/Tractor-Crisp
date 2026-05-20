@@ -162,6 +162,14 @@ pub struct Outputs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionOutputs {
+    /// Unsafety: the function itself is unsafe.
+    ///
+    /// It's actually safe to define an `unsafe fn`, but we count this in our unsafety metrics so
+    /// the CRISP loop won't stop until all `unsafe fn`s are cleaned up or removed, including ones
+    /// that are never called.
+    pub is_unsafe_fn: bool,
+    /// Unsafety: this "function" is actually a static initializer, and the static is mutable.
+    pub is_mut_static: bool,
     /// Unsafety: function dereferences raw pointers.
     pub derefs_raw_ptr: usize,
     /// Unsafety: function calls `unsafe fn`s.
@@ -194,7 +202,7 @@ pub struct FunctionOutputs {
 impl FunctionOutputs {
     fn total_unsafe(&self) -> usize {
         let FunctionOutputs {
-            derefs_raw_ptr, calls_unsafe,
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             uses_foreign_fn: _,
@@ -202,7 +210,9 @@ impl FunctionOutputs {
             is_ffi_entry_point: _,
         } = *self;
 
-        derefs_raw_ptr
+        is_unsafe_fn as usize
+            + is_mut_static as usize
+            + derefs_raw_ptr
             + calls_unsafe
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>()
@@ -243,6 +253,20 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         }
     };
 
+    let is_unsafe_fn = move |item: CrateItem| {
+        if item.kind() != ItemKind::Fn {
+            return false;
+        }
+        let fd = FnDef(item.0);
+        fd.fn_sig().value.safety == Safety::Unsafe
+    };
+
+    let is_mut_static = move |item: CrateItem| {
+        let Ok(sd) = StaticDef::try_from(item) else { return false };
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, sd.0);
+        tcx.is_mutable_static(internal_def_id)
+    };
+
     let is_ffi_entry_point = move |item: CrateItem| {
         if item.is_foreign_item() {
             // FFI imports are not entry points.
@@ -275,6 +299,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
             let key: String = item.name();
             let value = FunctionOutputs {
+                is_unsafe_fn: is_unsafe_fn(item),
+                is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {

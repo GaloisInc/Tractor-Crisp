@@ -325,14 +325,14 @@ def do_gepa(
         f.write(gepa_result.best_candidate['system_prompt'])
 
 
-def evaluate_gepa_found_prompt(
+def run_gepa_eval_on_prompt(
     dataset_path: Path,
     optimized_prompt_folder: Path,
     model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
     output_csv_path: Path | None = None
 ):
     """
-    Evaluate the performance of a GEPA-found prompt on converting unsafe Rust to safe Rust.
+    Use the GEPA evaluation function(s) to check the performance of any prompt.
 
     Inputs:
     - dataset_path: Path to a corpus folder, e.g. .../B01_organic.

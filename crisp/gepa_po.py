@@ -101,7 +101,7 @@ class ResponseEvaluator:
         for result in unsafe_results.values():
             internal_unsafe_fns.extend(result['internal_unsafe_fns'])
             fns_containing_unsafe.extend(result['fns_containing_unsafe'])
-        total_unsafe = len(internal_unsafe_fns) + len(fns_containing_unsafe)
+        total_unsafe = workflow.count_unsafe(n_llm_output_code)
         if total_unsafe > 0:
             return EvaluationResult(
                 score = self.score_passtests_but_unsafe,

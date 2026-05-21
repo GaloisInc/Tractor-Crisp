@@ -176,3 +176,48 @@ and has to be explicitly checked out with
 ```sh
 git submodule update --init --checkout Test-Corpus
 ```
+
+# GEPA prompt optimization
+GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.org/abs/2507.19457)). GEPA can be used to optimize the system prompt on any dataset to achieve better performance of converting unsafe Rust to safe Rust via LLMs.
+
+See `gepa_artifacts/` for prompts found via GEPA, and the results of running them on various datasets.
+
+To run GEPA:
+1. Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run `./gepa_setup_initial <dataset_dir>` from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
+2. Then, run GEPA prompt optimization as follows. For an example, see `scripts/run_gepa.py`.
+  ```python
+  do_gepa(
+
+      # dataset_path is the dataset folder on which GEPA will run its optimization
+      dataset_path = <full/path/to/dataset/>,
+
+      # seed_prompt is used to start the optimization
+      # for best results, provide the entire prompt without any {...} blocks to be filled in
+      seed_prompt_path = <full/path/to/seed_prompt.txt>,
+
+      # task_lm is the LLM inside the loop which runs the prompts on the task
+      # (in this case, unsafe Rust to safe Rust conversion)
+      task_lm = <LLM name>,
+
+      # reflection_lm is the LLM outside the loop which reflects on feedback
+      # from the task_lm's performance and suggests better prompts
+      reflection_lm = <LLM name>
+
+  )
+  ```
+3. The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py`.
+  ```python
+  run_gepa_eval_on_prompt(
+
+      # dataset_path is the dataset folder on which the prompt will be evaluated
+      dataset_path = <full/path/to/dataset/>,
+
+      # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
+      # which contains `prompt.txt` containing the actual prompt to be evaluated
+      optimized_prompt_folder = <full/path/to/prompt_folder/>,
+
+      # model is the LLM which will run the prompt on the dataset
+      model = <LLM name>
+
+  )
+  ```

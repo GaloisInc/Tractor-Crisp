@@ -149,7 +149,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             n_c_code_id = parse_node_id_arg(task['workflow'].mvir, 'c_code')
             n_c_code = task['workflow'].mvir.node(n_c_code_id)
 
-            n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current')
+            n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current') #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
             n_llm_input_code = task['workflow'].mvir.node(n_llm_input_code_id)
 
             for rep in range(1, NUM_LLM_CALL_REPEATS+1):

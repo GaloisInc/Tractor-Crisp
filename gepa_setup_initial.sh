@@ -4,7 +4,7 @@
 # Run this script to prepare any dataset directory for GEPA
 # The dataset directory must be inside `Test-Corpus/Public-Tests/`
 # Pass only the dataset name as an argument, not the whole path
-# E.g. `./gepa_setup_initial B01_organic`
+# E.g. `./gepa_setup_initial.sh B01_organic`
 
 # This script runs the CRISP workflow on all projects inside the dataset
 # It will use C2Rust to convert C code to unsafe Rust

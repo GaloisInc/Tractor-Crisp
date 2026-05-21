@@ -183,7 +183,7 @@ GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.
 See `gepa_artifacts/` for prompts found via GEPA, and the results of running them on various datasets.
 
 To run GEPA:
-1. Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run `./gepa_setup_initial <dataset_dir>` from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
+1. Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run `./gepa_setup_initial.sh <dataset_dir>` from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
 2. Then, run GEPA prompt optimization as follows. For an example, see `scripts/run_gepa.py`.
   ```python
   do_gepa(

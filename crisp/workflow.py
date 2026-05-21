@@ -720,12 +720,12 @@ class Workflow:
         n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()
         unsafe_count = sum(
-            len(file_info.get('internal_unsafe_fns', [])) +
-            len(file_info.get('fns_containing_unsafe', [])) +
-            len(file_info.get('statics_containing_unsafe', [])) +
-            len(file_info.get('mutable_statics', [])) +
-            len(file_info.get('global_macro_invocations_containing_unsafe', [])) +
-            len(file_info.get('macro_definitions_containing_unsafe', []))
+            len(file_info['internal_unsafe_fns']) +
+            len(file_info['fns_containing_unsafe']) +
+            len(file_info['statics_containing_unsafe']) +
+            len(file_info['mutable_statics']) +
+            len(file_info['global_macro_invocations_containing_unsafe']) +
+            len(file_info['macro_definitions_containing_unsafe'])
             for file_info in j_unsafe.values())
         print('%d unsafe functions remaining' % unsafe_count)
         return unsafe_count

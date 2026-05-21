@@ -13,7 +13,7 @@ from .error import CrispError
 from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
-AGENT_DEFAULT_MODEL = "gpt-5.4-2026-03-05"
+AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 
@@ -50,6 +50,9 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
             cmd += ['-c', f'{k}={v}']
         cmd += ['--profile', 'crisp']
 
+    cmd += ['-c', 'model_reasoning_effort="high"',
+            # Fast mode uses 1.5-2x more tokens, so use the standard tier
+            '-c', 'service_tier="standard"']
     cmd += args
     return cmd
 

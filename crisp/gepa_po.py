@@ -18,6 +18,7 @@ from pathlib import Path
 import random
 from typing import Any
 
+from . import llm_format
 from .config import Config
 from .error import CrispError
 from .__main__ import parse_node_id_arg
@@ -207,61 +208,24 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         components_to_update: list[str] # pylint: disable=unused-argument # required as per GEPA
     ) -> dict[str, list[dict[str, Any]]]:
         dataset = {'system_prompt': []}
+        file_formatter = llm_format.get_file_formatter('xml')
         for traj in (eval_batch.trajectories or []):
             dataset['system_prompt'].append(
                 {
-                    "Inputs": _get_contents_of_files_matching_patterns(
-                        node = traj.n_llm_input_code,
-                        patterns = traj.task['workflow'].cfg.src_globs,
-                        mvir = traj.task['workflow'].mvir
-                    ),
-                    "Generated Outputs": _get_contents_of_files_matching_patterns(
-                        node = traj.n_llm_output_code,
-                        patterns = traj.task['workflow'].cfg.src_globs,
-                        mvir = traj.task['workflow'].mvir
-                    ),
+                    "Inputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_llm_input_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
+                    "Generated Outputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_llm_output_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
                     "Feedback": traj.feedback
                 }
             )
         return dataset
-
-
-def _get_contents_of_files_matching_patterns(
-    node: TreeNode,
-    patterns: list[str],
-    mvir: MVIR,
-    separator: str = '\n\n'
-) -> str:
-    """
-    Get the contents of a node's files whose paths match given patterns.
-
-    Inputs:
-    - node: The node whose files to look at.
-    - patterns: List of string path patterns. Expected to contain wildcards. Any file in `node.files` which matches any pattern *from the right* will be considered.
-    - mvir: The MVIR in consideration.
-    - separator: After getting matching files, extract their body contents and concatenate the strings using this separator.
-
-    Output:
-    - The concatenated string of the body contents. Example:
-        Say the given `node` has files:
-        ```
-        {
-            'a/b/c/translated_rust/src/lib.rs': <node_id_1>,
-            'a/translated_rust/b/c/lib.rs': <node_id_2>,
-            'a/b/translated_rust/src/b/main.rs': <node_id_2>
-        }
-        and `patterns` is:
-        ```
-        [
-            'translated_rust/src/*.rs',
-            'translated_rust/src/*/*.rs
-        ]
-        ```
-        then <node_id_1> and <node_id_2> will match. Their bodies will be concatenated and returned.
-    """
-    file_ids = [file_id for path,file_id in node.files.items() if any(Path(path).match(f'**/{pattern}') for pattern in patterns)]
-    contents = separator.join(mvir.node(file_id).body_str() for file_id in file_ids)
-    return contents
 
 
 def do_gepa(

@@ -8,6 +8,7 @@ Note: Code here is inspired from adapters/default_adapter/default_adapter.py
 in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
+from collections import defaultdict
 import csv
 from dataclasses import dataclass
 import gepa
@@ -96,25 +97,20 @@ class ResponseEvaluator:
             )
 
         # Check for un-safety
+        unsafes = defaultdict(list)
         unsafe_results = workflow.find_unsafe_op(n_llm_output_code).body_json()
-        internal_unsafe_fns = []
-        fns_containing_unsafe = []
         for result in unsafe_results.values():
-            internal_unsafe_fns.extend(result['internal_unsafe_fns'])
-            fns_containing_unsafe.extend(result['fns_containing_unsafe'])
+            for k,v in result.items():
+                unsafes[k].extend(v)
         total_unsafe = workflow.count_unsafe(n_llm_output_code)
         if total_unsafe > 0:
+            feedback = f"The generated response includes Rust code that successfully compiles and has identical behavior to the input (i.e. passes tests), but is unsafe. Please try again to produce safe Rust code.\nHere is some additional feedback on un-safety that might be useful:\nNumber of unsafe entities = {total_unsafe}."
+            for k,v in unsafes.items():
+                if v:
+                    feedback += f"\n{k} are {', '.join(v)}."
             return EvaluationResult(
                 score = self.score_passtests_but_unsafe,
-                feedback = f"The generated response includes Rust code that successfully compiles and has identical behavior to the input (i.e. passes tests), but is unsafe. Please try again to produce safe Rust code.\nHere is some additional feedback on un-safety that might be useful:\nNumber of unsafe entities = {total_unsafe}." + (
-                    f"\nInternal unsafe functions are {', '.join(internal_unsafe_fns)}."
-                    if internal_unsafe_fns
-                    else ""
-                ) + (
-                    f"\nFunctions containing unsafe are {', '.join(fns_containing_unsafe)}."
-                    if fns_containing_unsafe
-                    else ""
-                )
+                feedback = feedback
             )
 
         # Everything works

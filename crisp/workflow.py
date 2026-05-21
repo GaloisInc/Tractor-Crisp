@@ -109,9 +109,15 @@ HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry poin
 You can measure the amount of unsafe code remaining using this command:
 ```sh
 find-unsafe --dir {cargo_dir_path} \
-    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length)] | add'
+    | jq '[to_entries.[].value | (.internal_unsafe_fns | length) + (.fns_containing_unsafe | length) + (.statics_containing_unsafe | length) + (.mutable_statics | length) + (.global_macro_invocations_containing_unsafe | length) + (.macro_definitions_containing_unsafe | length)] | add'
 ```
-This counts all non-FFI-related functions that are either `unsafe fn` or contain unsafe code internally. Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
+This counts:
+- All non-FFI-related functions that are either `unsafe fn` or contain unsafe code interally.
+- All static items that contain unsafe.
+- All static mutable items, whether or not they contain unsafe.
+- All macro definitions and invocations that contain unsafe.
+
+Your goal is to reduce this metric from its initial value of {initial_unsafe_count}. In rare cases it may be necessary to add new unsafe code, but you should always aim to remove more unsafe code than you add.
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
@@ -714,7 +720,12 @@ class Workflow:
         n_find_unsafe = self.find_unsafe_op(n_code)
         j_unsafe = n_find_unsafe.body_json()
         unsafe_count = sum(
-            len(file_info['internal_unsafe_fns']) + len(file_info['fns_containing_unsafe'])
+            len(file_info['internal_unsafe_fns']) +
+            len(file_info['fns_containing_unsafe']) +
+            len(file_info['statics_containing_unsafe']) +
+            len(file_info['mutable_statics']) +
+            len(file_info['global_macro_invocations_containing_unsafe']) +
+            len(file_info['macro_definitions_containing_unsafe'])
             for file_info in j_unsafe.values())
         print('%d unsafe functions remaining' % unsafe_count)
         return unsafe_count

@@ -114,6 +114,7 @@ jobs:
       matrix:
         crate:
           - find_unsafe
+          - find_unsafe2
           - merge_rust
           - related_decls
           - rust_analyzer_ext

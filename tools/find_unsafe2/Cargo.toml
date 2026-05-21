@@ -1,12 +1,12 @@
 [package]
-name = "find-unsafe"
+name = "find_unsafe2"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ciborium.workspace = true
-syn.workspace = true
+indexmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-clap.workspace = true
-proc-macro2.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

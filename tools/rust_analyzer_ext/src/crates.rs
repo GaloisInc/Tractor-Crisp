@@ -1,5 +1,5 @@
 use log::debug;
-use ra_ap_base_db::RootQueryDb;
+use ra_ap_base_db::all_crates;
 use ra_ap_hir::{Crate, Semantics};
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_vfs::Vfs;
@@ -9,7 +9,7 @@ use std::path::Path;
 /// multiple crates, such as a library and a binary.
 pub fn find_in_dir(sema: &Semantics<RootDatabase>, vfs: &Vfs, cargo_dir_path: &Path) -> Vec<Crate> {
     let mut crates = Vec::new();
-    for db_crate in sema.db.all_crates().iter() {
+    for db_crate in all_crates(sema.db).iter() {
         let file_id = db_crate.data(sema.db).root_file_id;
         let vfs_path = vfs.file_path(file_id);
         let Some(path) = vfs_path.as_path() else {

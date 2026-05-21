@@ -10,3 +10,7 @@ target/
 
 /crisp-bwrap.toml
 /bwrap-sandbox/
+/bwrap-sandbox/
+
+# Default output directory when testing `find_unsafe2`
+find_unsafe2_json/

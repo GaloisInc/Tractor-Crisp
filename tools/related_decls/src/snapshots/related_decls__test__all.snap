@@ -72,9 +72,9 @@ expression: info
     "uses": [],
     "used_items": [
       "::core",
-      "::std::io",
-      "::std::io::error::ErrorKind",
-      "::std::io::error::ErrorKind::NotFound"
+      "::core::io::error::ErrorKind",
+      "::core::io::error::ErrorKind::NotFound",
+      "::std::io"
     ],
     "kind": "other"
   },

@@ -123,7 +123,9 @@ fn main() {
 
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
-        let json_path = json_dir.join(format!("{}.json", rustc_public::local_crate().name));
+        let crate_name = rustc_public::local_crate().name;
+
+        let json_path = json_dir.join(format!("{crate_name}.json"));
         if !fs::exists(&json_path).unwrap() {
             return ControlFlow::<(), ()>::Continue(());
         }

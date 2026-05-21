@@ -13,7 +13,7 @@ from .error import CrispError
 from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
-AGENT_DEFAULT_MODEL = "gpt-5.4-2026-03-05"
+AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 

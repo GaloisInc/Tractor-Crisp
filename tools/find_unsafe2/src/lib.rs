@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_public;
 
@@ -7,6 +8,7 @@ extern crate rustc_public;
 extern crate rustc_driver;
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use indexmap::IndexMap;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
@@ -18,7 +20,9 @@ use rustc_public::mir::{
 use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
 use rustc_public::rustc_internal;
-use rustc_public::ty::{RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind};
+use rustc_public::ty::{
+    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder,
+};
 use serde::{Serialize, Deserialize};
 use crate::mir_visitor::Visitor;
 
@@ -165,11 +169,10 @@ pub struct Outputs {
     pub total_unsafe: usize,
 
     pub fns: IndexMap<String, FunctionOutputs>,
+    pub types: IndexMap<String, TypeOutputs>,
 
     // TODO: Unsafety: crate implements `unsafe trait`s.
     // TODO: Unsafety: crate contains `unsafe extern` imports.
-
-    // TODO: Progress: struct field type contains raw pointers.
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -211,6 +214,9 @@ pub struct FunctionOutputs {
     /// use site.  We don't ban reference-to-pointer casts since these may come up naturally when a
     /// function is made mostly safe but it still calls into an unsafe helper.
     pub casts_int_to_ptr: usize,
+    /// Progress: function signature contains raw pointers.  This includes every occurrence of
+    /// `RigidTy::RawPtr` that appears in the signature, but does not look through type aliases.
+    pub sig_contains_raw_ptr: usize,
     // TODO: Progress: function signature type contains raw pointers.
 
     /// Whether this function is an FFI entry point.  Specifically, this is set when the function
@@ -218,13 +224,20 @@ pub struct FunctionOutputs {
     pub is_ffi_entry_point: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TypeOutputs {
+    /// Progress: the type or its fields contain raw pointers.
+    pub contains_raw_ptr: usize,
+}
+
+
 impl FunctionOutputs {
     fn total_unsafe(&self) -> usize {
         let FunctionOutputs {
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
-            uses_foreign_fn: _, casts_int_to_ptr: _,
+            uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
             // Other
             is_ffi_entry_point: _,
         } = *self;
@@ -235,6 +248,100 @@ impl FunctionOutputs {
             + calls_unsafe
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>()
+    }
+}
+
+impl TypeOutputs {
+    fn total_unsafe(&self) -> usize {
+        let TypeOutputs {
+            // Progress, not safety
+            contains_raw_ptr: _,
+        } = *self;
+
+        0
+    }
+}
+
+
+enum TypeDef {
+    Adt(AdtDef),
+    Alias(AliasDef, EarlyBinder<Ty>),
+}
+
+impl CrateDef for TypeDef {
+    fn def_id(&self) -> DefId {
+        match *self {
+            TypeDef::Adt(adt) => adt.def_id(),
+            TypeDef::Alias(ad, _) => ad.def_id(),
+        }
+    }
+}
+
+fn crate_type_defs(tcx: TyCtxt) -> Vec<TypeDef> {
+    use rustc_hir::def::DefKind;
+    let mut out = Vec::new();
+    for item_id in tcx.hir_free_items() {
+        let did = item_id.owner_id.to_def_id();
+        match tcx.def_kind(did) {
+            DefKind::Struct |
+            DefKind::Union |
+            DefKind::Enum => {
+                out.push(TypeDef::Adt(AdtDef(rustc_internal::stable(did))));
+            },
+            DefKind::TyAlias => {
+                let ty = rustc_internal::stable(tcx.type_of(did));
+                out.push(TypeDef::Alias(AliasDef(rustc_internal::stable(did)), ty));
+            },
+            _ => {},
+        }
+    }
+    out
+}
+
+
+fn ty_contains_raw_ptr(ty: Ty) -> usize {
+    use rustc_public::visitor::{Visitor, Visitable};
+    struct CountRawPtrsVisitor {
+        count: usize,
+    }
+    impl Visitor for CountRawPtrsVisitor {
+        type Break = ();
+        fn visit_ty(&mut self, ty: &Ty) -> ControlFlow<()> {
+            if let Some(&RigidTy::RawPtr(..)) = ty.kind().rigid() {
+                self.count += 1;
+            }
+            ty.super_visit(self)
+        }
+    }
+
+    let mut v = CountRawPtrsVisitor { count: 0 };
+    let _ = ty.visit(&mut v);
+    v.count
+}
+
+fn sig_contains_raw_ptr(item: CrateItem) -> usize {
+    match item.kind() {
+        ItemKind::Fn => {
+            let sig = item.ty().kind().fn_sig().unwrap();
+            sig.value.inputs_and_output.iter().copied().map(ty_contains_raw_ptr).sum()
+        },
+        ItemKind::Static | ItemKind::Const => ty_contains_raw_ptr(item.ty()),
+        ItemKind::Ctor(..) => 0,
+    }
+}
+
+fn type_def_contains_raw_ptr(td: &TypeDef) -> usize {
+    match *td {
+        TypeDef::Adt(adt) => {
+            let mut count = 0;
+            for v in adt.variants_iter() {
+                for f in v.fields() {
+                    count += ty_contains_raw_ptr(f.ty());
+                }
+            }
+            count
+        },
+        TypeDef::Alias(_, ref ty) => ty_contains_raw_ptr(ty.value),
     }
 }
 
@@ -310,7 +417,9 @@ pub fn process(tcx: TyCtxt) -> Outputs {
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
+        types: IndexMap::new(),
     };
+
     for item in items {
         if let Some(body) = item.body() {
             let mut v = FunctionVisitor::new(&body);
@@ -333,6 +442,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
                 }).collect(),
                 casts_int_to_ptr: v.casts_int_to_ptr,
+                sig_contains_raw_ptr: sig_contains_raw_ptr(item),
 
                 is_ffi_entry_point: is_ffi_entry_point(item),
             };
@@ -340,8 +450,18 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 out.total_unsafe += value.total_unsafe();
             }
             let old = out.fns.insert(key, value);
-            assert!(old.is_none(), "duplicate entry for {:?}", item.name());
+            assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());
         }
+    }
+
+    for td in crate_type_defs(tcx) {
+        let key: String = td.name();
+        let value = TypeOutputs {
+            contains_raw_ptr: type_def_contains_raw_ptr(&td),
+        };
+        out.total_unsafe += value.total_unsafe();
+        let old = out.types.insert(key, value);
+        assert!(old.is_none(), "duplicate types entry for {:?}", td.name());
     }
 
     out

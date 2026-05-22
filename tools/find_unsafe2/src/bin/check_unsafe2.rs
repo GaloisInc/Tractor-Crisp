@@ -14,14 +14,14 @@ use std::process;
 use indexmap::IndexMap;
 use rustc_public::error::CompilerError;
 use serde_json;
-use find_unsafe2::{self, Outputs, FunctionOutputs};
+use find_unsafe2::{self, Outputs, FunctionOutputs, TypeOutputs};
 
 
 /// Check whether the unsafe operations recorded in `new` are a subset of those recorded in `old`.
 /// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
 /// found any such things.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
-    let Outputs { total_unsafe: _, ref fns } = *new;
+    let Outputs { total_unsafe: _, ref fns, ref types } = *new;
     let mut ok = true;
 
     // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
@@ -36,11 +36,20 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         uses_union_field: Default::default(),
         uses_foreign_fn: Default::default(),
         casts_int_to_ptr: 0,
+        sig_contains_raw_ptr: 0,
         is_ffi_entry_point: false,
     };
     for (fn_name, new_fn) in fns {
         let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
         ok &= check_function_outputs(fn_name, old_fn, new_fn);
+    }
+
+    let empty_type = TypeOutputs {
+        contains_raw_ptr: 0,
+    };
+    for (type_name, new_type) in types {
+        let old_type = old.types.get(type_name).unwrap_or(&empty_type);
+        ok &= check_type_outputs(type_name, old_type, new_type);
     }
 
     ok
@@ -55,7 +64,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     let FunctionOutputs {
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
-        casts_int_to_ptr,
+        casts_int_to_ptr, sig_contains_raw_ptr,
         is_ffi_entry_point,
     } = *new;
     let mut ok = true;
@@ -79,9 +88,23 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
 
     ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr,
         || format!("{name}: int-to-pointer casts"));
+    ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr,
+        || format!("{name}: raw pointer types in signature"));
 
     ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
         || format!("{name}: FFI export flag"));
+
+    ok
+}
+
+fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool {
+    let TypeOutputs {
+        contains_raw_ptr,
+    } = *new;
+    let mut ok = true;
+
+    ok &= check_count(old.contains_raw_ptr, contains_raw_ptr,
+        || format!("{name}: raw pointer types"));
 
     ok
 }

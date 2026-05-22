@@ -326,7 +326,42 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         try:
             match args.llm_mode:
                 case 'agent':
-                    n_new_code, n_plans = w.agent_safety(n_code, n_c_code, n_plans)
+                    match consecutive_failures:
+                        case 0 | 1:
+                            suffix = None
+                        case 2 | 3:
+                            # Previous steps failed to make progress on
+                            # `unsafe`.  We've seen the agent sometimes just do
+                            # refactoring or other general cleanup that doesn't
+                            # directly reduce unsafe.  This is actually
+                            # desirable, but if it goes on too long, we add a
+                            # reminder to focus on reducing unsafety.
+                            suffix = (
+                                'Remember, your primary goal is to reduce '
+                                'the amount of unsafe code. '
+                                'Try to remove at least one unsafe operation '
+                                'or `unsafe fn`/`static mut` qualifier '
+                                'from the core implementation code.'
+                            )
+                        case n:
+                            # Last-ditch attempt to get the agent to make
+                            # progress.  This may be too strongly worded, to
+                            # the point of encouraging cheating (such as moving
+                            # unsafe operations into FFI wrappers).
+                            suffix = (
+                                'Remember, your primary goal is to reduce '
+                                'the amount of unsafe code. '
+                                f'Your past {n} attempts failed to remove '
+                                'any unsafe operations. '
+                                'You MUST remove at least one unsafe operation '
+                                'or `unsafe fn`/`static mut` qualifier '
+                                'from the core implementation code '
+                                '(NOT from FFI entry points), '
+                                'or this run will be terminated.'
+                            )
+
+                    n_new_code, n_plans = w.agent_safety(n_code, n_c_code, n_plans,
+                        prompt_suffix = suffix)
                     n_op_test = w.test_op(n_new_code, n_c_code)
                     n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
                     if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:

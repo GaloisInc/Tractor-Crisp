@@ -129,7 +129,7 @@ You are executing one iteration of a loop that will be re-invoked on the same co
 
 Then carry out the next step of the plan.
 
-HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
 
 {after_refactoring_instruction}
 
@@ -1077,6 +1077,7 @@ class Workflow:
         n_plans: TreeNode,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
+        prompt_suffix: str | None = None,
     ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1097,6 +1098,8 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
         )
+        if prompt_suffix is not None:
+            prompt = f'{prompt}\n\n{prompt_suffix}'
         return agent.run_rewrite(cfg, mvir, prompt, n_code,
             extra_code = extra_code,
             planning_files = n_plans,

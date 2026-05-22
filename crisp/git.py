@@ -119,6 +119,13 @@ def commit_tree(mvir: MVIR, repo: pygit2.Repository, tree: TreeNode,
                 len(file_info['macro_definitions_containing_unsafe'])
                 for file_info in j_unsafe.values())
             meta.append('unsafe count = %d' % unsafe_count)
+        elif isinstance(n, mvir_module.FindUnsafe2AnalysisNode):
+            n_json = mvir.node(n.unsafe_json)
+            total = 0
+            for n_json_file_id in n_json.files.values():
+                n_json_file = mvir.node(n_json_file_id)
+                total += n_json_file.body_json()['total_unsafe']
+            meta.append('unsafe count (v2) = %d' % total)
 
     if len(meta) > 0:
         msg = msg + '\n\n' + '\n'.join(meta)

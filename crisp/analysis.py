@@ -154,7 +154,7 @@ def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonA
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(code)
         exit_code, logs = sb.run(
-                'cd %s && cargo check --message-format=json' % rust_path_rel,
+                'cd %s && cargo check --message-format=json 2>/dev/null' % rust_path_rel,
                 shell=True, stream=True)
 
     j = []

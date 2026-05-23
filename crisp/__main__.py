@@ -268,6 +268,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
+    n_plans = TreeNode.new(mvir, files={})
 
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe2(n_code)
@@ -291,7 +292,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         try:
             match args.llm_mode:
                 case 'agent':
-                    n_new_code = w.agent_safety(n_code, n_c_code)
+                    n_new_code, n_plans = w.agent_safety(n_code, n_c_code, n_plans)
                     n_op_test = w.test_op(n_new_code, n_c_code)
                     n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
                     if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
@@ -306,7 +307,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     # effect of not providing the original C code, since we
                     # don't currently distinguish test code from the rest of
                     # the C code.
-                    n_new_code = w.agent_safety_no_tests(n_code)
+                    n_new_code, n_plans = w.agent_safety_no_tests(n_code, n_plans)
                     n_op_check = w.cargo_check_json_op(n_new_code)
                     n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
                     if n_op_check.passed and n_op_unsafe.exit_code == 0:

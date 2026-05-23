@@ -4,8 +4,12 @@ use std::io::{self, Read};
 use std::path::{self, PathBuf};
 use clap::Parser;
 use proc_macro2::{TokenStream, TokenTree};
+use quote::ToTokens;
 use serde::Serialize;
-use syn::{self, Attribute, ExprUnsafe, Ident, ItemFn, ItemMacro, ItemStatic, Macro, Meta, Path, StaticMutability};
+use syn::{
+    self, Attribute, ExprUnsafe, ImplItemFn, ItemFn, ItemImpl, ItemMacro, ItemStatic, ItemTrait,
+    Macro, Meta, Path, StaticMutability, TraitItemFn,
+};
 use syn::visit::{self, Visit};
 
 // Include test files to ensure they compile.
@@ -47,10 +51,10 @@ fn is_link_attr_path(path: &Path) -> bool {
     }
 }
 
-/// Returns `true` if `f` is exported to other compilation units using a link attribute such as
-/// `#[no_mangle]`.
-fn fn_is_exported(f: &ItemFn) -> bool {
-    f.attrs.iter().any(is_link_attr)
+/// Returns `true` if the attributes include a link attribute such as `#[no_mangle]` that exports
+/// the item to other compilation units.
+fn attrs_are_exported(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(is_link_attr)
 }
 
 fn token_stream_contains_unsafe(tokens: TokenStream) -> bool {
@@ -83,23 +87,50 @@ struct Output {
 }
 
 #[derive(Clone, Debug)]
-enum ItemKind<'a> {
-    Fn(&'a Ident),
-    Static(&'a Ident),
+enum ItemKind {
+    Fn(String),
+    Static(String),
+}
+
+/// Tracks the enclosing `impl` or `trait` so methods can be reported with a qualified name.
+#[derive(Clone, Debug)]
+enum MethodScope {
+    /// `impl Type { ... }` — methods are reported as `Type::method`.
+    Inherent(String),
+    /// `impl Trait for Type { ... }` — methods are reported as `<Type as Trait>::method`.
+    TraitImpl { self_ty: String, trait_path: String },
+    /// `trait Trait { ... }` — default methods are reported as `Trait::method`.
+    TraitDef(String),
+}
+
+impl MethodScope {
+    fn qualify(&self, method: &syn::Ident) -> String {
+        match self {
+            MethodScope::Inherent(ty) => format!("{}::{}", ty, method),
+            MethodScope::TraitImpl { self_ty, trait_path } => {
+                format!("<{} as {}>::{}", self_ty, trait_path, method)
+            }
+            MethodScope::TraitDef(tr) => format!("{}::{}", tr, method),
+        }
+    }
+}
+
+fn type_to_string<T: ToTokens>(ty: &T) -> String {
+    ty.to_token_stream().to_string()
 }
 
 #[derive(Clone, Debug, Default)]
-struct Visitor<'a> {
+struct Visitor {
     out: Output,
-    current_item: Option<ItemKind<'a>>,
+    current_item: Option<ItemKind>,
+    method_scope: Option<MethodScope>,
 }
 
-impl<'ast> Visit<'ast> for Visitor<'ast> {
+impl<'ast> Visit<'ast> for Visitor {
     fn visit_item_fn(&mut self, item_fn: &'ast ItemFn) {
-        let ident = &item_fn.sig.ident;
-        let name = ident.to_string();
+        let name = item_fn.sig.ident.to_string();
         if item_fn.sig.unsafety.is_some() {
-            if fn_is_exported(item_fn) {
+            if attrs_are_exported(&item_fn.attrs) {
                 // Ignore unsafety inside of FFI entry points, as it's often unavoidable.
                 return;
             } else {
@@ -107,27 +138,86 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
             }
         }
 
-        let old = self.current_item.replace(ItemKind::Fn(ident));
+        let old = self.current_item.replace(ItemKind::Fn(name));
         visit::visit_item_fn(self, item_fn);
         self.current_item = old;
     }
 
+    fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        let self_ty = type_to_string(&*item_impl.self_ty);
+        let scope = match &item_impl.trait_ {
+            Some((_bang, trait_path, _for)) => MethodScope::TraitImpl {
+                self_ty,
+                trait_path: type_to_string(trait_path),
+            },
+            None => MethodScope::Inherent(self_ty),
+        };
+        let old = self.method_scope.replace(scope);
+        visit::visit_item_impl(self, item_impl);
+        self.method_scope = old;
+    }
+
+    fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
+        let old = self
+            .method_scope
+            .replace(MethodScope::TraitDef(item_trait.ident.to_string()));
+        visit::visit_item_trait(self, item_trait);
+        self.method_scope = old;
+    }
+
+    fn visit_impl_item_fn(&mut self, item_fn: &'ast ImplItemFn) {
+        let name = match &self.method_scope {
+            Some(scope) => scope.qualify(&item_fn.sig.ident),
+            None => item_fn.sig.ident.to_string(),
+        };
+        if item_fn.sig.unsafety.is_some() {
+            if attrs_are_exported(&item_fn.attrs) {
+                return;
+            } else {
+                self.out.internal_unsafe_fns.push(name.clone());
+            }
+        }
+
+        let old = self.current_item.replace(ItemKind::Fn(name));
+        visit::visit_impl_item_fn(self, item_fn);
+        self.current_item = old;
+    }
+
+    fn visit_trait_item_fn(&mut self, item_fn: &'ast TraitItemFn) {
+        // Only default-method bodies can contain `unsafe` blocks; signatures without bodies are
+        // still tracked for `unsafe fn` reporting.
+        let name = match &self.method_scope {
+            Some(scope) => scope.qualify(&item_fn.sig.ident),
+            None => item_fn.sig.ident.to_string(),
+        };
+        if item_fn.sig.unsafety.is_some() {
+            if attrs_are_exported(&item_fn.attrs) {
+                return;
+            } else {
+                self.out.internal_unsafe_fns.push(name.clone());
+            }
+        }
+
+        let old = self.current_item.replace(ItemKind::Fn(name));
+        visit::visit_trait_item_fn(self, item_fn);
+        self.current_item = old;
+    }
+
     fn visit_item_static(&mut self, item_static: &'ast ItemStatic) {
-        let ident = &item_static.ident;
-        let name = ident.to_string();
+        let name = item_static.ident.to_string();
         if matches!(item_static.mutability, StaticMutability::Mut(_)) {
             self.out.mutable_statics.insert(name.clone());
         }
 
-        let old = self.current_item.replace(ItemKind::Static(ident));
+        let old = self.current_item.replace(ItemKind::Static(name));
         visit::visit_item_static(self, item_static);
         self.current_item = old;
     }
 
     fn visit_expr_unsafe(&mut self, x: &'ast ExprUnsafe) {
-        match self.current_item {
-            Some(ItemKind::Fn(ident)) => self.out.fns_containing_unsafe.insert(ident.to_string()),
-            Some(ItemKind::Static(ident)) => self.out.statics_containing_unsafe.insert(ident.to_string()),
+        match &self.current_item {
+            Some(ItemKind::Fn(name)) => self.out.fns_containing_unsafe.insert(name.clone()),
+            Some(ItemKind::Static(name)) => self.out.statics_containing_unsafe.insert(name.clone()),
             None => <_>::default(),
         };
         visit::visit_expr_unsafe(self, x);
@@ -165,7 +255,7 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
         if token_stream_contains_unsafe(mac.tokens.clone()) {
             // Attribute unsafe usage in macro invocation to the function we're in, if we can
             match &self.current_item {
-                Some(ItemKind::Fn(ident)) | Some(ItemKind::Static(ident)) => self.out.fns_containing_unsafe.insert(ident.to_string()),
+                Some(ItemKind::Fn(ident)) | Some(ItemKind::Static(ident)) => self.out.fns_containing_unsafe.insert(ident.clone()),
                 None => self.out.global_macro_invocations_containing_unsafe.insert(name),
             };
         }

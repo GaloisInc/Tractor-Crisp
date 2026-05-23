@@ -20,7 +20,8 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode
+    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
+    CodexAgentOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import Workflow
@@ -255,6 +256,28 @@ def do_main(args, cfg):
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
+
+def prior_agent_plans(mvir, n_code) -> TreeNode | None:
+    # Look up the node which produced `n_code` and return the planning files for that step.
+    # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
+    matches = [
+        ie for ie in mvir.index(n_code.node_id())
+        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
+    ]
+
+    match matches:
+        case [ie]:
+            op_node = mvir.node(ie.node_id)
+            return mvir.node(op_node.planning_files)
+        case []:
+            return None
+        case _:
+            raise CrispError(
+                f'multiple Codex agent ops produced code node {n_code.node_id()}: '
+                + ', '.join(str(ie.node_id) for ie in matches)
+            )
+
+
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Try at most this many times in total to make the code safe.
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
@@ -268,7 +291,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
-    n_plans = TreeNode.new(mvir, files={})
+    n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
     for safety_try in range(llm_safety_tries):
         unsafe_count = w.count_unsafe2(n_code)

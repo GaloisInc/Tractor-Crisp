@@ -698,6 +698,8 @@ class CodexAgentOpNode(Node):
     # JSON-formatted session log, e.g. `.codex/sessions/xxx/rollout-xxx.jsonl`
     json_session: Metadata[NodeId]
     # `body` stores the log output
+    # Agent-managed plans which tracks state across multiple loop iterations
+    planning_files: Metadata[NodeId]
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
@@ -705,6 +707,7 @@ class CodexAgentOpNode(Node):
     exit_code = property(lambda self: self._metadata['exit_code'])
     raw_output_files = property(lambda self: self._metadata['raw_output_files'])
     json_session = property(lambda self: self._metadata['json_session'])
+    planning_files = property(lambda self: self._metadata['planning_files'])
 
 class TestResultNode(Node):
     KIND = 'test_result_node'

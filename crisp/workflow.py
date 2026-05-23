@@ -116,7 +116,17 @@ New signatures:
 '''
 
 AGENT_SAFETY_PROMPT = '''
-Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.  First, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fileds) that uses `unsafe`, and plan how you would refactor it to make it safe.  Write this plan to `SAFETY_PLAN.md`.  Then carry out the refactor as planned.
+Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.
+
+You are executing one iteration of a loop that will be re-invoked on the same codebase until the unsafe count reaches zero or progress stalls. To carry state between iterations, maintain a planning file at `SAFETY_PLAN.md`:
+
+- **First, check whether `SAFETY_PLAN.md` already exists.** If it does, read it in full. It is your own notes from prior iterations. Use it to pick up where the previous run left off rather than starting over.
+- If `SAFETY_PLAN.md` does not exist, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fields) that uses `unsafe`, decide how to refactor it safely, and write that plan to `SAFETY_PLAN.md`.
+- **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+- If `SAFETY_PLAN.md` exists and all planned tasks have been completed, you should identify the next unit of code to work on and update the plan accordingly. This is a good time to trim and clean up the plan so it only contains the next steps and relevant notes. Pay close attention to pitfalls and dead ends such that future iterations do not repeat the same mistakes.
+- If a planned unit turns out to be too complex or blocked by prerequisite work, update `SAFETY_PLAN.md` to record the blocker, split the work into smaller steps, and switch to the prerequisite or smaller step. Prefer steps that directly reduce the unsafe count, but preliminary safe refactors are acceptable when they are necessary to remove unsafe code in a later iteration.
+
+Then carry out the next step of the plan.
 
 HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
 
@@ -1053,10 +1063,11 @@ class Workflow:
     def agent_safety(
         self,
         n_code: TreeNode,
-        n_test_code: TreeNode | None = None,
+        n_test_code: TreeNode | None,
+        n_plans: TreeNode,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
-    ) -> TreeNode:
+    ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1078,6 +1089,7 @@ class Workflow:
         )
         return agent.run_rewrite(cfg, mvir, prompt, n_code,
             extra_code = extra_code,
+            planning_files = n_plans,
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
@@ -1089,7 +1101,6 @@ class Workflow:
     def agent_safety_no_tests(
         self,
         n_code: TreeNode,
-    ) -> TreeNode:
-        cfg, mvir = self.cfg, self.mvir
-        n_test_code = TreeNode.new(mvir, files={})
-        return self.agent_safety(n_code, provide_test_cmd = False)
+        n_plans: TreeNode,
+    ) -> tuple[TreeNode, TreeNode]:
+        return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)

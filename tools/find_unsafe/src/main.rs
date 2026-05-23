@@ -425,6 +425,7 @@ mod tests {
 
         assert_eq!(internal_unsafe_fns, [
             "f",
+            "H::i",
         ]);
 
         assert_eq!(fns_containing_unsafe, [
@@ -433,6 +434,10 @@ mod tests {
             "f",
             "d",
             "g",
+            "H::h",
+            "H::i",
+            "J::k",
+            "<H as J>::j",
         ].into_iter().map(String::from).collect());
     }
 

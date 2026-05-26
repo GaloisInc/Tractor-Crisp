@@ -104,6 +104,7 @@ def commit_tree(mvir: MVIR, repo: pygit2.Repository, tree: TreeNode,
     git_tree = build_tree(tree_files)
 
     meta = []
+    meta.append('tree node id = %s' % tree.node_id())
     for ie in mvir.index(tree.node_id()):
         n = mvir.node(ie.node_id)
         if isinstance(n, mvir_module.TestResultNode):

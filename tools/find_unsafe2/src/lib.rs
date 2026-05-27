@@ -310,8 +310,16 @@ fn ty_contains_raw_ptr(ty: Ty) -> usize {
     impl Visitor for CountRawPtrsVisitor {
         type Break = ();
         fn visit_ty(&mut self, ty: &Ty) -> ControlFlow<()> {
-            if let Some(&RigidTy::RawPtr(..)) = ty.kind().rigid() {
-                self.count += 1;
+            match ty.kind().rigid() {
+                Some(&RigidTy::RawPtr(..)) => {
+                    self.count += 1;
+                },
+                Some(&RigidTy::Adt(adt, _)) => {
+                    if matches!(&*adt.name(), "core::ptr::NonNull" | "std::ptr::NonNull") {
+                        self.count += 1;
+                    }
+                },
+                _ => {},
             }
             ty.super_visit(self)
         }

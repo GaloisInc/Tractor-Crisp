@@ -1,4 +1,5 @@
 #![allow(unused)]
+use std::ptr::NonNull;
 
 fn f1(x: i32) {
     // `println` internally use `fmt::Arguments::new`, which is an unsafe function.
@@ -69,6 +70,8 @@ unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
 struct S {
     // Error: added a raw pointer to this field type.
     x: *const i32,
+    // Error - NonNull also counts as a raw pointer type.
+    y: NonNull<i32>,
 }
 
 

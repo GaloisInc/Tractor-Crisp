@@ -11,3 +11,4 @@ lib::f7: int-to-pointer casts increased: 0 -> 1
 lib::FFI2: raw pointer derefs increased: 0 -> 1
 lib::non_ffi3: FFI export flag changed: false -> true
 lib::S: field x raw pointer count increased: 0 -> 1
+lib::S: field y raw pointer count increased: 0 -> 1

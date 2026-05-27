@@ -63,4 +63,5 @@ unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
 
 struct S {
     x: i32,
+    y: i32,
 }

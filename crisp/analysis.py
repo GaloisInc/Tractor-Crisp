@@ -469,8 +469,6 @@ def _check_unsafe2_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
         cmd = cmd,
         exit_code = exit_code,
     )
-    if exit_code != 0:
-        raise CrispError('check_unsafe2 failed', n_op)
     return n_op
 
 def check_unsafe2(cfg: Config, mvir: MVIR,

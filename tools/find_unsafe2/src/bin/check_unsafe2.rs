@@ -32,9 +32,9 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         is_mut_static: false,
         derefs_raw_ptr: 0,
         calls_unsafe: 0,
-        uses_static_mut: Default::default(),
-        uses_union_field: Default::default(),
-        uses_foreign_fn: Default::default(),
+        uses_static_mut: IndexMap::new(),
+        uses_union_field: IndexMap::new(),
+        uses_foreign_fn: IndexMap::new(),
         casts_int_to_ptr: 0,
         sig_contains_raw_ptr: 0,
         is_ffi_entry_point: false,
@@ -45,7 +45,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     }
 
     let empty_type = TypeOutputs {
-        contains_raw_ptr: 0,
+        field_contains_raw_ptr: IndexMap::new(),
     };
     for (type_name, new_type) in types {
         let old_type = old.types.get(type_name).unwrap_or(&empty_type);
@@ -99,12 +99,12 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
 
 fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool {
     let TypeOutputs {
-        contains_raw_ptr,
+        ref field_contains_raw_ptr,
     } = *new;
     let mut ok = true;
 
-    ok &= check_count(old.contains_raw_ptr, contains_raw_ptr,
-        || format!("{name}: raw pointer types"));
+    ok &= check_count_map(&old.field_contains_raw_ptr, field_contains_raw_ptr,
+        |k| format!("{name}: field {k} raw pointer count"));
 
     ok
 }

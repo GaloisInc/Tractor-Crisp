@@ -226,8 +226,11 @@ pub struct FunctionOutputs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TypeOutputs {
-    /// Progress: the type or its fields contain raw pointers.
-    pub contains_raw_ptr: usize,
+    /// Progress: a field of this type contains a raw pointer.
+    ///
+    /// For type alias like `type Foo = *const u8;`, we treat the RHS as a field named "type", so
+    /// in this case `Foo` would have `field_contains_raw_ptr["field"] == 1`.
+    pub field_contains_raw_ptr: IndexMap<String, usize>,
 }
 
 
@@ -255,7 +258,7 @@ impl TypeOutputs {
     fn total_unsafe(&self) -> usize {
         let TypeOutputs {
             // Progress, not safety
-            contains_raw_ptr: _,
+            field_contains_raw_ptr: _,
         } = *self;
 
         0
@@ -330,18 +333,23 @@ fn sig_contains_raw_ptr(item: CrateItem) -> usize {
     }
 }
 
-fn type_def_contains_raw_ptr(td: &TypeDef) -> usize {
+fn type_def_field_contains_raw_ptr(td: &TypeDef) -> IndexMap<String, usize> {
     match *td {
         TypeDef::Adt(adt) => {
-            let mut count = 0;
+            let mut counts = IndexMap::new();
             for v in adt.variants_iter() {
                 for f in v.fields() {
-                    count += ty_contains_raw_ptr(f.ty());
+                    // Use `entry` instead of `insert` in case there are multiple enum variants
+                    // with the same field name (we don't distinguish between variants currently).
+                    *counts.entry(f.name.to_string()).or_insert(0) += ty_contains_raw_ptr(f.ty());
                 }
             }
-            count
+            counts
         },
-        TypeDef::Alias(_, ref ty) => ty_contains_raw_ptr(ty.value),
+        // For type aliases, record the count under the dummy field name "type".
+        TypeDef::Alias(_, ref ty) => [
+            (String::from("type"), ty_contains_raw_ptr(ty.value)),
+        ].into(),
     }
 }
 
@@ -457,7 +465,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
     for td in crate_type_defs(tcx) {
         let key: String = td.name();
         let value = TypeOutputs {
-            contains_raw_ptr: type_def_contains_raw_ptr(&td),
+            field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),
         };
         out.total_unsafe += value.total_unsafe();
         let old = out.types.insert(key, value);

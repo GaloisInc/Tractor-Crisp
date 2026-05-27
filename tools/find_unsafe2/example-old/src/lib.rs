@@ -59,3 +59,8 @@ static FFI2: i32 = 0;
 unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
     unsafe { *p }
 }
+
+
+struct S {
+    x: i32,
+}

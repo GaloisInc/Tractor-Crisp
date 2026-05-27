@@ -66,6 +66,12 @@ unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
 }
 
 
+struct S {
+    // Error: added a raw pointer to this field type.
+    x: *const i32,
+}
+
+
 fn test_write() {
     use std::io::Write;
     // `writeln!` uses unsafe `std::fmt` internals, but shouldn't be counted as unsafe.

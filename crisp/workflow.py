@@ -1117,3 +1117,126 @@ class Workflow:
         n_plans: TreeNode,
     ) -> tuple[TreeNode, TreeNode]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
+
+
+    @step
+    def do_validate_and_repair(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+        n_test_code: TreeNode,
+    ) -> TreeNode | None:
+        """
+        Validate `n_new_code`.  If it fails validation, try to repair it.
+        Returns a version that passes validation (after zero or more repair
+        attempts), or `None` if no passing version was found.
+        """
+        for repair_try in range(3):
+            try:
+                n_op_unsafe = self.compare_unsafe2_op(n_old_code, n_new_code)
+                if n_op_unsafe.exit_code != 0:
+                    # Unsafe check failed, so try to repair it.  If repair
+                    # succeeds, we proceed to the next check; otherwise, we try
+                    # again from the start of the loop.
+                    n_new_code = self.llm_repair_safety(n_new_code, n_op_unsafe)
+
+                    n_op_unsafe = self.compare_unsafe2_op(n_old_code, n_new_code)
+                    if n_op_unsafe.exit_code != 0:
+                        # If we failed to fix the unsafety, don't bother trying to
+                        # build or run tests.  This still counts as a repair
+                        # attempt.
+                        continue
+
+                n_op_check = self.cargo_check_json_op(n_new_code)
+                if not n_op_check.passed:
+                    n_new_code = self.llm_repair_compile(n_new_code, n_op_check)
+
+                    n_op_check = self.cargo_check_json_op(n_new_code)
+                    if not n_op_check.passed:
+                        continue
+
+                n_op_test = self.test_op(n_new_code, n_test_code)
+                if n_op_test.exit_code != 0:
+                    n_new_code = self.llm_repair(n_new_code, n_op_test)
+
+                    n_op_test = self.test_op(n_new_code, n_test_code)
+                    if n_op_test.exit_code != 0:
+                        continue
+
+                # All validation steps passed, so return the new version.
+                return n_new_code
+
+            except CrispError as e:
+                print(f'repair attempt {repair_try} failed: {e}')
+                traceback.print_exc()
+
+        # None of the new versions passed the checks.
+        return None
+
+    @step
+    def do_safety_step_llm(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        no_ffi: bool = False,
+    ) -> TreeNode | None:
+        """
+        Run one LLM safety rewriting step.  Returns a new version that passes
+        validation (as in `do_validate_and_repair`), or `None` if no passing
+        version was found.
+        """
+        if no_ffi:
+            n_new_code = self.llm_safety_no_ffi(n_code)
+        else:
+            n_new_code = self.llm_safety(n_code)
+
+        return self.do_validate_and_repair(n_code, n_new_code, n_test_code)
+
+    @step
+    def do_safety_step_agent(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        n_plans: TreeNode,
+        prompt_suffix: str | None = None,
+    ) -> tuple[TreeNode | None, TreeNode | None]:
+        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
+            prompt_suffix = prompt_suffix)
+        # The change must pass tests, and must not regress any unsafe count.
+        n_op_test = self.test_op(n_new_code, n_test_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
+            return n_new_code, n_plans
+        else:
+            return None, None
+
+    @step
+    def do_safety_step_agent_sim_no_tests(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        n_plans: TreeNode,
+    ) -> tuple[TreeNode | None, TreeNode | None]:
+        # Don't provide the test code, so the agent can't
+        # accidentally find the tests.  Note this has the side
+        # effect of not providing the original C code, since we
+        # don't currently distinguish test code from the rest of
+        # the C code.
+        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_op_check = self.cargo_check_json_op(n_new_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
+            return None, None
+
+        # `agent_sim_no_tests` simulates the mode where no tests are
+        # available and the only success criteria that CRISP can
+        # check are whether the code builds or not.  We actually do
+        # run the tests here, but if the accepted `n_code` ever
+        # fails the tests, we bail out, on the assumption that
+        # actually running CRISP with no tests on this input would
+        # cause it to produce non-working code.
+        n_op_test = self.test_op(n_new_code, n_test_code)
+        assert n_op_test.exit_code == 0, \
+            f'agent output failed tests: {n_op_test}'
+
+        return n_new_code, n_plans

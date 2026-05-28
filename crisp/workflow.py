@@ -231,6 +231,19 @@ class Workflow:
     def accept(self, code: TreeNode, reason = None):
         self.mvir.set_tag('current', code.node_id(), reason)
 
+        if self.cfg.on_accept is not None:
+            try:
+                p = subprocess.run([self.cfg.on_accept], check=False)
+            except OSError as e:
+                print(f'warning: on-accept hook failed to run: {e}', file=sys.stderr)
+            else:
+                if p.returncode != 0:
+                    print(
+                        f'warning: on-accept hook exited with status {p.returncode}',
+                        file=sys.stderr,
+                    )
+                    print(f'warning: on-accept hook cwd: {os.getcwd()}', file=sys.stderr)
+
     @step
     def cc_cmake(self, c_code: TreeNode) -> FileNode:
         n_op_cc = self.cc_cmake_op(c_code)

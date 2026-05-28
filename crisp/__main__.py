@@ -58,6 +58,8 @@ def parse_args():
 
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
+    main.add_argument('--on-accept', metavar='COMMAND',
+        help='Run COMMAND after each accepted CRISP state.')
     main.add_argument('--llm-mode',
         choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
         default='default',
@@ -592,6 +594,8 @@ def main():
     cfg_kwargs = {}
     if args.mvir_storage_dir is not None:
         cfg_kwargs['mvir_storage_dir'] = os.path.abspath(args.mvir_storage_dir)
+    if getattr(args, 'on_accept', None) is not None:
+        cfg_kwargs['on_accept'] = args.on_accept
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
 
     if args.cmd == 'main':

@@ -89,7 +89,7 @@ RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
 # Install codex-cli
 RUN mkdir /opt/codex-cli \
     && cd /opt/codex-cli \
-    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.132.0/codex-x86_64-unknown-linux-musl.tar.gz \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.135.0/codex-x86_64-unknown-linux-musl.tar.gz \
     && wget --quiet "$codex_url" \
     && tar -xzf "$(basename "$codex_url")" \
     && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex \

@@ -292,6 +292,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Try at most this many times in total to make the code safe.
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
+    w.fuel.give(llm_safety_tries)
+
     # If set, bail out if the LLM fails to improve safety of the code for
     # several consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
     # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
@@ -304,7 +306,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
-    for safety_try in range(llm_safety_tries):
+    prev_fuel = None
+    while True:
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
             break
@@ -322,6 +325,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if consecutive_failures >= max_consecutive_failures:
                 print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
+
+        # Infinite loop detection
+        cur_fuel = w.fuel.fuel
+        assert cur_fuel != prev_fuel, 'safety loop ran without consuming any fuel'
+        prev_fuel = cur_fuel
 
         try:
             match args.llm_mode:
@@ -381,13 +389,17 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     assert False, f'unexpected llm_mode {mode!r}'
 
             if n_new_code is not None:
-                w.accept(n_new_code, ('main', 'safety', safety_try))
+                w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
                 n_plans = n_new_plans
 
         except CrispError as e:
-            print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
+            print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
             traceback.print_exc()
+
+        except OutOfFuelError as e:
+            print(f'exiting due to lack of fuel: {e}')
+            break
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())

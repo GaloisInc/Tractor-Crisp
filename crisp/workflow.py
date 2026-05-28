@@ -1,4 +1,5 @@
 import cbor
+from dataclasses import dataclass
 from datetime import datetime
 import functools
 import inspect
@@ -155,6 +156,25 @@ After refactoring, make sure the code still builds.
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
 
+@dataclass
+class FuelCounter:
+    desc: str
+    fuel: int = 0
+
+    def use(self):
+        if self.fuel == 0:
+            raise OutOfFuelError(self.desc)
+        else:
+            self.fuel -= 1
+
+    def give(self, amount):
+        if amount > self.fuel:
+            self.fuel = amount
+
+class OutOfFuelError(Exception):
+    pass
+
+
 def _print_step_value(prefix: str, x: Any):
     if isinstance(x, (tuple, list)):
         for i, y in enumerate(x):
@@ -236,6 +256,7 @@ class Workflow:
     def __init__(self, cfg: Config, mvir: MVIR, codex_login: bool = False):
         self.cfg = cfg
         self.mvir = mvir
+        self.fuel = FuelCounter('safety tries')
         self.codex_login = codex_login
         self._step_depth = 0
 
@@ -1185,6 +1206,8 @@ class Workflow:
         validation (as in `do_validate_and_repair`), or `None` if no passing
         version was found.
         """
+        self.fuel.use()
+
         if no_ffi:
             n_new_code = self.llm_safety_no_ffi(n_code)
         else:
@@ -1200,6 +1223,8 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
     ) -> tuple[TreeNode | None, TreeNode | None]:
+        self.fuel.use()
+
         n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix)
         # The change must pass tests, and must not regress any unsafe count.
@@ -1217,6 +1242,8 @@ class Workflow:
         n_test_code: TreeNode,
         n_plans: TreeNode,
     ) -> tuple[TreeNode | None, TreeNode | None]:
+        self.fuel.use()
+
         # Don't provide the test code, so the agent can't
         # accidentally find the tests.  Note this has the side
         # effect of not providing the original C code, since we

@@ -50,9 +50,17 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
             cmd += ['-c', f'{k}={v}']
         cmd += ['--profile', 'crisp']
 
-    cmd += ['-c', 'model_reasoning_effort="high"',
-            # Fast mode uses 1.5-2x more tokens, so use the standard tier
-            '-c', 'service_tier="standard"']
+    # Fast (aka. priority) mode delivers 1.5 faster tokens at 2.5x credit use [0].
+    # The service tier selection mechanism can be entirely disabled by setting 
+    # `fast_mode == false` [1].
+    #
+    # [0]: https://developers.openai.com/codex/speed
+    # [1]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/service_tier_resolution.rs#L18
+    cmd += [
+        '-c', 'model_reasoning_effort="high"',
+        '-c', 'features.fast_mode=false',
+    ]
+    
     cmd += args
     return cmd
 

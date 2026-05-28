@@ -57,6 +57,7 @@ class Config(ConfigBase):
     test_command: str | None = None
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
+    on_accept: str | None = None
     # `model = None` means call `/v1/models` and pick the first from the list.
     model: str | None = None
 

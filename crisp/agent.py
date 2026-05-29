@@ -41,14 +41,13 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
             'model_providers.crisp.base_url': llm.API_BASE,
             #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
             'model_providers.crisp.env_key': 'CRISP_API_KEY',
-            'profiles.crisp.model_provider': 'crisp',
-            'profiles.crisp.model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
+            'model_provider': 'crisp',
+            'model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
             # TODO: figure out the actual context limit and use it here
-            'profiles.crisp.context_length': 128 * 1024,
+            'context_length': 128 * 1024,
         }
         for k, v in config_settings.items():
             cmd += ['-c', f'{k}={v}']
-        cmd += ['--profile', 'crisp']
 
     # Fast (aka. priority) mode delivers 1.5 faster tokens at 2.5x credit use [0].
     # The service tier selection mechanism can be entirely disabled by setting 

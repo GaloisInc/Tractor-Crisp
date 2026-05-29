@@ -29,6 +29,17 @@ fn main() {
 
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
+        let crate_name = rustc_public::local_crate().name;
+
+        if crate_name == "build_script_build" {
+            // Special case: cargo compiles all build scripts with this name, making no distinction
+            // between build scripts from different crates.  This means `check_unsafe2` may end up
+            // comparing one crate's code to a different crate's JSON, causing spurious errors.  We
+            // skip build scripts here, so they aren't considered by `check_unsafe2` and also don't
+            // contribute to the project's overall unsafe count.
+            return ControlFlow::<(), ()>::Continue(());
+        }
+
         let mut found_src = false;
         let mut files_seen = HashSet::new();
         let items = rustc_public::all_local_items();
@@ -48,7 +59,7 @@ fn main() {
         if found_src {
             let out = find_unsafe2::process(tcx);
 
-            let out_path = json_dir.join(format!("{}.json", rustc_public::local_crate().name));
+            let out_path = json_dir.join(format!("{crate_name}.json"));
             serde_json::to_writer(
                 File::create(&out_path).unwrap(),
                 &out,

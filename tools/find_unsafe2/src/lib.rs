@@ -8,8 +8,9 @@ extern crate rustc_driver;
 
 use std::collections::HashMap;
 use indexmap::IndexMap;
+use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::{DefId, CrateDef};
+use rustc_public::{DefId, CrateDef, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
     AggregateKind,
@@ -146,6 +147,11 @@ impl Visitor<'_> for FunctionVisitor<'_> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Outputs {
+    /// Sum of all unsafe counts from all functions and items, except for FFI entry points.
+    ///
+    /// This includes only unsafety metrics, not progress metrics.
+    pub total_unsafe: usize,
+
     pub fns: IndexMap<String, FunctionOutputs>,
 
     // TODO: Unsafety: crate implements `unsafe trait`s.
@@ -156,6 +162,14 @@ pub struct Outputs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionOutputs {
+    /// Unsafety: the function itself is unsafe.
+    ///
+    /// It's actually safe to define an `unsafe fn`, but we count this in our unsafety metrics so
+    /// the CRISP loop won't stop until all `unsafe fn`s are cleaned up or removed, including ones
+    /// that are never called.
+    pub is_unsafe_fn: bool,
+    /// Unsafety: this "function" is actually a static initializer, and the static is mutable.
+    pub is_mut_static: bool,
     /// Unsafety: function dereferences raw pointers.
     pub derefs_raw_ptr: usize,
     /// Unsafety: function calls `unsafe fn`s.
@@ -179,6 +193,30 @@ pub struct FunctionOutputs {
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
     // TODO: Progress: function signature type contains raw pointers.
+
+    /// Whether this function is an FFI entry point.  Specifically, this is set when the function
+    /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
+    pub is_ffi_entry_point: bool,
+}
+
+impl FunctionOutputs {
+    fn total_unsafe(&self) -> usize {
+        let FunctionOutputs {
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
+            ref uses_static_mut, ref uses_union_field,
+            // Progress, not safety
+            uses_foreign_fn: _,
+            // Other
+            is_ffi_entry_point: _,
+        } = *self;
+
+        is_unsafe_fn as usize
+            + is_mut_static as usize
+            + derefs_raw_ptr
+            + calls_unsafe
+            + uses_static_mut.values().copied().sum::<usize>()
+            + uses_union_field.values().copied().sum::<usize>()
+    }
 }
 
 
@@ -215,7 +253,43 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         }
     };
 
+    let is_unsafe_fn = move |item: CrateItem| {
+        if item.kind() != ItemKind::Fn {
+            return false;
+        }
+        let fd = FnDef(item.0);
+        fd.fn_sig().value.safety == Safety::Unsafe
+    };
+
+    let is_mut_static = move |item: CrateItem| {
+        let Ok(sd) = StaticDef::try_from(item) else { return false };
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, sd.0);
+        tcx.is_mutable_static(internal_def_id)
+    };
+
+    let is_ffi_entry_point = move |item: CrateItem| {
+        if item.is_foreign_item() {
+            // FFI imports are not entry points.
+            return false;
+        }
+        if !matches!(item.kind(), ItemKind::Fn /* | ItemKind::Static*/) {
+            // Only `fn`s and `static`s can be exported.
+            //
+            // However, since statics have no inputs (only outputs), we expect they should almost
+            // never need unsafe code internally.  So we don't apply the entry-point flag, which
+            // allows internal unsafe code.
+            //
+            // TODO: do set the flag on statics (for accuracy) but filter them out elsewhere
+            return false;
+        }
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
+        let attrs = tcx.codegen_fn_attrs(internal_def_id);
+        attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
+            || attrs.symbol_name.is_some()
+    };
+
     let mut out = Outputs {
+        total_unsafe: 0,
         fns: IndexMap::new(),
     };
     for item in items {
@@ -225,6 +299,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
             let key: String = item.name();
             let value = FunctionOutputs {
+                is_unsafe_fn: is_unsafe_fn(item),
+                is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {
@@ -237,7 +313,12 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 uses_foreign_fn: v.uses_fns.iter().filter_map(|(&fd, &count)| {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
                 }).collect(),
+
+                is_ffi_entry_point: is_ffi_entry_point(item),
             };
+            if !value.is_ffi_entry_point {
+                out.total_unsafe += value.total_unsafe();
+            }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate entry for {:?}", item.name());
         }

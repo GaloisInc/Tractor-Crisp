@@ -9,6 +9,7 @@ unsafe extern "C" {
     fn puts(s: *const u8);
 }
 fn fake_safe_puts(s: *const u8) {
+    // Error: introduced a new function containing unsafe.
     unsafe {
         puts(s);
     }
@@ -18,6 +19,7 @@ fn f2() {
 }
 
 fn deref_ptr<T: Copy>(p: *const T) -> T {
+    // Error: introduced a new function containing unsafe.
     unsafe { *p }
 }
 fn f3(p: *const i32) -> i32 {
@@ -34,4 +36,27 @@ fn f4() -> i32 {
 
 fn f6(r: &i32) -> i32 {
     *r
+}
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn ffi1(p: *const i32) -> i32 {
+    // Added a second pointer dereference, but no error because this is an FFI entry point.
+    unsafe { *p + *p }
+}
+
+#[unsafe(no_mangle)]
+static FFI2: i32 = {
+    // Added a new raw pointer dereference.  Even though this static is an FFI entry point, we
+    // still disallow unsafe operations in entry-point statics, as described in a comment in
+    // `is_ffi_entry_point`.
+    let x = 0;
+    let p = &raw const x;
+    unsafe { *p }
+};
+
+// Error: converted non-FFI function into FFI entry point.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
+    unsafe { *p }
 }

@@ -95,10 +95,12 @@ def run_rewrite(
     mvir: MVIR,
     prompt: str,
     input_code: TreeNode,
-    test_code: TreeNode,
+    extra_code: TreeNode | list[TreeNode] = [],
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
     codex_login: bool = False,
+    env: dict | None = None,
+    find_unsafe2_json_dir: str | None = None,
 ) -> TreeNode:
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
@@ -110,9 +112,16 @@ def run_rewrite(
     if 'CRISP_API_KEY' in os.environ:
         print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
 
+    if isinstance(extra_code, TreeNode):
+        extra_code = [extra_code]
+
+    if env is None:
+        env = {}
+
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
-        sb.checkout(test_code)
+        for n in extra_code:
+            sb.checkout(n)
 
         if codex_login:
             print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
@@ -129,11 +138,15 @@ def run_rewrite(
         print(codex_cmd)
         all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 
+        if 'CODEX_HOME' not in env:
+            env['CODEX_HOME'] = codex_dir
+        if find_unsafe2_json_dir is not None:
+            env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
+
         exit_code = 0
         logs = b''
         for cmd in all_cmds:
-            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True,
-                                      env={"CODEX_HOME": codex_dir})
+            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
             logs += logs2
 
             # TODO: ensure API key doesn't get included in the AgentOpNode
@@ -155,7 +168,7 @@ def run_rewrite(
     output_files = {}
     json_session_files = []
     for path, node_id in raw_output_files.files.items():
-        if path in test_code.files:
+        if any(path in n.files for n in extra_code):
             # This file came from the C code used for testing.  Ignore it.
             pass
         elif path in input_code.files:

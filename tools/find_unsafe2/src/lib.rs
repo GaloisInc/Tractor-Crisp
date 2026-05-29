@@ -177,6 +177,9 @@ pub struct Outputs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionOutputs {
+    /// Sum of all unsafe counts for this function.
+    pub total_unsafe: usize,
+
     /// Unsafety: the function itself is unsafe.
     ///
     /// It's actually safe to define an `unsafe fn`, but we count this in our unsafety metrics so
@@ -235,8 +238,9 @@ pub struct TypeOutputs {
 
 
 impl FunctionOutputs {
-    fn total_unsafe(&self) -> usize {
+    fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
+            ref mut total_unsafe,
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
@@ -245,12 +249,12 @@ impl FunctionOutputs {
             is_ffi_entry_point: _,
         } = *self;
 
-        is_unsafe_fn as usize
+        *total_unsafe = is_unsafe_fn as usize
             + is_mut_static as usize
             + derefs_raw_ptr
             + calls_unsafe
             + uses_static_mut.values().copied().sum::<usize>()
-            + uses_union_field.values().copied().sum::<usize>()
+            + uses_union_field.values().copied().sum::<usize>();
     }
 }
 
@@ -442,7 +446,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
             v.visit_body(&body);
 
             let key: String = item.name();
-            let value = FunctionOutputs {
+            let mut value = FunctionOutputs {
+                total_unsafe: 0,    // Calculated later
                 is_unsafe_fn: is_unsafe_fn(item),
                 is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
@@ -462,8 +467,9 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
                 is_ffi_entry_point: is_ffi_entry_point(item),
             };
+            value.calc_total_unsafe();
             if !value.is_ffi_entry_point {
-                out.total_unsafe += value.total_unsafe();
+                out.total_unsafe += value.total_unsafe;
             }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());

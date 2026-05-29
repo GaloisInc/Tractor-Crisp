@@ -28,6 +28,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     // but not in `old`.  All unsafety and progress metrics are set to zero, so if the agent adds a
     // new unsafe function that wasn't present before, we detect that as a regression.
     let empty_fn = FunctionOutputs {
+        total_unsafe: 0,
         is_unsafe_fn: false,
         is_mut_static: false,
         derefs_raw_ptr: 0,
@@ -62,6 +63,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     }
 
     let FunctionOutputs {
+        // Don't check the total.  Each element that feeds into this total is checked individually.
+        total_unsafe: _,
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
         casts_int_to_ptr, sig_contains_raw_ptr,

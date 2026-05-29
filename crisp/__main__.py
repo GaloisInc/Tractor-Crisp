@@ -7,6 +7,7 @@ import pathlib
 from pathlib import Path
 from pathspec import PathSpec, GitIgnoreSpec
 import pathspec.util
+import random
 import re
 import requests
 import stat
@@ -24,7 +25,10 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     CodexAgentOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
-from .workflow import Workflow
+from .workflow import (
+    Workflow, OutOfFuelError, AgentTargetField, AgentTargetFunction,
+    AgentTargetOther,
+)
 
 
 ARG_PARSE_EPILOG = '''
@@ -62,23 +66,25 @@ def parse_args():
     main.add_argument('--on-accept', metavar='COMMAND',
         help='Run COMMAND after each accepted CRISP state.')
     main.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
+            'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-            "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
+            "requires --llm-mode=agent or similar")
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
     safety_loop.add_argument('node', nargs='?', default='current')
     safety_loop.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
+            'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-        "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
+        "requires --llm-mode=agent or similar")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -129,8 +135,9 @@ def parse_args():
         help='check out files from this node into the sandbox')
 
     args = ap.parse_args()
-    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in ('agent', 'agent_sim_no_tests'):
-        ap.error('--codex-login requires --llm-mode=agent or --llm-mode=agent_sim_no_tests')
+    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
+    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
+        ap.error('--codex-login requires --llm-mode=agent or similar')
     return args
 
 
@@ -306,6 +313,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
+    target_goal = None
+    safety_tries_per_target = int(os.environ.get('LLM_SAFETY_TRIES_PER_TARGET', 3))
+    target_goal_tries = 0
+
     prev_fuel = None
     while True:
         unsafe_count = w.count_unsafe2(n_code)
@@ -372,6 +383,18 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_code, n_c_code, n_plans,
                         prompt_suffix = suffix)
 
+                case 'agent_rand_target':
+                    if (target_goal is None or target_goal_tries == 0
+                            or target_goal_is_done(w, n_code, target_goal)):
+                        target_goal = pick_target_goal(w, n_code)
+                        target_goal_tries = safety_tries_per_target
+
+                    target_goal_tries -= 1
+
+                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                        n_code, n_c_code, n_plans,
+                        target_goal = target_goal)
+
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
                         n_code, n_c_code, n_plans)
@@ -408,6 +431,63 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+
+def pick_target_goal(w, n_code):
+    # Choose a `target_goal`.
+    function_targets = []
+    field_targets = []
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        function_targets.extend(AgentTargetFunction(k)
+            for k,v in j['fns'].items()
+            if v['total_unsafe'] > 0 and not v['is_ffi_entry_point'])
+        for type_name, j_type in j['types'].items():
+            if 'type' in j_type['field_contains_raw_ptr']:
+                # This is a type alias, not a struct
+                # definition.  To avoid confusing prompting, we
+                # omit this from `target_fields`.  (Otherwise
+                # we would end up telling the agent to fix the
+                # "type" field of a non-struct.)
+                continue
+            field_targets.extend(AgentTargetField(type_name, k)
+                for k,v in j_type['field_contains_raw_ptr'].items()
+                if v > 0)
+
+    # Prefer fields over functions by giving them 5x normal
+    # weight.
+    functions_weight = len(function_targets)
+    fields_weight = 5 * len(field_targets)
+    target_lists = [function_targets, field_targets]
+    weights = [functions_weight, fields_weight]
+    if sum(weights) > 0:
+        print(f'choosing target with category weights {weights!r}')
+        target_list, = random.choices(target_lists, weights)
+        target_goal = random.choice(target_list)
+    else:
+        # We found no fields or functions, but `count_unsafe2`
+        # still reported some unsafe code.  Tell the agent to
+        # check the entire codebase for leftover unsafety.
+        target_goal = AgentTargetOther()
+
+    return target_goal
+
+def target_goal_is_done(w, n_code, target_goal):
+    total = 0
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        match target_goal:
+            case AgentTargetField(struct, field):
+                j_struct = j['types'].get(struct)
+                if j_struct is not None:
+                    total += j_struct.get(field, 0)
+            case AgentTargetFunction(func):
+                j_func = j['fns'].get(func)
+                if j_func is not None:
+                    total += j_func['total_unsafe']
+            case AgentTargetOther():
+                total += j['total_unsafe']
+    return total == 0
+
 
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')

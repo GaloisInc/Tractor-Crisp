@@ -416,6 +416,7 @@ class Workflow:
                     "--output-dir",
                     sb.join(output_path),
                     "--emit-build-files",
+                    "--emit-c-decl-map",
                 ]
                 if src_loc_annotations:
                     c2rust_cmd += [
@@ -502,6 +503,51 @@ class Workflow:
             'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
 
         return n_op
+
+    @step
+    def postprocess(self, n_tree: TreeNode) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = analysis.detect_root_file(cfg, mvir, n_tree)
+        root_rust_source_file = os.path.join(rust_path_rel, root_file_rel)
+
+        with run_sandbox(cfg, mvir) as sb:
+            sb.checkout(n_tree)
+
+            postprocess_cmd = [
+                'c2rust-postprocess',
+                '--update-rust',
+            ]
+            # TODO: This feels like a hack.
+            if 'OPENAI_API_KEY' in os.environ:
+                postprocess_cmd.append('--llm-mode=gpt-5.1')
+            postprocess_cmd.append(sb.join(root_rust_source_file))
+
+            exit_code, logs = sb.run(postprocess_cmd, stream=True)
+
+            if exit_code != 0:
+                raise CrispError(
+                    f'c2rust-postprocess failed (exit code = {exit_code})\n'
+                    f'logs:\n{logs.decode("utf-8", errors="replace")}'
+                )
+
+            n_new_tree = sb.commit_dir(rust_path_rel)
+            if n_new_tree.node_id() == n_tree.node_id():
+                print(
+                    'warning: c2rust-postprocess completed successfully, but '
+                    'the committed tree is unchanged'
+                )
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code=n_tree.node_id(),
+            new_code=n_new_tree.node_id(),
+            body=logs,
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' postprocess')
+
+        return self.mvir.node(n_op.new_code)
 
     @step
     def patch_cargo_toml(self, code: TreeNode, name: str | None = None) -> TreeNode:

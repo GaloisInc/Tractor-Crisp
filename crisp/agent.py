@@ -44,8 +44,14 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
             'model_providers.crisp.env_key': 'CRISP_API_KEY',
             'model_provider': 'crisp',
             'model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
-            # TODO: figure out the actual context limit and use it here
-            'context_length': 128 * 1024,
+            # TODO: OpenAI pricing is based on input and output tokens, with 
+            # long context tokens costing twice as much as short context ones.
+            # We might want to set limits to avoid the long context pricing.
+            #
+            # Example config limits for gpt-5.5:  
+            #
+            # 'model_context_window': 272000
+            # 'model_auto_compact_token_limit' = 240000
         }
         for k, v in config_settings.items():
             cmd += ['-c', f'{k}={v}']

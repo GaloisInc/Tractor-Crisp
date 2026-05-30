@@ -687,7 +687,7 @@ class LlmOpNode(Node):
     response = property(lambda self: self._metadata['response'])
 
 class CodexAgentOpNode(Node):
-    KIND = 'codex_agent_op'
+    KIND = 'codex_agent_op_v2'
     old_code: Metadata[NodeId]
     new_code: Metadata[NodeId]
     raw_prompt: Metadata[NodeId]
@@ -994,3 +994,12 @@ def migrate_find_unsafe_analysis(mvir: MVIR, metadata: dict[str, Any]):
     metadata['exit_code'] = 0
     # `stderr` was renamed to `logs`
     metadata['logs'] = metadata['stderr']
+
+@migration('codex_agent_op')
+def migrate_codex_agent_op(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'codex_agent_op_v2'
+    # The `planning_files` field was added and merged without changing the
+    # `KIND`, so there may be `codex_agent_op` (old) nodes that actually
+    # already have the new field.
+    if 'planning_files' not in metadata:
+        metadata['planning_files'] = TreeNode.new(mvir, files = {}).node_id().raw

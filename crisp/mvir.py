@@ -560,7 +560,7 @@ class Node:
                     else:
                         raise KeyError(
                             f'unknown node kind {cls_name!r} (migrated from {orig_cls_name!r})')
-                migration_func(metadata)
+                migration_func(mvir, metadata)
 
                 new_cls_name = metadata.get('kind')
                 if new_cls_name is None:
@@ -963,29 +963,29 @@ NODE_KIND_MAP = _build_node_kind_map(NODE_CLASSES)
 # maps the old metadata types to the new ones.  This allows newer versions of
 # CRISP to load older nodes without error.
 
-NODE_MIGRATION_MAP: dict[str, Callable[[dict[str, Any]], None]] = {}
+NODE_MIGRATION_MAP: dict[str, Callable[[MVIR, dict[str, Any]], None]] = {}
 
 def migration(old_kind: str):
-    def decorate(f: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+    def decorate(f: Callable[[MVIR, dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         assert old_kind not in NODE_MIGRATION_MAP, f'duplicate migration for {old_kind!r}'
         NODE_MIGRATION_MAP[old_kind] = f
         return f
     return decorate
 
 @migration('compile_commands_op')
-def migrate_compile_commands_op(metadata: dict[str, Any]):
+def migrate_compile_commands_op(mvir: MVIR, metadata: dict[str, Any]):
     metadata['kind'] = 'compile_commands_op_v2'
     # cmd: list[str]  ->  cmds: list[list[str]]
     metadata['cmds'] = [metadata.pop('cmd')]
 
 @migration('split_ffi_op')
-def migrate_split_ffi_op(metadata: dict[str, Any]):
+def migrate_split_ffi_op(mvir: MVIR, metadata: dict[str, Any]):
     metadata['kind'] = 'split_ffi_op_v2'
     # `commit` field was removed
     del metadata['commit']
 
 @migration('find_unsafe_analysis')
-def migrate_find_unsafe_analysis(metadata: dict[str, Any]):
+def migrate_find_unsafe_analysis(mvir: MVIR, metadata: dict[str, Any]):
     metadata['kind'] = 'find_unsafe_analysis_v2'
     # `commit` field was removed
     del metadata['commit']

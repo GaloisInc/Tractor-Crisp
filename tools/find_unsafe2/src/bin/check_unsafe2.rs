@@ -35,6 +35,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         uses_static_mut: Default::default(),
         uses_union_field: Default::default(),
         uses_foreign_fn: Default::default(),
+        casts_int_to_ptr: 0,
         is_ffi_entry_point: false,
     };
     for (fn_name, new_fn) in fns {
@@ -54,6 +55,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     let FunctionOutputs {
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
+        casts_int_to_ptr,
         is_ffi_entry_point,
     } = *new;
     let mut ok = true;
@@ -74,6 +76,9 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         |k| format!("{name}: uses of union field {k}"));
     ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
         |k| format!("{name}: uses of foreign fn {k}"));
+
+    ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr,
+        || format!("{name}: int-to-pointer casts"));
 
     ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
         || format!("{name}: FFI export flag"));

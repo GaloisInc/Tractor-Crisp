@@ -38,6 +38,10 @@ fn f6(r: &i32) -> i32 {
     *r
 }
 
+unsafe fn f7(x: usize) -> i32 {
+    *(x as *const i32)
+}
+
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ffi1(p: *const i32) -> i32 {

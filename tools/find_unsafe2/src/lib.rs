@@ -46,6 +46,8 @@ struct FunctionVisitor<'a> {
     calls_unsafe: usize,
     /// Number of raw pointer dereferences within the current function.
     derefs_raw_ptr: usize,
+    /// Number of int-to-pointer casts within the current function.
+    casts_int_to_ptr: usize,
 }
 
 impl<'a> FunctionVisitor<'a> {
@@ -57,6 +59,7 @@ impl<'a> FunctionVisitor<'a> {
             uses_fields: IndexMap::new(),
             calls_unsafe: 0,
             derefs_raw_ptr: 0,
+            casts_int_to_ptr: 0,
         }
     }
 }
@@ -120,6 +123,13 @@ impl Visitor<'_> for FunctionVisitor<'_> {
                         let idx = union_field_idx.unwrap();
                         *self.uses_fields.entry((adt, idx)).or_insert(0) += 1;
                     },
+                }
+            }
+        } else if let Rvalue::Cast(_kind, ref op, dest_ty) = *x {
+            if dest_ty.kind().is_raw_ptr() {
+                let src_ty = op.ty(self.body.locals()).unwrap();
+                if src_ty.kind().is_integral() {
+                    self.casts_int_to_ptr += 1;
                 }
             }
         }
@@ -194,6 +204,13 @@ pub struct FunctionOutputs {
 
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
+    /// Progress: function casts `usize` to a raw pointer.
+    ///
+    /// This was added after seeing the agent bypass restrictions on raw pointers in data
+    /// structures by replacing the pointer with a `usize` and casting back to a pointer at each
+    /// use site.  We don't ban reference-to-pointer casts since these may come up naturally when a
+    /// function is made mostly safe but it still calls into an unsafe helper.
+    pub casts_int_to_ptr: usize,
     // TODO: Progress: function signature type contains raw pointers.
 
     /// Whether this function is an FFI entry point.  Specifically, this is set when the function
@@ -207,7 +224,7 @@ impl FunctionOutputs {
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
-            uses_foreign_fn: _,
+            uses_foreign_fn: _, casts_int_to_ptr: _,
             // Other
             is_ffi_entry_point: _,
         } = *self;
@@ -315,6 +332,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 uses_foreign_fn: v.uses_fns.iter().filter_map(|(&fd, &count)| {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
                 }).collect(),
+                casts_int_to_ptr: v.casts_int_to_ptr,
 
                 is_ffi_entry_point: is_ffi_entry_point(item),
             };

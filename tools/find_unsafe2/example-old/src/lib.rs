@@ -43,7 +43,11 @@ fn f6(r: &i32) -> i32 {
     unsafe { f3(r) }
 }
 
-unsafe fn f7(x: *const i32) -> i32 {
+unsafe fn f7a(x: *const i32) -> i32 {
+    *x
+}
+
+unsafe fn f7b(x: *const i32) -> i32 {
     *x
 }
 

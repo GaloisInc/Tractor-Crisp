@@ -43,6 +43,14 @@ fn f6(r: &i32) -> i32 {
     unsafe { f3(r) }
 }
 
+unsafe fn f7a(x: *const i32) -> i32 {
+    *x
+}
+
+unsafe fn f7b(x: *const i32) -> i32 {
+    *x
+}
+
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ffi1(p: *const i32) -> i32 {
@@ -54,4 +62,10 @@ static FFI2: i32 = 0;
 
 unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
     unsafe { *p }
+}
+
+
+struct S {
+    x: i32,
+    y: i32,
 }

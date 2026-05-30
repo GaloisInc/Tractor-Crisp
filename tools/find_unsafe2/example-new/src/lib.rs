@@ -1,4 +1,5 @@
 #![allow(unused)]
+use std::ptr::NonNull;
 
 fn f1(x: i32) {
     // `println` internally use `fmt::Arguments::new`, which is an unsafe function.
@@ -38,6 +39,16 @@ fn f6(r: &i32) -> i32 {
     *r
 }
 
+unsafe fn f7a(x: usize) -> i32 {
+    // Error: integer-to-pointer casts are forbidden.
+    *(x as *const i32)
+}
+
+unsafe fn f7b(x: &i32) -> i32 {
+    // No error; reference-to-pointer casts are allowed.
+    *(x as *const i32)
+}
+
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ffi1(p: *const i32) -> i32 {
@@ -59,4 +70,20 @@ static FFI2: i32 = {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
     unsafe { *p }
+}
+
+
+struct S {
+    // Error: added a raw pointer to this field type.
+    x: *const i32,
+    // Error - NonNull also counts as a raw pointer type.
+    y: NonNull<i32>,
+}
+
+
+fn test_write() {
+    use std::io::Write;
+    // `writeln!` uses unsafe `std::fmt` internals, but shouldn't be counted as unsafe.
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "x = {}", 1 + 1);
 }

@@ -60,3 +60,11 @@ static FFI2: i32 = {
 unsafe extern "C" fn non_ffi3(p: *const i32) -> i32 {
     unsafe { *p }
 }
+
+
+fn test_write() {
+    use std::io::Write;
+    // `writeln!` uses unsafe `std::fmt` internals, but shouldn't be counted as unsafe.
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "x = {}", 1 + 1);
+}

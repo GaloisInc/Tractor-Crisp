@@ -16,6 +16,7 @@ from .mvir import (
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
+    CargoFixOpNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -173,6 +174,41 @@ def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonA
             code = code.node_id(),
             exit_code = exit_code,
             json = n_json.node_id(),
+            body = logs,
+            )
+    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    return n_op
+
+@analysis
+def cargo_fix(cfg: Config, mvir: MVIR, old_code: TreeNode) -> CargoFixOpNode:
+    """
+    Run `cargo fix` to auto-apply compiler suggestions (e.g. removing unused
+    imports).  On success, `new_code` is the fixed tree; on failure it equals
+    `old_code`.
+    """
+    rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
+    cmd = 'cd %s && cargo fix --allow-dirty --allow-no-vcs --message-format=short' % \
+            shlex.quote(rust_path_rel)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(old_code)
+        exit_code, logs = sb.run(cmd + ' 2>&1', shell=True, stream=True)
+
+        if exit_code == 0:
+            # Re-commit exactly the input file set, picking up in-place edits and
+            # skipping build artifacts (`target/`, `Cargo.lock`, ...).
+            new_files = {path: sb.commit_file(path).node_id()
+                    for path in old_code.files.keys()}
+            new_code = TreeNode.new(mvir, files=new_files)
+        else:
+            new_code = old_code
+
+    n_op = CargoFixOpNode.new(
+            mvir,
+            old_code = old_code.node_id(),
+            new_code = new_code.node_id(),
+            cmd = cmd,
+            exit_code = exit_code,
             body = logs,
             )
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

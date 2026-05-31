@@ -19,6 +19,7 @@ from .mvir import (
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
+    CargoFixOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -723,6 +724,15 @@ class Workflow:
             test_cmd = 'true'
         n = analysis.run_tests(self.cfg, self.mvir, code, c_code, test_cmd)
         return n
+
+    @step
+    def cargo_fix(self, code: TreeNode) -> TreeNode:
+        n = self.cargo_fix_op(code)
+        return self.mvir.node(n.new_code)
+
+    @step
+    def cargo_fix_op(self, code: TreeNode) -> CargoFixOpNode:
+        return analysis.cargo_fix(self.cfg, self.mvir, code)
 
     @step
     def cargo_check_json(self, code: TreeNode) -> list[dict]:

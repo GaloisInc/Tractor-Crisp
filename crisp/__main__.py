@@ -256,10 +256,14 @@ def do_main(args, cfg):
 
     # Auto-fix compiler warnings (e.g. unused imports) before the safety loop, so
     # they don't pollute every iteration's build output and waste tokens.
-    n_fixed = w.cargo_fix(n_code)
-    if n_fixed.node_id() != n_code.node_id():
-        w.accept(n_fixed, ('main', 'cargo_fix'))
-        n_code = n_fixed
+    n_code = w.cargo_fix(n_code)
+    if not w.cargo_check_json_op(n_code).passed:
+        print('error: build failed after cargo fix')
+        return
+    if not w.test(n_code, n_c_code):
+        print('error: tests failed after cargo fix')
+        return
+    w.accept(n_code, ('main', 'cargo_fix'))
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 

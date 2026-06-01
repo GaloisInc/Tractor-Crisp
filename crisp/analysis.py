@@ -192,7 +192,7 @@ def cargo_fix(cfg: Config, mvir: MVIR, old_code: TreeNode) -> CargoFixOpNode:
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(old_code)
-        exit_code, logs = sb.run(cmd + ' 2>&1', shell=True, stream=True)
+        exit_code, logs = sb.run(cmd, shell=True, stream=True)
 
         if exit_code == 0:
             # Re-commit exactly the input file set, picking up in-place edits and

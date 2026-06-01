@@ -78,6 +78,8 @@ struct S {
     x: *const i32,
     // Error - NonNull also counts as a raw pointer type.
     y: NonNull<i32>,
+    // Error - NonNull is detected even underneath `Option`.
+    z: Option<NonNull<i32>>,
 }
 
 

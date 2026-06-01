@@ -1,4 +1,6 @@
 import cbor
+import dataclasses
+from dataclasses import dataclass
 from datetime import datetime
 import functools
 import inspect
@@ -117,27 +119,41 @@ New signatures:
 '''
 
 AGENT_SAFETY_PROMPT = '''
-Please refactor the Rust code in `{cargo_dir_path}` to avoid the use of `unsafe`, without changing its behavior.
+Please refactor the Rust code in `{cargo_dir_path}` to be safe, without changing its behavior.  The goal is to make the code fully safe, including migrating to safe memory management (`Box`/`Vec`/`Rc`) and  safe pointer types (`&T`/`&[T]`) throughout.
+
+{target_goal}
 
 You are executing one iteration of a loop that will be re-invoked on the same codebase until the unsafe count reaches zero or progress stalls. To carry state between iterations, maintain a planning file at `SAFETY_PLAN.md`:
 
-- **First, check whether `SAFETY_PLAN.md` already exists.** If it does, read it in full. It is your own notes from prior iterations. Use it to pick up where the previous run left off rather than starting over.
-- If `SAFETY_PLAN.md` does not exist, examine the codebase to identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fields) that uses `unsafe`, decide how to refactor it safely, and write that plan to `SAFETY_PLAN.md`.
+- **First, check whether `SAFETY_PLAN.md` already exists.** If it does, read it in full. It is your own notes from prior iterations.
+- If the existing `SAFETY_PLAN.md` applies to your current target, Use it to pick up where the previous run left off rather than starting over.
+- If `SAFETY_PLAN.md` does not exist, or if it exists but applies to an unrelated target, make a new plan for addressing the current target. Examine the target along with any callers/callees, use sites, and other related logic to understand the functionality it provides. Think about how to implement the same functionality using only safe Rust constructs. Then, plan out step by step how to migrate from the unsafe version to the safe equivalent. This plan may be as small as a single step if the target is simple, or it may be many steps if the target is complex or has many interactions. Once you have a plan, write it to `SAFETY_PLAN.md`.
 - **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
-- If `SAFETY_PLAN.md` exists and all planned tasks have been completed, you should identify the next unit of code to work on and update the plan accordingly. This is a good time to trim and clean up the plan so it only contains the next steps and relevant notes. Pay close attention to pitfalls and dead ends such that future iterations do not repeat the same mistakes.
+- When rewriting the plan due to switching targets, pay close attention to any relevant pitfalls or dead ends recorded in the previous plan such that future iterations do not repeat the same mistakes. This is also a good time to trim and clean up the plan so it only contains the next steps and relevant notes.
 - If a planned unit turns out to be too complex or blocked by prerequisite work, update `SAFETY_PLAN.md` to record the blocker, split the work into smaller steps, and switch to the prerequisite or smaller step. Prefer steps that directly reduce the unsafe count, but preliminary safe refactors are acceptable when they are necessary to remove unsafe code in a later iteration.
 
 Then carry out the next step of the plan.
 
-HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
+The code contains two kinds of functions: implementation functions and FFI entry points. A function is an FFI entry point if it has the `#[no_mangle]` or `#[export_name]` attribute ("export attributes"). Note that just having `unsafe extern "C"` qualifiers without export attributes does NOT make a function an FFI entry point. All functions without export attributes are implementation functions.
+
+Implementation code may be freely refactored to improve safety. Here are some examples of useful changes to make:
+- Replace raw pointers with safe reference or smart pointer types, so that dereferences can be done safely.
+- Replace `static mut`s with non-`mut` and unions with enums so they can be accessed safely.
+- Eliminate calls to FFI imports and other unsafe functions. Try to replace these with suitable safe Rust operations, e.g. `printf` -> `println!`.
+- Remove the `unsafe` qualifier from functions that no longer need it, so that their callers can be made safe.
+
+For FFI entry points, the following rules apply:
+- You must not change the signature. FFI entry point signatures must remain exactly as-is to ensure ABI compatibility with the current version of the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
+- For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
+- Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
 
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions.  You can check your work using this command:
+Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
-This will report an error for any unsafe code that was improperly added during your edits.
+This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
@@ -151,8 +167,67 @@ AGENT_AFTER_REFACTORING_BUILD = '''
 After refactoring, make sure the code still builds.
 '''.strip()
 
+AGENT_TARGET_GOAL_FIELD = '''
+Your current target is the `{field_name}` field of `{struct_name}`, along with any similar or closely related fields.  Your goal is to change the field to use a safe type (such as `Box`, `Vec`, or `Rc`) instead of a raw pointer, and to update all uses of it to be as safe as possible (for example, use sites should not cast back to a raw pointer, since that defeats some of the safety checking).
+'''.strip()
+
+AGENT_TARGET_GOAL_FUNCTION = '''
+Your current target is the `{func_name}` function, along with any similar or closely related functions.  Your goal is to change the function in question to use only safe types (such as `Box`, `Vec`, or `Rc`) internally and in its signature, and to replace any unsafe FFI calls (e.g. `libc::printf`) with safe equivalents.  You should aim to make callees of the target function safe if it's feasible to do so, that way the entire call tree is safe.
+'''.strip()
+
+AGENT_TARGET_GOAL_OTHER = '''
+You currently have no specific target.  Scan the codebase for any remaining unsafe types, operations, or definitions (excluding FFI entry points) and identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fields) that uses `unsafe` for you to work on.
+'''.strip()
+
+class AgentTarget:
+    def prompt(self):
+        return self.PROMPT_FMT.format(**dataclasses.asdict(self))
+
+@dataclass(frozen = True)
+class AgentTargetField(AgentTarget):
+    """
+    Remove raw pointers from the type of a struct field.
+    """
+    struct_name: str
+    field_name: str
+    PROMPT_FMT = AGENT_TARGET_GOAL_FIELD
+
+@dataclass(frozen = True)
+class AgentTargetFunction(AgentTarget):
+    """
+    Make a function and all its callees safe.
+    """
+    func_name: str
+    PROMPT_FMT = AGENT_TARGET_GOAL_FUNCTION
+
+@dataclass(frozen = True)
+class AgentTargetOther(AgentTarget):
+    """
+    Remove any leftover unsafe from the codebase.
+    """
+    PROMPT_FMT = AGENT_TARGET_GOAL_OTHER
+
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
+
+
+@dataclass
+class FuelCounter:
+    desc: str
+    fuel: int = 0
+
+    def use(self):
+        if self.fuel == 0:
+            raise OutOfFuelError(self.desc)
+        else:
+            self.fuel -= 1
+
+    def give(self, amount):
+        if amount > self.fuel:
+            self.fuel = amount
+
+class OutOfFuelError(Exception):
+    pass
 
 
 def _print_step_value(prefix: str, x: Any):
@@ -236,6 +311,7 @@ class Workflow:
     def __init__(self, cfg: Config, mvir: MVIR, codex_login: bool = False):
         self.cfg = cfg
         self.mvir = mvir
+        self.fuel = FuelCounter('safety tries')
         self.codex_login = codex_login
         self._step_depth = 0
 
@@ -780,8 +856,7 @@ class Workflow:
     def count_unsafe2(self, n_code: TreeNode) -> int:
         n_json = self.find_unsafe2_json(n_code)
         total = 0
-        for n_json_file_id in n_json.files.values():
-            n_json_file = self.mvir.node(n_json_file_id)
+        for n_json_file in self.find_unsafe2_json_files(n_code):
             total += n_json_file.body_json()['total_unsafe']
         print('%d unsafe operations remaining' % total)
         return total
@@ -790,6 +865,11 @@ class Workflow:
     def find_unsafe2_json(self, n_code: TreeNode) -> TreeNode:
         n_op = self.find_unsafe2_op(n_code)
         return self.mvir.node(n_op.unsafe_json)
+
+    @step
+    def find_unsafe2_json_files(self, n_code: TreeNode) -> list[FileNode]:
+        n_json = self.find_unsafe2_json(n_code)
+        return [self.mvir.node(file_id) for file_id in n_json.files.values()]
 
     @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:
@@ -1077,6 +1157,8 @@ class Workflow:
         n_plans: TreeNode,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
+        prompt_suffix: str | None = None,
+        target_goal: AgentTarget = AgentTargetOther(),
     ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1096,7 +1178,10 @@ class Workflow:
         prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
+            target_goal = target_goal.prompt(),
         )
+        if prompt_suffix is not None:
+            prompt = f'{prompt}\n\n{prompt_suffix}'
         return agent.run_rewrite(cfg, mvir, prompt, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
@@ -1114,3 +1199,134 @@ class Workflow:
         n_plans: TreeNode,
     ) -> tuple[TreeNode, TreeNode]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
+
+
+    @step
+    def do_validate_and_repair(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+        n_test_code: TreeNode,
+    ) -> TreeNode | None:
+        """
+        Validate `n_new_code`.  If it fails validation, try to repair it.
+        Returns a version that passes validation (after zero or more repair
+        attempts), or `None` if no passing version was found.
+        """
+        for repair_try in range(3):
+            try:
+                n_op_unsafe = self.compare_unsafe2_op(n_old_code, n_new_code)
+                if n_op_unsafe.exit_code != 0:
+                    # Unsafe check failed, so try to repair it.  If repair
+                    # succeeds, we proceed to the next check; otherwise, we try
+                    # again from the start of the loop.
+                    n_new_code = self.llm_repair_safety(n_new_code, n_op_unsafe)
+
+                    n_op_unsafe = self.compare_unsafe2_op(n_old_code, n_new_code)
+                    if n_op_unsafe.exit_code != 0:
+                        # If we failed to fix the unsafety, don't bother trying to
+                        # build or run tests.  This still counts as a repair
+                        # attempt.
+                        continue
+
+                n_op_check = self.cargo_check_json_op(n_new_code)
+                if not n_op_check.passed:
+                    n_new_code = self.llm_repair_compile(n_new_code, n_op_check)
+
+                    n_op_check = self.cargo_check_json_op(n_new_code)
+                    if not n_op_check.passed:
+                        continue
+
+                n_op_test = self.test_op(n_new_code, n_test_code)
+                if n_op_test.exit_code != 0:
+                    n_new_code = self.llm_repair(n_new_code, n_op_test)
+
+                    n_op_test = self.test_op(n_new_code, n_test_code)
+                    if n_op_test.exit_code != 0:
+                        continue
+
+                # All validation steps passed, so return the new version.
+                return n_new_code
+
+            except CrispError as e:
+                print(f'repair attempt {repair_try} failed: {e}')
+                traceback.print_exc()
+
+        # None of the new versions passed the checks.
+        return None
+
+    @step
+    def do_safety_step_llm(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        no_ffi: bool = False,
+    ) -> TreeNode | None:
+        """
+        Run one LLM safety rewriting step.  Returns a new version that passes
+        validation (as in `do_validate_and_repair`), or `None` if no passing
+        version was found.
+        """
+        self.fuel.use()
+
+        if no_ffi:
+            n_new_code = self.llm_safety_no_ffi(n_code)
+        else:
+            n_new_code = self.llm_safety(n_code)
+
+        return self.do_validate_and_repair(n_code, n_new_code, n_test_code)
+
+    @step
+    def do_safety_step_agent(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        n_plans: TreeNode,
+        prompt_suffix: str | None = None,
+        target_goal: AgentTarget = AgentTargetOther(),
+    ) -> tuple[TreeNode | None, TreeNode | None]:
+        self.fuel.use()
+
+        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
+            prompt_suffix = prompt_suffix,
+            target_goal = target_goal)
+        # The change must pass tests, and must not regress any unsafe count.
+        n_op_test = self.test_op(n_new_code, n_test_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
+            return n_new_code, n_plans
+        else:
+            return None, None
+
+    @step
+    def do_safety_step_agent_sim_no_tests(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        n_plans: TreeNode,
+    ) -> tuple[TreeNode | None, TreeNode | None]:
+        self.fuel.use()
+
+        # Don't provide the test code, so the agent can't
+        # accidentally find the tests.  Note this has the side
+        # effect of not providing the original C code, since we
+        # don't currently distinguish test code from the rest of
+        # the C code.
+        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_op_check = self.cargo_check_json_op(n_new_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
+            return None, None
+
+        # `agent_sim_no_tests` simulates the mode where no tests are
+        # available and the only success criteria that CRISP can
+        # check are whether the code builds or not.  We actually do
+        # run the tests here, but if the accepted `n_code` ever
+        # fails the tests, we bail out, on the assumption that
+        # actually running CRISP with no tests on this input would
+        # cause it to produce non-working code.
+        n_op_test = self.test_op(n_new_code, n_test_code)
+        assert n_op_test.exit_code == 0, \
+            f'agent output failed tests: {n_op_test}'
+
+        return n_new_code, n_plans

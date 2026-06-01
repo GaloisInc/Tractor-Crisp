@@ -7,6 +7,7 @@ import pathlib
 from pathlib import Path
 from pathspec import PathSpec, GitIgnoreSpec
 import pathspec.util
+import random
 import re
 import requests
 import stat
@@ -24,7 +25,10 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     CodexAgentOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
-from .workflow import Workflow
+from .workflow import (
+    Workflow, OutOfFuelError, AgentTargetField, AgentTargetFunction,
+    AgentTargetOther,
+)
 
 
 ARG_PARSE_EPILOG = '''
@@ -62,23 +66,25 @@ def parse_args():
     main.add_argument('--on-accept', metavar='COMMAND',
         help='Run COMMAND after each accepted CRISP state.')
     main.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
+            'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-            "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
+            "requires --llm-mode=agent or similar")
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
     safety_loop.add_argument('node', nargs='?', default='current')
     safety_loop.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests'),
+        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
+            'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-        "requires --llm-mode=agent or --llm-mode=agent_sim_no_tests")
+        "requires --llm-mode=agent or similar")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -129,8 +135,9 @@ def parse_args():
         help='check out files from this node into the sandbox')
 
     args = ap.parse_args()
-    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in ('agent', 'agent_sim_no_tests'):
-        ap.error('--codex-login requires --llm-mode=agent or --llm-mode=agent_sim_no_tests')
+    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
+    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
+        ap.error('--codex-login requires --llm-mode=agent or similar')
     return args
 
 
@@ -292,6 +299,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Try at most this many times in total to make the code safe.
     llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
+    w.fuel.give(llm_safety_tries)
+
     # If set, bail out if the LLM fails to improve safety of the code for
     # several consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
     # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
@@ -304,7 +313,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
-    for safety_try in range(llm_safety_tries):
+    target_goal = None
+    safety_tries_per_target = int(os.environ.get('LLM_SAFETY_TRIES_PER_TARGET', 3))
+    target_goal_tries = 0
+
+    prev_fuel = None
+    while True:
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
             break
@@ -323,60 +337,92 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
 
+        # Infinite loop detection
+        cur_fuel = w.fuel.fuel
+        assert cur_fuel != prev_fuel, 'safety loop ran without consuming any fuel'
+        prev_fuel = cur_fuel
+
         try:
             match args.llm_mode:
                 case 'agent':
-                    n_new_code, n_plans = w.agent_safety(n_code, n_c_code, n_plans)
-                    n_op_test = w.test_op(n_new_code, n_c_code)
-                    n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
-                    if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
-                        w.accept(n_new_code, ('main', 'safety', safety_try))
-                        n_code = n_new_code
+                    match consecutive_failures:
+                        case 0 | 1:
+                            suffix = None
+                        case 2 | 3:
+                            # Previous steps failed to make progress on
+                            # `unsafe`.  We've seen the agent sometimes just do
+                            # refactoring or other general cleanup that doesn't
+                            # directly reduce unsafe.  This is actually
+                            # desirable, but if it goes on too long, we add a
+                            # reminder to focus on reducing unsafety.
+                            suffix = (
+                                'Remember, your primary goal is to reduce '
+                                'the amount of unsafe code. '
+                                'Try to remove at least one unsafe operation '
+                                'or `unsafe fn`/`static mut` qualifier '
+                                'from the core implementation code.'
+                            )
+                        case n:
+                            # Last-ditch attempt to get the agent to make
+                            # progress.  This may be too strongly worded, to
+                            # the point of encouraging cheating (such as moving
+                            # unsafe operations into FFI wrappers).
+                            suffix = (
+                                'Remember, your primary goal is to reduce '
+                                'the amount of unsafe code. '
+                                f'Your past {n} attempts failed to remove '
+                                'any unsafe operations. '
+                                'You MUST remove at least one unsafe operation '
+                                'or `unsafe fn`/`static mut` qualifier '
+                                'from the core implementation code '
+                                '(NOT from FFI entry points), '
+                                'or this run will be terminated.'
+                            )
 
-                    continue
+                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                        n_code, n_c_code, n_plans,
+                        prompt_suffix = suffix)
+
+                case 'agent_rand_target':
+                    if (target_goal is None or target_goal_tries == 0
+                            or target_goal_is_done(w, n_code, target_goal)):
+                        target_goal = pick_target_goal(w, n_code)
+                        target_goal_tries = safety_tries_per_target
+
+                    target_goal_tries -= 1
+
+                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                        n_code, n_c_code, n_plans,
+                        target_goal = target_goal)
 
                 case 'agent_sim_no_tests':
-                    # Don't provide the test code, so the agent can't
-                    # accidentally find the tests.  Note this has the side
-                    # effect of not providing the original C code, since we
-                    # don't currently distinguish test code from the rest of
-                    # the C code.
-                    n_new_code, n_plans = w.agent_safety_no_tests(n_code, n_plans)
-                    n_op_check = w.cargo_check_json_op(n_new_code)
-                    n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
-                    if n_op_check.passed and n_op_unsafe.exit_code == 0:
-                        w.accept(n_new_code, ('main', 'safety', safety_try))
-                        n_code = n_new_code
-
-                    # `agent_sim_no_tests` simulates the mode where no tests are
-                    # available and the only success criteria that CRISP can
-                    # check are whether the code builds or not.  We actually do
-                    # run the tests here, but if the accepted `n_code` ever
-                    # fails the tests, we bail out, on the assumption that
-                    # actually running CRISP with no tests on this input would
-                    # cause it to produce non-working code.
-                    n_op_test = w.test_op(n_code, n_c_code)
-                    assert n_op_test.exit_code == 0, \
-                        f'agent output failed tests: {n_op_test}'
-
-                    continue
+                    n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
+                        n_code, n_c_code, n_plans)
 
                 case 'default':
-                    n_new_code = w.llm_safety(n_code)
+                    n_new_code = w.do_safety_step_llm(n_code, n_c_code)
+                    n_new_plans = n_plans
+
                 case 'no_ffi':
-                    n_new_code = w.llm_safety_no_ffi(n_code)
+                    n_new_code = w.do_safety_step_llm(n_code, n_c_code, no_ffi = True)
+                    n_new_plans = n_plans
+
                 case mode:
                     # `--llm-mode agent` should be handled at a higher level.
                     assert False, f'unexpected llm_mode {mode!r}'
 
-            n_new_code = safety_loop_validate_and_repair(w, n_code, n_new_code, n_c_code)
             if n_new_code is not None:
-                w.accept(n_new_code, ('main', 'safety', safety_try))
+                w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
+                n_plans = n_new_plans
 
         except CrispError as e:
-            print(f'{args.llm_mode} safety attempt {safety_try} failed: {e}')
+            print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
             traceback.print_exc()
+
+        except OutOfFuelError as e:
+            print(f'exiting due to lack of fuel: {e}')
+            break
 
     print('\n\n')
     print('final code = %s' % n_code.node_id())
@@ -386,54 +432,61 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 
-def safety_loop_validate_and_repair(w, n_code, n_new_code, n_c_code) -> TreeNode | None:
-    """
-    Validate `n_new_code`.  If it fails validation, try to repair it.  Returns
-    a version that passes validation (after zero or more repair attempts), or
-    `None` if no passing version was found.
-    """
-    for repair_try in range(3):
-        try:
-            n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
-            if n_op_unsafe.exit_code != 0:
-                n_new_code = w.llm_repair_safety(n_new_code, n_op_unsafe)
+def pick_target_goal(w, n_code):
+    # Choose a `target_goal`.
+    function_targets = []
+    field_targets = []
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        function_targets.extend(AgentTargetFunction(k)
+            for k,v in j['fns'].items()
+            if v['total_unsafe'] > 0 and not v['is_ffi_entry_point'])
+        for type_name, j_type in j['types'].items():
+            if 'type' in j_type['field_contains_raw_ptr']:
+                # This is a type alias, not a struct
+                # definition.  To avoid confusing prompting, we
+                # omit this from `target_fields`.  (Otherwise
+                # we would end up telling the agent to fix the
+                # "type" field of a non-struct.)
+                continue
+            field_targets.extend(AgentTargetField(type_name, k)
+                for k,v in j_type['field_contains_raw_ptr'].items()
+                if v > 0)
 
-                n_op_unsafe = w.compare_unsafe2_op(n_code, n_new_code)
-                if n_op_unsafe.exit_code != 0:
-                    # If we failed to fix the unsafety, don't bother trying to
-                    # build or run tests.  This still counts as a repair
-                    # attempt.
-                    continue
+    # Prefer fields over functions by giving them 5x normal
+    # weight.
+    functions_weight = len(function_targets)
+    fields_weight = 5 * len(field_targets)
+    target_lists = [function_targets, field_targets]
+    weights = [functions_weight, fields_weight]
+    if sum(weights) > 0:
+        print(f'choosing target with category weights {weights!r}')
+        target_list, = random.choices(target_lists, weights)
+        target_goal = random.choice(target_list)
+    else:
+        # We found no fields or functions, but `count_unsafe2`
+        # still reported some unsafe code.  Tell the agent to
+        # check the entire codebase for leftover unsafety.
+        target_goal = AgentTargetOther()
 
-            n_op_check = w.cargo_check_json_op(n_new_code)
-            if not n_op_check.passed:
-                n_new_code = w.llm_repair_compile(n_new_code, n_op_check)
+    return target_goal
 
-                n_op_check = w.cargo_check_json_op(n_new_code)
-                if not n_op_check.passed:
-                    # If we failed to fix the compile errors, don't bother
-                    # trying to run tests.  This still counts as a repair
-                    # attempt.
-                    continue
-
-            n_op_test = w.test_op(n_new_code, n_c_code)
-            if n_op_test.exit_code != 0:
-                n_new_code = w.llm_repair(n_new_code, n_op_test)
-
-                n_op_test = w.test_op(n_new_code, n_c_code)
-                if n_op_test.exit_code != 0:
-                    continue
-
-            # All validation steps passed, so return the new version.
-            return n_new_code
-
-        except CrispError as e:
-            print(f'repair attempt {safety_try}.{repair_try} failed: {e}')
-            traceback.print_exc()
-
-    # None of the new versions passed the checks.
-    return None
-
+def target_goal_is_done(w, n_code, target_goal):
+    total = 0
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        match target_goal:
+            case AgentTargetField(struct, field):
+                j_struct = j['types'].get(struct)
+                if j_struct is not None:
+                    total += j_struct.get(field, 0)
+            case AgentTargetFunction(func):
+                j_func = j['fns'].get(func)
+                if j_func is not None:
+                    total += j_func['total_unsafe']
+            case AgentTargetOther():
+                total += j['total_unsafe']
+    return total == 0
 
 
 def do_safety_loop(args, cfg):
@@ -447,6 +500,7 @@ def do_safety_loop(args, cfg):
     n_code = mvir.node(code_node_id)
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+
 
 def repl_locals(args, cfg, mvir, w):
     dct = dict(

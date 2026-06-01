@@ -538,7 +538,7 @@ def target_goal_is_done(w, n_code, target_goal):
             case AgentTargetField(struct, field):
                 j_struct = j['types'].get(struct)
                 if j_struct is not None:
-                    total += j_struct.get(field, 0)
+                    total += j_struct['field_contains_raw_ptr'].get(field, 0)
             case AgentTargetFunction(func):
                 j_func = j['fns'].get(func)
                 if j_func is not None:

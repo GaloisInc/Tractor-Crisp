@@ -1,5 +1,6 @@
 import argparse
 import ast
+from dataclasses import dataclass
 import glob
 import json
 import os
@@ -296,25 +297,83 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
             )
 
 
-def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+@dataclass(frozen = True)
+class FuelLimits:
     # Try at most this many times in total to make the code safe.
-    llm_safety_tries = int(os.environ.get("LLM_SAFETY_TRIES", "3"))
-    w.fuel.give(llm_safety_tries)
+    safety_tries: int
 
-    # If set, bail out if the LLM fails to improve safety of the code for
-    # several consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
+    # Bail out if the LLM fails to improve safety of the code for several
+    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
     # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
     # progress for 3 iterations in a row, on the assumption that the LLM has
     # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
-    max_consecutive_failures = \
-            int(os.environ.get("LLM_SAFETY_MAX_CONSECUTIVE_FAILURES", llm_safety_tries))
+    max_consecutive_failures: int
+
+    # Give the agent this many iterations to fix its current target before
+    # switching to a new target.  If it succeeds at fixing the current target,
+    # the outer loop will pick a new target immediately instead.
+    safety_tries_per_target: int
+
+def total_code_size(mvir, n_code):
+    total = 0
+    for name, file in n_code.files.items():
+        if name.endswith('.rs'):
+            total += mvir.node(file).body_str().count('\n')
+    return total
+
+def get_fuel_limits(mvir, n_code):
+    """
+    Get `FuelLimits` from the environment, or guess appropriate values based on
+    the overall size of `n_code`.
+    """
+    size = total_code_size(mvir, n_code)
+    if size < 2000:
+        # B01/B02
+        defaults = FuelLimits(
+            safety_tries = 8,
+            max_consecutive_failures = 3,
+            safety_tries_per_target = 2,
+        )
+    elif size < 20000:
+        # P01
+        defaults = FuelLimits(
+            safety_tries = 45,
+            max_consecutive_failures = 5,
+            safety_tries_per_target = 3,
+        )
+    else:
+        # P02 - run forever
+        defaults = FuelLimits(
+            safety_tries = 9999,
+            max_consecutive_failures = 9999,
+            safety_tries_per_target = 5,
+        )
+    print(f'code size = {size}')
+    print(f'default limits = {defaults!r}')
+
+    return FuelLimits(
+        safety_tries = int(
+            os.environ.get('LLM_SAFETY_TRIES',
+                defaults.safety_tries)),
+        max_consecutive_failures = int(
+            os.environ.get('LLM_SAFETY_MAX_CONSECUTIVE_FAILURES',
+                defaults.max_consecutive_failures)),
+        safety_tries_per_target = int(
+            os.environ.get('LLM_SAFETY_TRIES_PER_TARGET',
+                defaults.safety_tries_per_target)),
+    )
+
+def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+    limits = get_fuel_limits(mvir, n_code)
+    print(f'limits = {limits!r}')
+
+    w.fuel.give(limits.safety_tries)
 
     best_unsafe_count = None
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
     target_goal = None
-    safety_tries_per_target = int(os.environ.get('LLM_SAFETY_TRIES_PER_TARGET', 3))
     target_goal_tries = 0
 
     prev_fuel = None
@@ -333,7 +392,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             # improve the unsafe count, we still consider that to be a failed
             # iteration.)
             consecutive_failures += 1
-            if consecutive_failures >= max_consecutive_failures:
+            if consecutive_failures >= limits.max_consecutive_failures:
                 print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
 
@@ -387,7 +446,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     if (target_goal is None or target_goal_tries == 0
                             or target_goal_is_done(w, n_code, target_goal)):
                         target_goal = pick_target_goal(w, n_code)
-                        target_goal_tries = safety_tries_per_target
+                        target_goal_tries = limits.safety_tries_per_target
 
                     target_goal_tries -= 1
 

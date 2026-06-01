@@ -245,6 +245,12 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'transpile'))
 
+    try:
+        n_code = w.postprocess(n_code)
+        w.accept(n_code, ('main', 'postprocess'))
+    except CrispError as e:
+        print(f'error: postprocess failed: {e}')
+
     n_code = w.split_ffi(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after split_ffi')

@@ -130,7 +130,14 @@ class SudoSandbox:
             api_key = os.environ.get('CRISP_API_KEY')
             if api_key is not None:
                 env['CRISP_API_KEY'] = api_key
-
+        if 'GEMINI_API_KEY' not in env:
+            api_key = os.environ.get('GEMINI_API_KEY')
+            if api_key is not None:
+                env['GEMINI_API_KEY'] = api_key
+        if 'OPENAI_API_KEY' not in env:
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if api_key is not None:
+                env['OPENAI_API_KEY'] = api_key
         if not stream:
             p = self._run_sudo(cmd, check=False, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

@@ -136,7 +136,14 @@ class WorkContainer:
             api_key = os.environ.get('CRISP_API_KEY')
             if api_key is not None:
                 env['CRISP_API_KEY'] = api_key
-
+        if 'GEMINI_API_KEY' not in env:
+            api_key = os.environ.get('GEMINI_API_KEY')
+            if api_key is not None:
+                env['GEMINI_API_KEY'] = api_key
+        if 'OPENAI_API_KEY' not in env:
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if api_key is not None:
+                env['OPENAI_API_KEY'] = api_key
         if not stream:
             exit_code, logs = self.container.exec_run(
                 cmd, workdir=self.join(cwd), stream=stream,

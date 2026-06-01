@@ -55,6 +55,10 @@ RUN cd /opt/c2rust \
     && cargo-docker-clean.sh cargo install --locked --path /opt/c2rust/c2rust
 RUN cd /opt/c2rust \
     && cargo-docker-clean.sh cargo install --locked --path c2rust-refactor
+RUN cd /opt/c2rust/c2rust-postprocess \
+    && uv sync \
+    && printf '#!/bin/sh\nuv run --project /opt/c2rust/c2rust-postprocess postprocess "$@"\n' >/usr/local/bin/c2rust-postprocess \
+    && chmod +x /usr/local/bin/c2rust-postprocess
 
 # Install hayroll
 #

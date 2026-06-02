@@ -395,7 +395,24 @@ def main():
             "this script can't handle a project with " \
             f'{num_binaries} binaries and {num_libraries} libraries'
 
-    def cmake_artifact(name, bin_main = None):
+    def cmake_artifact(target, bin_main = None):
+        name = target['name']
+
+        system_libs = set()
+        # `link` is only present for binaries and shared libraries, but not for
+        # static libraries, which have no link step.  `commandFragments` is
+        # only present "when fragments of the link command line invocation are
+        # available" (unclear when exactly that is or isn't true).  See
+        # cmake-file-api(7) for details.
+        fragments = target.get('link', {}).get('commandFragments', ())
+        for frag in fragments:
+            if frag.get('role') != 'libraries':
+                continue
+            frag_text = frag.get('fragment')
+            if frag_text.startswith('-l'):
+                lib_name = frag_text[len('-l'):].strip()
+                system_libs.add(lib_name)
+
         build_cmd = ['cmake', '--build', 'build']
         if num_binaries + num_libraries > 1:
             # If there are multiple targets, specify a particular one to build.
@@ -419,8 +436,7 @@ def main():
             'configure_cmds': shlex.join(
                 ['cmake', '-B', 'build', str(cmake_dir_from_project)] + cmake_extra_args),
             'build_cmds': shlex.join(build_cmd),
-            # Hack: add -lcrypto, which is required for one test case
-            'system_libs': ['crypto'],
+            'system_libs': list(system_libs),
         }
         if bin_main is not None:
             art['bin_main'] = bin_main
@@ -431,7 +447,7 @@ def main():
         for target in targets:
             if not is_binary(target):
                 continue
-            art = cmake_artifact(target['name'],
+            art = cmake_artifact(target,
                 bin_main = find_file_containing_main(cmake_dir, target))
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
             bin_name = target['name']
@@ -453,7 +469,7 @@ def main():
         for target in targets:
             if not is_library(target):
                 continue
-            art = cmake_artifact(target['name'])
+            art = cmake_artifact(target)
             cfg_parts.append('[[transpile.artifacts]]\n' + toml.dumps(art))
 
     cfg_str = '\n'.join(cfg_parts)

@@ -907,6 +907,19 @@ class Workflow:
                 glob_filter = self.cfg.src_globs)
 
     @step
+    def llm_gepa(
+        self,
+        n_code: TreeNode,
+        prompt: str,
+    ) -> TreeNode:
+        n_new_code, _ = llm.run_rewrite(
+            self.cfg, self.mvir, prompt, n_code,
+            glob_filter = self.cfg.src_globs,
+            separate_system_prompt = True
+        )
+        return n_new_code
+
+    @step
     def llm_repair(self, n_code: TreeNode, n_op_test: TestResultNode) -> TreeNode:
         n_new_code, n_op_llm = self.llm_repair_op(n_code, n_op_test)
         return n_new_code

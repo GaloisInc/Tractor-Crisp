@@ -238,7 +238,8 @@ def run_rewrite(
         glob_filter: str | list[str] | None = None,
         format_kwargs: dict = {},
         think: bool = False,
-        ) -> TreeNode:
+        separate_system_prompt: bool = False
+        ) -> tuple[TreeNode, LlmOpNode]:
     model = API_MODEL or cfg.model
     if model is None:
         model = get_default_model()
@@ -271,9 +272,16 @@ def run_rewrite(
         **format_kwargs,
     )
 
-    req_messages = [
-        {'role': 'user', 'content': prompt},
-    ]
+    if not separate_system_prompt:
+        req_messages = [
+            {'role': 'user', 'content': prompt},
+        ]
+    else:
+        req_messages = [
+            {'role': 'system', 'content': prompt_without_files},
+            {'role': 'user', 'content': input_files_str}
+        ]
+
     prefill = model_cfg.prefill if not think else model_cfg.prefill_think
     if len(prefill) > 0:
         req_messages.append({'role': 'assistant', 'content': prefill})

@@ -22,8 +22,7 @@ from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
-    CodexAgentOpNode
+    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
@@ -371,7 +370,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
-    n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
+    n_plans = TreeNode.new(mvir, files={})
 
     target_goal = None
     target_goal_tries = 0

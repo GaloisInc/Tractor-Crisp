@@ -123,16 +123,7 @@ Please refactor the Rust code in `{cargo_dir_path}` to be safe, without changing
 
 {target_goal}
 
-You are executing one iteration of a loop that will be re-invoked on the same codebase until the unsafe count reaches zero or progress stalls. To carry state between iterations, maintain a planning file at `SAFETY_PLAN.md`:
-
-- **First, check whether `SAFETY_PLAN.md` already exists.** If it does, read it in full. It is your own notes from prior iterations.
-- If the existing `SAFETY_PLAN.md` applies to your current target, Use it to pick up where the previous run left off rather than starting over.
-- If `SAFETY_PLAN.md` does not exist, or if it exists but applies to an unrelated target, make a new plan for addressing the current target. Examine the target along with any callers/callees, use sites, and other related logic to understand the functionality it provides. Think about how to implement the same functionality using only safe Rust constructs. Then, plan out step by step how to migrate from the unsafe version to the safe equivalent. This plan may be as small as a single step if the target is simple, or it may be many steps if the target is complex or has many interactions. Once you have a plan, write it to `SAFETY_PLAN.md`.
-- **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
-- When rewriting the plan due to switching targets, pay close attention to any relevant pitfalls or dead ends recorded in the previous plan such that future iterations do not repeat the same mistakes. This is also a good time to trim and clean up the plan so it only contains the next steps and relevant notes.
-- If a planned unit turns out to be too complex or blocked by prerequisite work, update `SAFETY_PLAN.md` to record the blocker, split the work into smaller steps, and switch to the prerequisite or smaller step. Prefer steps that directly reduce the unsafe count, but preliminary safe refactors are acceptable when they are necessary to remove unsafe code in a later iteration.
-
-Then carry out the next step of the plan.
+You are executing one iteration of a loop that will be re-invoked on the same codebase until the unsafe count reaches zero or progress stalls.
 
 The code contains two kinds of functions: implementation functions and FFI entry points. A function is an FFI entry point if it has the `#[no_mangle]` or `#[export_name]` attribute ("export attributes"). Note that just having `unsafe extern "C"` qualifiers without export attributes does NOT make a function an FFI entry point. All functions without export attributes are implementation functions.
 
@@ -1198,7 +1189,6 @@ class Workflow:
             prompt = f'{prompt}\n\n{prompt_suffix}'
         return agent.run_rewrite(cfg, mvir, prompt, n_code,
             extra_code = extra_code,
-            planning_files = n_plans,
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],

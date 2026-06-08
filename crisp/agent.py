@@ -3,7 +3,6 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 import os
-from pathlib import Path
 import re
 
 from pathspec.pathspec import PathSpec
@@ -176,7 +175,6 @@ def run_rewrite(
 
     output_files = {}
     json_session_files = []
-    output_plan_files = {}
     for path, node_id in raw_output_files.files.items():
         if any(path in n.files for n in extra_code):
             # This file came from the C code used for testing.  Ignore it.
@@ -192,10 +190,6 @@ def run_rewrite(
         elif path.startswith('.codex/sessions/') and path.endswith('.jsonl'):
             # This is a Codex session log file.
             json_session_files.append(node_id)
-        elif Path(path).name in ['PLAN.md', 'SAFETY_PLAN.md']:
-            # if the agent created a SAFETY_PLAN.md file, carry it over to future steps but
-            # don't include it in the main output since it's not source code.
-            output_plan_files[path] = node_id
 
     # Set the `json_session` metadata field to the session file only if it's
     # unique.  In case of ambiguity, we leave this blank, but any files that
@@ -206,7 +200,7 @@ def run_rewrite(
         json_session_node_id = FileNode.new(mvir, '').node_id()
 
     output_code = TreeNode.new(mvir, files=output_files)
-    output_plans = TreeNode.new(mvir, files=output_plan_files)
+    output_plans = TreeNode.new(mvir, files={})
     n_op = CodexAgentOpNode.new(mvir,
         old_code = input_code.node_id(),
         new_code = output_code.node_id(),

@@ -51,6 +51,21 @@ class EvaluationResult:
     feedback: str
 
 
+def is_project_gepaready(project_folder: Path) -> bool:
+    """
+    Given a project folder, check if it has the required files to run GEPA and return True / False accordingly.
+    """
+    for required_file in [
+        project_folder / 'crisp.toml',
+        project_folder / 'crisp-storage/tags/c_code',
+        project_folder / 'crisp-storage/tags/current'
+    ]:
+        if not required_file.is_file():
+            print(f"Warning: Skipping '{project_folder.name}'. Required file(s) not found.")
+            return False
+    return True
+
+
 class ResponseEvaluator:
 
     def __init__(
@@ -253,21 +268,11 @@ def do_gepa(
     with open(seed_prompt_path, 'r', encoding='utf-8') as f:
         seed_prompt = f.read()
 
-    # Iterate over project folders and preserve the properly configured ones
-    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir()]
-    final_project_folders = []
-    for project_folder in project_folders:
-        crisp_toml_file = project_folder / 'crisp.toml'
-        crisp_storage_folder = project_folder / 'crisp-storage'
-        if not crisp_toml_file.is_file() or not crisp_storage_folder.is_dir():
-            print(f"Warning: Skipping '{project_folder.name}'. Either or both of the following were not found:\nFile {crisp_toml_file}\nFolder {crisp_storage_folder}")
-            continue
-        final_project_folders.append(project_folder)
-
-    # Iterate over final project folders to create datasets
+    # Create datasets
     trainset, valset = [], []
-    random.shuffle(final_project_folders)
-    for i,project_folder in enumerate(final_project_folders):
+    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
+    random.shuffle(project_folders)
+    for i,project_folder in enumerate(project_folders):
         cfg = Config.from_toml_file(
             str(project_folder / 'crisp.toml'),
             mvir_storage_dir = str(project_folder / 'crisp-storage')
@@ -275,7 +280,7 @@ def do_gepa(
         mvir = MVIR(cfg.mvir_storage_dir, '.')
         workflow = Workflow(cfg, mvir)
         task_input = {'workflow': workflow}
-        (trainset if i < trainset_frac*len(final_project_folders) else valset).append(task_input)
+        (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
     # Instantiate GEPA adapter
     adapter = RustAdapter(model = task_lm)
@@ -321,7 +326,7 @@ def run_gepa_eval_on_prompt(
         prompt = f.read()
 
     # Get project folders
-    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir())
+    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder))
 
     # Load response evaluator
     response_evaluator = ResponseEvaluator()
@@ -355,15 +360,10 @@ def run_gepa_eval_on_prompt(
             if project_folder.name in done_already:
                 continue
 
-            # Skip project folder if not properly configured, otherwise create mvir and workflow
-            crisp_toml_file = project_folder / 'crisp.toml'
-            crisp_storage_folder = project_folder / 'crisp-storage'
-            if not crisp_toml_file.is_file() or not crisp_storage_folder.is_dir():
-                print(f"Warning: Skipping '{project_folder.name}'. Either or both of the following were not found:\nFile {crisp_toml_file}\nFolder {crisp_storage_folder}")
-                continue
+            # Create mvir and workflow
             cfg = Config.from_toml_file(
-                str(crisp_toml_file),
-                mvir_storage_dir = str(crisp_storage_folder)
+                str(project_folder / 'crisp.toml'),
+                mvir_storage_dir = str(project_folder / 'crisp-storage')
             )
             mvir = MVIR(cfg.mvir_storage_dir, '.')
             workflow = Workflow(cfg, mvir)

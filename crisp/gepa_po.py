@@ -324,7 +324,7 @@ def run_gepa_eval_on_prompt(
     if output_csv_path.exists():
         output_csv_existed = True
         output_csv = pd.read_csv(output_csv_path)
-        done_already = set(output_csv['filepath'])
+        done_already = set(output_csv['project_folder'])
         del output_csv
 
     # Write to output CSV

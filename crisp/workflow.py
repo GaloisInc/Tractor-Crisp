@@ -151,6 +151,7 @@ For FFI entry points, the following rules apply:
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
+cargo clean --manifest-path {cargo_dir_path}/Cargo.toml
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.

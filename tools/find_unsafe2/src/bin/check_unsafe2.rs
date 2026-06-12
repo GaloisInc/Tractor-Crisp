@@ -6,10 +6,11 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_middle;
 
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::hash::Hash;
-use std::path::Path;
+use std::path::{self, Path};
 use std::process;
 use indexmap::IndexMap;
 use rustc_public::error::CompilerError;
@@ -147,6 +148,9 @@ fn check_bad_flag(old: bool, new: bool, desc: impl FnOnce() -> String) -> bool {
 
 
 fn main() {
+    let src_dir = env::var("FIND_UNSAFE2_SRC_DIR").unwrap_or_else(|_| ".".to_owned());
+    let src_dir = path::absolute(Path::new(&src_dir)).unwrap();
+
     let json_dir = env::var("FIND_UNSAFE2_JSON_DIR").unwrap();
     let json_dir = Path::new(&json_dir);
     assert!(json_dir.is_absolute(),
@@ -156,9 +160,37 @@ fn main() {
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
         let crate_name = rustc_public::local_crate().name;
 
+        if crate_name == "build_script_build" {
+            return ControlFlow::<(), ()>::Continue(());
+        }
+
+        let mut found_src = false;
+        let mut files_seen = HashSet::new();
+        let items = rustc_public::all_local_items();
+        for item in items {
+            let file = item.span().get_filename();
+            if files_seen.insert(file.clone()) {
+                if let Ok(file_abs) = Path::new(&file).canonicalize() {
+                    if file_abs.starts_with(&src_dir) {
+                        found_src = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !found_src {
+            return ControlFlow::<(), ()>::Continue(());
+        }
+
         let json_path = json_dir.join(format!("{crate_name}.json"));
         if !fs::exists(&json_path).unwrap() {
-            return ControlFlow::<(), ()>::Continue(());
+            eprintln!(
+                "error: missing unsafe baseline JSON for crate `{crate_name}` at `{}`; \
+                 run `cargo find-unsafe2` first or set $FIND_UNSAFE2_JSON_DIR to the baseline directory",
+                json_path.display(),
+            );
+            process::exit(1);
         }
 
         let old_out: Outputs = serde_json::from_reader(

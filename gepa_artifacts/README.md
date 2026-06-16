@@ -74,3 +74,22 @@ Used to start GEPA optimization in the newer code setting where the CRISP workfl
 | B01 synthetic | 20 | 10 | 28 | 27 | 32% |
 | B02 organic | 27 | 1 | 14 | 1 | 2% |
 | B02 synthetic | 21 | 4 | 9 | 4 | 11% |
+
+
+## 20260616_taskGPT5p5_reflGPT5p5
+GEPA optimization done using the CRISP workflow and running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
+- Seed prompt: `seed_prompt_2`
+- Task LM: `'openai/gpt-5.5'`
+- Reflection LM: `'openai/gpt-5.5'`
+- Dataset: `B02_organic`
+- Trainset frac: 0.5
+- Max metric calls: 150
+- Run on: Godfather
+
+### Results of running prompt with GPT-5.5
+| Dataset | Can't compile | Compiles, Tests fail | Compiles, Tests pass, Unsafe | Compiles, Tests pass, Safe | C,TP,S %age |
+| -- | -- | -- | -- | -- | -- |
+| B01 organic | 6 | 5 | 0 | 27 | 71% |
+| B01 synthetic | 6 | 10 | 0 | 69 | 81% |
+| B02 organic | 21 | 5 | 0 | 17 | 40% |
+| B02 synthetic | 16 | 5 | 0 | 17 | 45% |

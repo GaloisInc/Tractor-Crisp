@@ -11,7 +11,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 - Seed prompt: `seed_prompt_1`
 - Task LM: `'ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'`
 - Reflection LM: `'openai/gpt-5'`
-- Dataset: `Test-Corpus_B01_organic`
+- Dataset: `B01_organic`
 - Trainset frac: 0.5
 - Max metric calls was 150, but script was interrupted after about 100 metric calls
 - Run on: Godfather
@@ -29,7 +29,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 - Seed prompt: `seed_prompt_1`
 - Task LM: `'openai/gpt-5.4'`
 - Reflection LM: `'openai/gpt-5.4'`
-- Dataset: `Test-Corpus_B01_organic`
+- Dataset: `B01_organic`
 - Trainset frac: 0.5
 - Max metric calls: 150
 - Run on: Local Macbook
@@ -45,7 +45,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 
 
 ## Seed prompt 1
-Used to start GEPA optimization in the older code setting where the CRISP workflow was not used.
+Used to start GEPA optimization in the older code setting where a) the evaluation function **did not** include running the T&E-provided tests, and b) CRISP workflow was not used. Scores were 0 for cannot compile, 0.5 for compiles & unsafe, 1 for compiles & safe.
 
 ### Results of running prompt with GPT-OSS-20b
 | Dataset | Can't compile | Compiles & Unsafe | Compiles & Safe | C&S %age |
@@ -65,4 +65,12 @@ Used to start GEPA optimization in the older code setting where the CRISP workfl
 
 
 ## Seed prompt 2
-Used to start GEPA optimization in the newer code setting where the CRISP workflow was used.
+Used to start GEPA optimization in the newer code setting where the CRISP workflow was used. Here onwards, the evaluation function includes running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
+
+### Results of running prompt with GPT-5.5
+| Dataset | Can't compile | Compiles, Tests fail | Compiles, Tests pass, Unsafe | Compiles, Tests pass, Safe | C,TP,S %age |
+| -- | -- | -- | -- | -- | -- |
+| B01 organic | 6 | 2 | 22 | 8 | 21% |
+| B01 synthetic | 20 | 10 | 28 | 27 | 32% |
+| B02 organic | 27 | 1 | 14 | 1 | 2% |
+| B02 synthetic | 21 | 4 | 9 | 4 | 11% |

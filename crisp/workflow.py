@@ -164,6 +164,7 @@ After refactoring, make sure the code still passes the tests.  Run the tests usi
 ```sh
 {test_cmd}
 ```
+Note: you MUST NOT edit the tests (or the original C code) to get them to pass.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()
 
 AGENT_AFTER_REFACTORING_BUILD = '''

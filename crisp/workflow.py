@@ -149,8 +149,11 @@ For FFI entry points, the following rules apply:
 
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+Your changes must not introduce new unsafe code within implementation functions. You can check your work using this script:
 ```sh
+# Force a rebuild.  check-unsafe2 uses $RUSTC_WRAPPER + cargo build, which may no-op if the project was already built.
+cargo clean --manifest-path {cargo_dir_path}/Cargo.toml --workspace
+# Now run the actual unsafe check:
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.

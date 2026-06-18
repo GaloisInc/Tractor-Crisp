@@ -12,7 +12,7 @@ use std::ops::ControlFlow;
 use indexmap::IndexMap;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::{DefId, CrateDef, CrateItem, ItemKind};
+use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
     AggregateKind,

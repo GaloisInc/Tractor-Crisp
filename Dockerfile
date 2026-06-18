@@ -5,8 +5,8 @@ FROM docker.io/rust:trixie AS tractor-crisp-user
 
 # rust-analyzer 0.0.329 (used by tools/*) requires Rust 1.93 at minimum
 # find_unsafe2 requires a specific nightly and rustc-internal components
-RUN rustup default nightly-2026-05-11
-RUN rustup +nightly-2026-05-11 component add rustfmt rustc-dev rust-src llvm-tools
+RUN rustup default nightly-2026-06-17
+RUN rustup +nightly-2026-06-17 component add rustfmt rustc-dev rust-src llvm-tools
 
 RUN apt-get update
 

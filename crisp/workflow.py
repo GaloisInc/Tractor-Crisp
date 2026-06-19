@@ -217,7 +217,12 @@ _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 @dataclass
 class FuelCounter:
     desc: str
+    default_give: int | None = None
     fuel: int = 0
+
+    def __post_init__(self):
+        if self.default_give is not None:
+            self.give()
 
     def use(self):
         if self.fuel == 0:
@@ -225,7 +230,21 @@ class FuelCounter:
         else:
             self.fuel -= 1
 
-    def give(self, amount):
+    def try_use(self) -> bool:
+        if self.fuel == 0:
+            return False
+        else:
+            self.fuel -= 1
+            return True
+
+    def is_empty(self) -> bool:
+        return self.fuel == 0
+
+    def give(self, amount: int | None = None):
+        if amount is None:
+            amount = self.default_give
+        if amount is None:
+            raise ValueError('must provide `amount` because `default_give` is None')
         if amount > self.fuel:
             self.fuel = amount
 

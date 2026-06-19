@@ -1,5 +1,6 @@
 import argparse
 import ast
+from collections import defaultdict
 from dataclasses import dataclass
 import glob
 import json
@@ -27,7 +28,7 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
-    Workflow, OutOfFuelError, AgentTargetField, AgentTargetFunction,
+    Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther,
 )
 
@@ -322,6 +323,10 @@ class FuelLimits:
     # the outer loop will pick a new target immediately instead.
     safety_tries_per_target: int
 
+    # Give the agent this many iterations within each file before swiching to a
+    # new file.
+    safety_tries_per_file: int
+
 def total_code_size(mvir, n_code):
     total = 0
     for name, file in n_code.files.items():
@@ -341,6 +346,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries = 8,
             max_consecutive_failures = 3,
             safety_tries_per_target = 2,
+            safety_tries_per_file = 10,
         )
     elif size < 20000:
         # P01
@@ -348,6 +354,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries = 45,
             max_consecutive_failures = 5,
             safety_tries_per_target = 3,
+            safety_tries_per_file = 20,
         )
     else:
         # P02 - run forever
@@ -355,6 +362,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries = 9999,
             max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
+            safety_tries_per_file = 50,
         )
     print(f'code size = {size}')
     print(f'default limits = {defaults!r}')
@@ -369,6 +377,9 @@ def get_fuel_limits(mvir, n_code):
         safety_tries_per_target = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_TARGET',
                 defaults.safety_tries_per_target)),
+        safety_tries_per_file = int(
+            os.environ.get('LLM_SAFETY_TRIES_PER_FILE',
+                defaults.safety_tries_per_file)),
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
@@ -386,8 +397,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         else:
             n_plans = TreeNode.new(mvir, files={})
 
-    target_goal = None
-    target_goal_tries = 0
+    pick_target = PickTarget(limits)
 
     prev_fuel = None
     while True:
@@ -456,13 +466,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         prompt_suffix = suffix)
 
                 case 'agent_rand_target':
-                    if (target_goal is None or target_goal_tries == 0
-                            or target_goal_is_done(w, n_code, target_goal)):
-                        target_goal = pick_target_goal(w, n_code)
-                        target_goal_tries = limits.safety_tries_per_target
-
-                    target_goal_tries -= 1
-
+                    target_goal = pick_target.current_target_goal(w, n_code)
                     n_new_code, n_new_plans = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         target_goal = target_goal)
@@ -504,15 +508,80 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
 
-def pick_target_goal(w, n_code):
+
+class PickTarget:
+    def __init__(self, limits):
+        self.fuel_file = FuelCounter('target file',
+            default_give=limits.safety_tries_per_file)
+        self.fuel_target = FuelCounter('target goal',
+            default_give=limits.safety_tries_per_target)
+        self.file_target_goals = []
+        self.current_file = None
+        self.target_goal = None
+
+    def current_target_goal(self, w, n_code):
+        # Keep going with the current goal if possible.
+        target_had_fuel = self.fuel_target.try_use()
+        file_had_fuel = self.fuel_file.try_use()
+
+        if (
+            file_had_fuel and target_had_fuel
+            and self.target_goal is not None
+            and not target_goal_is_done(w, n_code, self.target_goal)
+        ):
+            print(f'PickTarget: continue with {self.target_goal} from {self.current_file}')
+            print(f'  target fuel: {self.fuel_target.fuel}')
+            print(f'  file fuel: {self.fuel_file.fuel}')
+            return self.target_goal
+
+        # Try to pick a goal from the current file if there's fuel left for it.
+        if file_had_fuel:
+            while len(self.file_target_goals) > 0:
+                candidate_goal = self.file_target_goals.pop()
+                if not target_goal_is_done(w, n_code, candidate_goal):
+                    self.target_goal = candidate_goal
+                    self.fuel_target.give()
+                    self.fuel_target.use()
+                    print(f'PickTarget: new target {self.target_goal} from {self.current_file}')
+                    print(f'  target fuel: {self.fuel_target.fuel}')
+                    print(f'  file fuel: {self.fuel_file.fuel}')
+                    return self.target_goal
+
+        # Switch files, and build a new list of targets.
+        self.current_file, self.file_target_goals = pick_file_and_list_targets(w, n_code)
+        if len(self.file_target_goals) > 0:
+            # No need to check `target_goal_is_done`, since none of the goals
+            # in the list have been fixed yet.
+            self.target_goal = self.file_target_goals.pop()
+            self.fuel_file.give()
+            self.fuel_file.use()
+            self.fuel_target.give()
+            self.fuel_target.use()
+            print(f'PickTarget: new file {self.current_file}, target {self.target_goal}')
+            print(f'  target fuel: {self.fuel_target.fuel}')
+            print(f'  file fuel: {self.fuel_file.fuel}')
+            return self.target_goal
+
+        # Found no goal in any file, but `count_unsafe2` still reported some
+        # unsafe code.  Tell the agent to check the entire codebase for
+        # leftover unsafety.
+        print('PickTarget: no valid targets')
+        return AgentTargetOther()
+
+
+def pick_file_and_list_targets(w, n_code):
     # Choose a `target_goal`.
-    function_targets = []
-    field_targets = []
+    @dataclass(frozen = True)
+    class FileTargets:
+        functions: list
+        fields: list
+    files = defaultdict(lambda: FileTargets([], []))
     for n_json_file in w.find_unsafe2_json_files(n_code):
         j = n_json_file.body_json()
-        function_targets.extend(AgentTargetFunction(k)
-            for k,v in j['fns'].items()
-            if v['total_unsafe'] > 0 and not v['is_ffi_entry_point'])
+        for fn_name, j_fn in j['fns'].items():
+            if j_fn['total_unsafe'] == 0 or j_fn['is_ffi_entry_point']:
+                continue
+            files[j_fn['filename']].functions.append(AgentTargetFunction(fn_name))
         for type_name, j_type in j['types'].items():
             if 'type' in j_type['field_contains_raw_ptr']:
                 # This is a type alias, not a struct
@@ -521,27 +590,55 @@ def pick_target_goal(w, n_code):
                 # we would end up telling the agent to fix the
                 # "type" field of a non-struct.)
                 continue
-            field_targets.extend(AgentTargetField(type_name, k)
+            files[j_type['filename']].fields.extend(AgentTargetField(type_name, k)
                 for k,v in j_type['field_contains_raw_ptr'].items()
                 if v > 0)
 
-    # Prefer fields over functions by giving them 5x normal
-    # weight.
-    functions_weight = len(function_targets)
-    fields_weight = 5 * len(field_targets)
-    target_lists = [function_targets, field_targets]
-    weights = [functions_weight, fields_weight]
-    if sum(weights) > 0:
-        print(f'choosing target with category weights {weights!r}')
-        target_list, = random.choices(target_lists, weights)
-        target_goal = random.choice(target_list)
-    else:
-        # We found no fields or functions, but `count_unsafe2`
-        # still reported some unsafe code.  Tell the agent to
-        # check the entire codebase for leftover unsafety.
-        target_goal = AgentTargetOther()
+    # Exclude any files that are already fully safe.
+    files = {k: v for k,v in files.items() if len(v.functions) + len(v.fields) > 0}
 
-    return target_goal
+    if len(files) == 0:
+        # We found no unsafe fields or functions.
+        return None, []
+
+    print(f'pick_file_and_list_targets: picking from {len(files)} files')
+    filename, file_targets = random.choice(list(files.items()))
+    functions = file_targets.functions
+    fields = file_targets.fields
+    print(f'  picked file {filename} with {len(functions)} function targets '
+        f'and {len(fields)} field targets')
+
+    # We have a limited per-file budget, and we prefer to spend it on fields
+    # rather than functions, so we try to put fields earlier in the final list.
+    order = []
+
+    # Shuffle functions and fields so each one has equal priority within its
+    # category.
+    random.shuffle(functions)
+    random.shuffle(fields)
+
+    while len(functions) > 0 and len(fields) > 0:
+        # Prefer fields over functions by giving them 5x normal weight.
+        functions_weight = len(functions)
+        fields_weight = 5 * len(fields)
+        total_weight = functions_weight + fields_weight
+        x = random.randrange(total_weight)
+        if x < functions_weight:
+            order.append(functions.pop())
+        else:
+            order.append(fields.pop())
+
+    order.extend(fields)
+    order.extend(functions)
+
+    # `PickTarget` actually processes the list in reverse order, so reverse it
+    # to put higher-priority items near the end.
+    order.reverse()
+
+    print(f'  order ({len(order)} items):')
+    for x in order:
+        print(f'    {x}')
+    return filename, order
 
 def target_goal_is_done(w, n_code, target_goal):
     total = 0

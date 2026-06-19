@@ -442,10 +442,19 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
     for item in items {
         if let Some(body) = item.body() {
+            let key: String = item.name();
+
+            // Skip anonymous items (`const _: () = { ... }`) and anything nested inside them (e.g.
+            // closures).  These can be emitted by derive macros (like bytemuck's `Pod`/`Zeroable`
+            // compile-time assertions) and all share the path segment `_`, so they can't be
+            // uniquely keyed by name.
+            if key == "_" || key.ends_with("::_") || key.contains("::_::") {
+                continue;
+            }
+
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
-            let key: String = item.name();
             let mut value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 is_unsafe_fn: is_unsafe_fn(item),

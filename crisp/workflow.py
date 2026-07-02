@@ -178,10 +178,6 @@ AGENT_TARGET_GOAL_FUNCTION = '''
 Your current target is the `{func_name}` function, along with any similar or closely related functions.  Your goal is to change the function in question to use only safe types (such as `Box`, `Vec`, or `Rc`) internally and in its signature, and to replace any unsafe FFI calls (e.g. `libc::printf`) with safe equivalents.  You should aim to make callees of the target function safe if it's feasible to do so, that way the entire call tree is safe.
 '''.strip()
 
-AGENT_TARGET_GOAL_OTHER = '''
-You currently have no specific target.  Scan the codebase for any remaining unsafe types, operations, or definitions (excluding FFI entry points) and identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fields) that uses `unsafe` for you to work on.
-'''.strip()
-
 class AgentTarget:
     def prompt(self):
         return self.PROMPT_FMT.format(**dataclasses.asdict(self))
@@ -208,7 +204,10 @@ class AgentTargetOther(AgentTarget):
     """
     Remove any leftover unsafe from the codebase.
     """
-    PROMPT_FMT = AGENT_TARGET_GOAL_OTHER
+    # The prompt asks the agent to continue the plan, so we
+    # expect it to make a reasonable choice for the next target
+    # based on that document.
+    PROMPT_FMT = ""
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))

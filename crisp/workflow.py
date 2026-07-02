@@ -342,6 +342,42 @@ class Workflow:
                     )
                     print(f'warning: on-accept hook cwd: {os.getcwd()}', file=sys.stderr)
 
+    def _agent_rejection_feedback(
+        self,
+        failed_checks: list[tuple[str, int, list[str] | str, str]],
+    ) -> str:
+        parts = [
+            'Resume the Rust safety refactoring work.',
+            '',
+            'Your previous refactoring attempt was rejected by CRISP. '
+            'The workspace has been reset to the last accepted code version, '
+            'but the prior attempt is still visible in this Codex session context.',
+            '',
+            'Review the failed check output below, then make a corrected change '
+            'that continues reducing unsafe Rust while preserving behavior and '
+            'ABI compatibility. Do not repeat the rejected change unless you '
+            'also address the reported failure.',
+            '',
+            'Failed checks:',
+        ]
+        for name, exit_code, cmd, output in failed_checks:
+            parts.extend([
+                '',
+                f'## {name}',
+                f'exit code: {exit_code}',
+                f'command: {cmd!r}',
+                '',
+                '```text',
+                output,
+                '```',
+            ])
+        parts.extend([
+            '',
+            'Before finishing, update SAFETY_PLAN.md and run the required build '
+            'and unsafe checks.',
+        ])
+        return '\n'.join(parts)
+
     @step
     def cc_cmake(self, c_code: TreeNode) -> FileNode:
         n_op_cc = self.cc_cmake_op(c_code)
@@ -1184,6 +1220,7 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode, TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1215,6 +1252,7 @@ class Workflow:
                 n_codex_state if self.persist_codex_session else None
             ),
             resume_prompt=self.resume_prompt,
+            resume_prompt_override=resume_prompt_override,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
@@ -1227,9 +1265,12 @@ class Workflow:
         n_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
+        resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode, TreeNode, TreeNode]:
         return self.agent_safety(
-            n_code, None, n_plans, n_codex_state, provide_test_cmd = False)
+            n_code, None, n_plans, n_codex_state,
+            provide_test_cmd = False,
+            resume_prompt_override = resume_prompt_override)
 
 
     @step
@@ -1316,25 +1357,43 @@ class Workflow:
         n_codex_state: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode]:
+        resume_prompt_override: str | None = None,
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None]:
         self.fuel.use()
 
         try:
             n_new_code, n_plans, n_codex_state = self.agent_safety(
                 n_code, n_test_code, n_plans, n_codex_state,
                 prompt_suffix = prompt_suffix,
-                target_goal = target_goal)
+                target_goal = target_goal,
+                resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety failed: {e}; preserving Codex session state')
-            return None, None, e.codex_state
+            return None, None, e.codex_state, None
 
         # The change must pass tests, and must not regress any unsafe count.
         n_op_test = self.test_op(n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
-            return n_new_code, n_plans, n_codex_state
+            return n_new_code, n_plans, n_codex_state, None
         else:
-            return None, None, n_codex_state
+            failed_checks = []
+            if n_op_test.exit_code != 0:
+                failed_checks.append((
+                    'tests failed',
+                    n_op_test.exit_code,
+                    n_op_test.cmd,
+                    n_op_test.body_str(),
+                ))
+            if n_op_unsafe.exit_code != 0:
+                failed_checks.append((
+                    'unsafe check failed',
+                    n_op_unsafe.exit_code,
+                    n_op_unsafe.cmd,
+                    n_op_unsafe.body_str(),
+                ))
+            feedback = self._agent_rejection_feedback(failed_checks)
+            return None, None, n_codex_state, feedback
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1343,7 +1402,8 @@ class Workflow:
         n_test_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode]:
+        resume_prompt_override: str | None = None,
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None]:
         self.fuel.use()
 
         # Don't provide the test code, so the agent can't
@@ -1353,15 +1413,32 @@ class Workflow:
         # the C code.
         try:
             n_new_code, n_plans, n_codex_state = self.agent_safety_no_tests(
-                n_code, n_plans, n_codex_state)
+                n_code, n_plans, n_codex_state,
+                resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety_no_tests failed: {e}; preserving Codex session state')
-            return None, None, e.codex_state
+            return None, None, e.codex_state, None
 
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
-            return None, None, n_codex_state
+            failed_checks = []
+            if not n_op_check.passed:
+                failed_checks.append((
+                    'cargo check failed',
+                    n_op_check.exit_code,
+                    'cargo check',
+                    n_op_check.body_str(),
+                ))
+            if n_op_unsafe.exit_code != 0:
+                failed_checks.append((
+                    'unsafe check failed',
+                    n_op_unsafe.exit_code,
+                    n_op_unsafe.cmd,
+                    n_op_unsafe.body_str(),
+                ))
+            feedback = self._agent_rejection_feedback(failed_checks)
+            return None, None, n_codex_state, feedback
 
         # `agent_sim_no_tests` simulates the mode where no tests are
         # available and the only success criteria that CRISP can
@@ -1374,4 +1451,4 @@ class Workflow:
         assert n_op_test.exit_code == 0, \
             f'agent output failed tests: {n_op_test}'
 
-        return n_new_code, n_plans, n_codex_state
+        return n_new_code, n_plans, n_codex_state, None

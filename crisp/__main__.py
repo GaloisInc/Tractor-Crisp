@@ -432,6 +432,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     target_goal = None
     target_goal_tries = 0
+    n_resume_prompt_override = None
 
     prev_fuel = None
     while True:
@@ -495,10 +496,16 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                                 'or this run will be terminated.'
                             )
 
-                    n_new_code, n_new_plans, n_new_codex_state = (
+                    (
+                        n_new_code,
+                        n_new_plans,
+                        n_new_codex_state,
+                        n_new_resume_prompt_override,
+                    ) = (
                         w.do_safety_step_agent(
                             n_code, n_c_code, n_plans, n_codex_state,
                             prompt_suffix = suffix,
+                            resume_prompt_override = n_resume_prompt_override,
                         )
                     )
 
@@ -510,17 +517,29 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
                     target_goal_tries -= 1
 
-                    n_new_code, n_new_plans, n_new_codex_state = (
+                    (
+                        n_new_code,
+                        n_new_plans,
+                        n_new_codex_state,
+                        n_new_resume_prompt_override,
+                    ) = (
                         w.do_safety_step_agent(
                             n_code, n_c_code, n_plans, n_codex_state,
                             target_goal = target_goal,
+                            resume_prompt_override = n_resume_prompt_override,
                         )
                     )
 
                 case 'agent_sim_no_tests':
-                    n_new_code, n_new_plans, n_new_codex_state = (
+                    (
+                        n_new_code,
+                        n_new_plans,
+                        n_new_codex_state,
+                        n_new_resume_prompt_override,
+                    ) = (
                         w.do_safety_step_agent_sim_no_tests(
                             n_code, n_c_code, n_plans, n_codex_state,
+                            resume_prompt_override = n_resume_prompt_override,
                         )
                     )
 
@@ -528,11 +547,13 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code)
                     n_new_plans = n_plans
                     n_new_codex_state = n_codex_state
+                    n_new_resume_prompt_override = None
 
                 case 'no_ffi':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code, no_ffi = True)
                     n_new_plans = n_plans
                     n_new_codex_state = n_codex_state
+                    n_new_resume_prompt_override = None
 
                 case mode:
                     # `--llm-mode agent` should be handled at a higher level.
@@ -542,7 +563,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
                 n_plans = n_new_plans
+                n_new_resume_prompt_override = None
             n_codex_state = n_new_codex_state
+            n_resume_prompt_override = n_new_resume_prompt_override
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')

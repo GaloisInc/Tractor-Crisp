@@ -196,6 +196,7 @@ def run_rewrite(
     codex_login: bool = False,
     codex_state: TreeNode | None = None,
     resume_prompt: str = 'short',
+    resume_prompt_override: str | None = None,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
 ) -> tuple[TreeNode, TreeNode, TreeNode]:
@@ -242,7 +243,9 @@ def run_rewrite(
         is_resume = session_id is not None or resume_last
 
         codex_prompt = prompt
-        if is_resume and resume_prompt == 'short':
+        if is_resume and resume_prompt_override is not None:
+            codex_prompt = resume_prompt_override
+        elif is_resume and resume_prompt == 'short':
             codex_prompt = SHORT_RESUME_PROMPT
 
         if codex_state is None:
@@ -254,7 +257,10 @@ def run_rewrite(
         else:
             print('codex session: fresh (no prior session state)')
         if is_resume:
-            print(f'codex resume prompt: {resume_prompt}')
+            if resume_prompt_override is not None:
+                print('codex resume prompt: rejection-feedback')
+            else:
+                print(f'codex resume prompt: {resume_prompt}')
 
         codex_cmd = _codex_command(
             'exec',

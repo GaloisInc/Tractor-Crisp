@@ -350,8 +350,10 @@ class Workflow:
             'Resume the Rust safety refactoring work.',
             '',
             'Your previous refactoring attempt was rejected by CRISP. '
-            'The workspace has been reset to the last accepted code version, '
-            'but the prior attempt is still visible in this Codex session context.',
+            'The workspace contains the rejected candidate code so you can '
+            'continue iterating on it, but CRISP will continue comparing unsafe '
+            'counts against the last accepted baseline until a corrected change '
+            'passes validation.',
             '',
             'Review the failed check output below, then make a corrected change '
             'that continues reducing unsafe Rust while preserving behavior and '
@@ -1352,13 +1354,14 @@ class Workflow:
     def do_safety_step_agent(
         self,
         n_code: TreeNode,
+        n_baseline_code: TreeNode,
         n_test_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
         resume_prompt_override: str | None = None,
-    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None]:
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None, TreeNode, TreeNode]:
         self.fuel.use()
 
         try:
@@ -1369,13 +1372,13 @@ class Workflow:
                 resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety failed: {e}; preserving Codex session state')
-            return None, None, e.codex_state, None
+            return None, None, e.codex_state, None, n_code, n_plans
 
         # The change must pass tests, and must not regress any unsafe count.
         n_op_test = self.test_op(n_new_code, n_test_code)
-        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_baseline_code, n_new_code)
         if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
-            return n_new_code, n_plans, n_codex_state, None
+            return n_new_code, n_plans, n_codex_state, None, n_new_code, n_plans
         else:
             failed_checks = []
             if n_op_test.exit_code != 0:
@@ -1393,17 +1396,18 @@ class Workflow:
                     n_op_unsafe.body_str(),
                 ))
             feedback = self._agent_rejection_feedback(failed_checks)
-            return None, None, n_codex_state, feedback
+            return None, None, n_codex_state, feedback, n_new_code, n_plans
 
     @step
     def do_safety_step_agent_sim_no_tests(
         self,
         n_code: TreeNode,
+        n_baseline_code: TreeNode,
         n_test_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
         resume_prompt_override: str | None = None,
-    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None]:
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None, TreeNode, TreeNode]:
         self.fuel.use()
 
         # Don't provide the test code, so the agent can't
@@ -1417,10 +1421,10 @@ class Workflow:
                 resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety_no_tests failed: {e}; preserving Codex session state')
-            return None, None, e.codex_state, None
+            return None, None, e.codex_state, None, n_code, n_plans
 
         n_op_check = self.cargo_check_json_op(n_new_code)
-        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        n_op_unsafe = self.compare_unsafe2_op(n_baseline_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             failed_checks = []
             if not n_op_check.passed:
@@ -1438,7 +1442,7 @@ class Workflow:
                     n_op_unsafe.body_str(),
                 ))
             feedback = self._agent_rejection_feedback(failed_checks)
-            return None, None, n_codex_state, feedback
+            return None, None, n_codex_state, feedback, n_new_code, n_plans
 
         # `agent_sim_no_tests` simulates the mode where no tests are
         # available and the only success criteria that CRISP can
@@ -1451,4 +1455,4 @@ class Workflow:
         assert n_op_test.exit_code == 0, \
             f'agent output failed tests: {n_op_test}'
 
-        return n_new_code, n_plans, n_codex_state, None
+        return n_new_code, n_plans, n_codex_state, None, n_new_code, n_plans

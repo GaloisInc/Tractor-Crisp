@@ -422,6 +422,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     best_unsafe_count = None
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
+    n_agent_code = n_code
     if w.persist_codex_session:
         n_codex_state = (
             prior_agent_codex_state(mvir, n_code)
@@ -501,9 +502,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_new_plans,
                         n_new_codex_state,
                         n_new_resume_prompt_override,
+                        n_new_agent_code,
+                        n_new_agent_plans,
                     ) = (
                         w.do_safety_step_agent(
-                            n_code, n_c_code, n_plans, n_codex_state,
+                            n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
                             prompt_suffix = suffix,
                             resume_prompt_override = n_resume_prompt_override,
                         )
@@ -522,9 +525,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_new_plans,
                         n_new_codex_state,
                         n_new_resume_prompt_override,
+                        n_new_agent_code,
+                        n_new_agent_plans,
                     ) = (
                         w.do_safety_step_agent(
-                            n_code, n_c_code, n_plans, n_codex_state,
+                            n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
                             target_goal = target_goal,
                             resume_prompt_override = n_resume_prompt_override,
                         )
@@ -536,9 +541,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_new_plans,
                         n_new_codex_state,
                         n_new_resume_prompt_override,
+                        n_new_agent_code,
+                        n_new_agent_plans,
                     ) = (
                         w.do_safety_step_agent_sim_no_tests(
-                            n_code, n_c_code, n_plans, n_codex_state,
+                            n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
                             resume_prompt_override = n_resume_prompt_override,
                         )
                     )
@@ -548,12 +555,16 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_plans = n_plans
                     n_new_codex_state = n_codex_state
                     n_new_resume_prompt_override = None
+                    n_new_agent_code = n_new_code if n_new_code is not None else n_code
+                    n_new_agent_plans = n_new_plans
 
                 case 'no_ffi':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code, no_ffi = True)
                     n_new_plans = n_plans
                     n_new_codex_state = n_codex_state
                     n_new_resume_prompt_override = None
+                    n_new_agent_code = n_new_code if n_new_code is not None else n_code
+                    n_new_agent_plans = n_new_plans
 
                 case mode:
                     # `--llm-mode agent` should be handled at a higher level.
@@ -564,8 +575,17 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 n_code = n_new_code
                 n_plans = n_new_plans
                 n_new_resume_prompt_override = None
+                n_new_agent_code = n_new_code
+                n_new_agent_plans = n_new_plans
             n_codex_state = n_new_codex_state
-            n_resume_prompt_override = n_new_resume_prompt_override
+            if w.persist_codex_session:
+                n_resume_prompt_override = n_new_resume_prompt_override
+                n_agent_code = n_new_agent_code
+                n_plans = n_new_agent_plans
+            else:
+                n_resume_prompt_override = None
+                n_agent_code = n_code
+                n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')

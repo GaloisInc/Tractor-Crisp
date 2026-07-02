@@ -371,7 +371,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
-    n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
+    n_plans = prior_agent_plans(mvir, n_code)
+    if not n_plans:
+        if 'agent' in args.llm_mode:
+            n_plans = w.do_safety_plan_agent(n_code, n_c_code)[1]
+        else:
+            n_plans = TreeNode.new(mvir, files={})
 
     target_goal = None
     target_goal_tries = 0

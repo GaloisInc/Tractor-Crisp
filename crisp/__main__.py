@@ -74,13 +74,14 @@ def parse_args():
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
-    main.add_argument('--persist-codex-session', action='store_true',
-        help='resume the previous Codex session on each agent turn; '
-            'requires --llm-mode=agent or similar')
+    main.add_argument('--resume-codex-session',
+        choices=('always', 'rejected', 'never'),
+        default='never',
+        help='when to resume Codex sessions in agent modes')
     main.add_argument('--resume-prompt',
         choices=('short', 'full'),
         default='short',
-        help='prompt to use when resuming a persisted Codex session')
+        help='prompt to use when resuming a Codex session')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -93,13 +94,14 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
-    safety_loop.add_argument('--persist-codex-session', action='store_true',
-        help='resume the previous Codex session on each agent turn; '
-            'requires --llm-mode=agent or similar')
+    safety_loop.add_argument('--resume-codex-session',
+        choices=('always', 'rejected', 'never'),
+        default='never',
+        help='when to resume Codex sessions in agent modes')
     safety_loop.add_argument('--resume-prompt',
         choices=('short', 'full'),
         default='short',
-        help='prompt to use when resuming a persisted Codex session')
+        help='prompt to use when resuming a Codex session')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -153,9 +155,9 @@ def parse_args():
     AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
-    if (getattr(args, 'persist_codex_session', False)
+    if (getattr(args, 'resume_codex_session', 'never') != 'never'
             and getattr(args, 'llm_mode', None) not in AGENT_MODES):
-        ap.error('--persist-codex-session requires --llm-mode=agent or similar')
+        ap.error('--resume-codex-session requires --llm-mode=agent or similar')
     if (getattr(args, 'resume_prompt', 'short') != 'short'
             and getattr(args, 'llm_mode', None) not in AGENT_MODES):
         ap.error('--resume-prompt=full requires --llm-mode=agent or similar')
@@ -249,7 +251,7 @@ def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir,
         codex_login=args.codex_login,
-        persist_codex_session=args.persist_codex_session,
+        resume_codex_session=args.resume_codex_session,
         resume_prompt=args.resume_prompt)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
@@ -423,7 +425,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
     n_agent_code = n_code
-    if w.persist_codex_session:
+    if w.resume_codex_session == 'always':
         n_codex_state = (
             prior_agent_codex_state(mvir, n_code)
             or TreeNode.new(mvir, files={})
@@ -463,6 +465,13 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         try:
             match args.llm_mode:
                 case 'agent':
+                    should_resume_codex_session = (
+                        w.resume_codex_session == 'always'
+                        or (
+                            w.resume_codex_session == 'rejected'
+                            and n_resume_prompt_override is not None
+                        )
+                    )
                     match consecutive_failures:
                         case 0 | 1:
                             suffix = None
@@ -508,11 +517,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         w.do_safety_step_agent(
                             n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
                             prompt_suffix = suffix,
+                            resume_codex_session = should_resume_codex_session,
                             resume_prompt_override = n_resume_prompt_override,
                         )
                     )
 
                 case 'agent_rand_target':
+                    should_resume_codex_session = (
+                        w.resume_codex_session == 'always'
+                        or (
+                            w.resume_codex_session == 'rejected'
+                            and n_resume_prompt_override is not None
+                        )
+                    )
                     if (target_goal is None or target_goal_tries == 0
                             or target_goal_is_done(w, n_code, target_goal)):
                         target_goal = pick_target_goal(w, n_code)
@@ -531,11 +548,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         w.do_safety_step_agent(
                             n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
                             target_goal = target_goal,
+                            resume_codex_session = should_resume_codex_session,
                             resume_prompt_override = n_resume_prompt_override,
                         )
                     )
 
                 case 'agent_sim_no_tests':
+                    should_resume_codex_session = (
+                        w.resume_codex_session == 'always'
+                        or (
+                            w.resume_codex_session == 'rejected'
+                            and n_resume_prompt_override is not None
+                        )
+                    )
                     (
                         n_new_code,
                         n_new_plans,
@@ -546,6 +571,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     ) = (
                         w.do_safety_step_agent_sim_no_tests(
                             n_agent_code, n_code, n_c_code, n_plans, n_codex_state,
+                            resume_codex_session = should_resume_codex_session,
                             resume_prompt_override = n_resume_prompt_override,
                         )
                     )
@@ -578,10 +604,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 n_new_agent_code = n_new_code
                 n_new_agent_plans = n_new_plans
             n_codex_state = n_new_codex_state
-            if w.persist_codex_session:
+            if w.resume_codex_session == 'always':
                 n_resume_prompt_override = n_new_resume_prompt_override
                 n_agent_code = n_new_agent_code
                 n_plans = n_new_agent_plans
+            elif w.resume_codex_session == 'rejected':
+                if n_new_resume_prompt_override is not None:
+                    n_resume_prompt_override = n_new_resume_prompt_override
+                    n_agent_code = n_new_agent_code
+                    n_plans = n_new_agent_plans
+                else:
+                    n_resume_prompt_override = None
+                    n_agent_code = n_code
+                    n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
             else:
                 n_resume_prompt_override = None
                 n_agent_code = n_code
@@ -664,7 +699,7 @@ def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir,
         codex_login=args.codex_login,
-        persist_codex_session=args.persist_codex_session,
+        resume_codex_session=args.resume_codex_session,
         resume_prompt=args.resume_prompt)
 
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)

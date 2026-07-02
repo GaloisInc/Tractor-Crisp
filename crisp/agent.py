@@ -249,7 +249,7 @@ def run_rewrite(
             codex_prompt = SHORT_RESUME_PROMPT
 
         if codex_state is None:
-            print('codex session: fresh (--persist-codex-session disabled)')
+            print('codex session: fresh (--resume-codex-session=never for this turn)')
         elif session_id is not None:
             print(f'codex session: resume {session_id}')
         elif resume_last:

@@ -315,14 +315,17 @@ class Workflow:
         cfg: Config,
         mvir: MVIR,
         codex_login: bool = False,
-        persist_codex_session: bool = False,
+        resume_codex_session: str = 'never',
         resume_prompt: str = 'short',
     ):
+        if resume_codex_session not in ('always', 'rejected', 'never'):
+            raise ValueError(
+                f'unknown resume_codex_session mode {resume_codex_session!r}')
         self.cfg = cfg
         self.mvir = mvir
         self.fuel = FuelCounter('safety tries')
         self.codex_login = codex_login
-        self.persist_codex_session = persist_codex_session
+        self.resume_codex_session = resume_codex_session
         self.resume_prompt = resume_prompt
         self._step_depth = 0
 
@@ -1222,6 +1225,7 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        resume_codex_session: bool = False,
         resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode, TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
@@ -1251,7 +1255,7 @@ class Workflow:
             planning_files = n_plans,
             codex_login=self.codex_login,
             codex_state=(
-                n_codex_state if self.persist_codex_session else None
+                n_codex_state if resume_codex_session else None
             ),
             resume_prompt=self.resume_prompt,
             resume_prompt_override=resume_prompt_override,
@@ -1267,11 +1271,13 @@ class Workflow:
         n_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
+        resume_codex_session: bool = False,
         resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode, TreeNode, TreeNode]:
         return self.agent_safety(
             n_code, None, n_plans, n_codex_state,
             provide_test_cmd = False,
+            resume_codex_session = resume_codex_session,
             resume_prompt_override = resume_prompt_override)
 
 
@@ -1360,6 +1366,7 @@ class Workflow:
         n_codex_state: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        resume_codex_session: bool = False,
         resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None, TreeNode, TreeNode]:
         self.fuel.use()
@@ -1369,6 +1376,7 @@ class Workflow:
                 n_code, n_test_code, n_plans, n_codex_state,
                 prompt_suffix = prompt_suffix,
                 target_goal = target_goal,
+                resume_codex_session = resume_codex_session,
                 resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety failed: {e}; preserving Codex session state')
@@ -1406,6 +1414,7 @@ class Workflow:
         n_test_code: TreeNode,
         n_plans: TreeNode,
         n_codex_state: TreeNode,
+        resume_codex_session: bool = False,
         resume_prompt_override: str | None = None,
     ) -> tuple[TreeNode | None, TreeNode | None, TreeNode, str | None, TreeNode, TreeNode]:
         self.fuel.use()
@@ -1418,6 +1427,7 @@ class Workflow:
         try:
             n_new_code, n_plans, n_codex_state = self.agent_safety_no_tests(
                 n_code, n_plans, n_codex_state,
+                resume_codex_session = resume_codex_session,
                 resume_prompt_override = resume_prompt_override)
         except agent.CodexAgentError as e:
             print(f'agent_safety_no_tests failed: {e}; preserving Codex session state')

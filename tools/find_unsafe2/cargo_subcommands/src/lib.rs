@@ -16,6 +16,27 @@ fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
+fn cargo_cmd(opt_toolchain: Option<&str>) -> Command {
+    let mut cmd = Command::new("cargo");
+    if let Some(toolchain) = opt_toolchain {
+        cmd.arg(format!("+{toolchain}"));
+    }
+    cmd
+}
+
+fn manifest_path_arg() -> Option<String> {
+    let mut args = env::args().skip(2);
+    while let Some(arg) = args.next() {
+        if arg == "--manifest-path" {
+            return args.next();
+        }
+        if let Some(value) = arg.strip_prefix("--manifest-path=") {
+            return Some(value.to_owned());
+        }
+    }
+    None
+}
+
 pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let opt_toolchain = option_env!("RUSTUP_TOOLCHAIN");
 
@@ -50,10 +71,22 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is
     // too far apart in version, its `cargo` might be incompatible with `find_unsafe2`'s wrapped
     // `rustc`.
-    let mut cmd = Command::new("cargo");
-    if let Some(toolchain) = opt_toolchain {
-        cmd.arg(format!("+{toolchain}"));
+    let mut clean_cmd = cargo_cmd(opt_toolchain);
+    clean_cmd.arg("clean");
+    if let Some(manifest_path) = manifest_path_arg() {
+        clean_cmd.arg("--manifest-path").arg(manifest_path);
     }
+    clean_cmd.arg("--workspace");
+    eprintln!("exec: {clean_cmd:?}");
+    let status = clean_cmd.status().unwrap();
+    assert!(
+        status.success(),
+        "{:?} exited with code {:?}",
+        clean_cmd,
+        status
+    );
+
+    let mut cmd = cargo_cmd(opt_toolchain);
     cmd.arg("build")
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)

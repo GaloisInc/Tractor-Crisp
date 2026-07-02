@@ -74,6 +74,9 @@ def parse_args():
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
+    main.add_argument('--persist-codex-session', action='store_true',
+        help='resume the previous Codex session on each agent turn; '
+            'requires --llm-mode=agent or similar')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -86,6 +89,9 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
+    safety_loop.add_argument('--persist-codex-session', action='store_true',
+        help='resume the previous Codex session on each agent turn; '
+            'requires --llm-mode=agent or similar')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -139,6 +145,9 @@ def parse_args():
     AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
+    if (getattr(args, 'persist_codex_session', False)
+            and getattr(args, 'llm_mode', None) not in AGENT_MODES):
+        ap.error('--persist-codex-session requires --llm-mode=agent or similar')
     return args
 
 
@@ -227,7 +236,9 @@ def parse_node_id(mvir, s):
 
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir, codex_login=args.codex_login)
+    w = Workflow(cfg, mvir,
+        codex_login=args.codex_login,
+        persist_codex_session=args.persist_codex_session)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
@@ -288,6 +299,33 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
         case [ie]:
             op_node = mvir.node(ie.node_id)
             return mvir.node(op_node.planning_files)
+        case []:
+            return None
+        case _:
+            raise CrispError(
+                f'multiple Codex agent ops produced code node {n_code.node_id()}: '
+                + ', '.join(str(ie.node_id) for ie in matches)
+            )
+
+
+def prior_agent_codex_state(mvir, n_code) -> TreeNode | None:
+    # Look up the node which produced `n_code` and return its committed Codex
+    # session files.  This lets a resumed safety-loop continue from the Codex
+    # session that produced the starting code node.
+    matches = [
+        ie for ie in mvir.index(n_code.node_id())
+        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
+    ]
+
+    match matches:
+        case [ie]:
+            op_node = mvir.node(ie.node_id)
+            raw_output_files = mvir.node(op_node.raw_output_files)
+            return TreeNode.new(mvir, files={
+                path: node_id
+                for path, node_id in raw_output_files.files.items()
+                if path.startswith('.codex/sessions/') and path.endswith('.jsonl')
+            })
         case []:
             return None
         case _:
@@ -372,6 +410,13 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     best_unsafe_count = None
     consecutive_failures = 0
     n_plans = prior_agent_plans(mvir, n_code) or TreeNode.new(mvir, files={})
+    if w.persist_codex_session:
+        n_codex_state = (
+            prior_agent_codex_state(mvir, n_code)
+            or TreeNode.new(mvir, files={})
+        )
+    else:
+        n_codex_state = TreeNode.new(mvir, files={})
 
     target_goal = None
     target_goal_tries = 0
@@ -438,9 +483,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                                 'or this run will be terminated.'
                             )
 
-                    n_new_code, n_new_plans = w.do_safety_step_agent(
-                        n_code, n_c_code, n_plans,
-                        prompt_suffix = suffix)
+                    n_new_code, n_new_plans, n_new_codex_state = (
+                        w.do_safety_step_agent(
+                            n_code, n_c_code, n_plans, n_codex_state,
+                            prompt_suffix = suffix,
+                        )
+                    )
 
                 case 'agent_rand_target':
                     if (target_goal is None or target_goal_tries == 0
@@ -450,21 +498,29 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
                     target_goal_tries -= 1
 
-                    n_new_code, n_new_plans = w.do_safety_step_agent(
-                        n_code, n_c_code, n_plans,
-                        target_goal = target_goal)
+                    n_new_code, n_new_plans, n_new_codex_state = (
+                        w.do_safety_step_agent(
+                            n_code, n_c_code, n_plans, n_codex_state,
+                            target_goal = target_goal,
+                        )
+                    )
 
                 case 'agent_sim_no_tests':
-                    n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
-                        n_code, n_c_code, n_plans)
+                    n_new_code, n_new_plans, n_new_codex_state = (
+                        w.do_safety_step_agent_sim_no_tests(
+                            n_code, n_c_code, n_plans, n_codex_state,
+                        )
+                    )
 
                 case 'default':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code)
                     n_new_plans = n_plans
+                    n_new_codex_state = n_codex_state
 
                 case 'no_ffi':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code, no_ffi = True)
                     n_new_plans = n_plans
+                    n_new_codex_state = n_codex_state
 
                 case mode:
                     # `--llm-mode agent` should be handled at a higher level.
@@ -474,6 +530,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
                 n_plans = n_new_plans
+            n_codex_state = n_new_codex_state
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
@@ -550,7 +607,9 @@ def target_goal_is_done(w, n_code, target_goal):
 
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir, codex_login=args.codex_login)
+    w = Workflow(cfg, mvir,
+        codex_login=args.codex_login,
+        persist_codex_session=args.persist_codex_session)
 
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)

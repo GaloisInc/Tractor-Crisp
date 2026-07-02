@@ -310,11 +310,18 @@ def step(f):
 
 
 class Workflow:
-    def __init__(self, cfg: Config, mvir: MVIR, codex_login: bool = False):
+    def __init__(
+        self,
+        cfg: Config,
+        mvir: MVIR,
+        codex_login: bool = False,
+        persist_codex_session: bool = False,
+    ):
         self.cfg = cfg
         self.mvir = mvir
         self.fuel = FuelCounter('safety tries')
         self.codex_login = codex_login
+        self.persist_codex_session = persist_codex_session
         self._step_depth = 0
 
     def accept(self, code: TreeNode, reason = None):
@@ -1170,11 +1177,12 @@ class Workflow:
         n_code: TreeNode,
         n_test_code: TreeNode | None,
         n_plans: TreeNode,
+        n_codex_state: TreeNode,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1201,6 +1209,9 @@ class Workflow:
             extra_code = extra_code,
             planning_files = n_plans,
             codex_login=self.codex_login,
+            codex_state=(
+                n_codex_state if self.persist_codex_session else None
+            ),
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
@@ -1212,8 +1223,10 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode, TreeNode]:
-        return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
+        n_codex_state: TreeNode,
+    ) -> tuple[TreeNode, TreeNode, TreeNode]:
+        return self.agent_safety(
+            n_code, None, n_plans, n_codex_state, provide_test_cmd = False)
 
 
     @step
@@ -1297,21 +1310,28 @@ class Workflow:
         n_code: TreeNode,
         n_test_code: TreeNode,
         n_plans: TreeNode,
+        n_codex_state: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode]:
         self.fuel.use()
 
-        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
-            prompt_suffix = prompt_suffix,
-            target_goal = target_goal)
+        try:
+            n_new_code, n_plans, n_codex_state = self.agent_safety(
+                n_code, n_test_code, n_plans, n_codex_state,
+                prompt_suffix = prompt_suffix,
+                target_goal = target_goal)
+        except agent.CodexAgentError as e:
+            print(f'agent_safety failed: {e}; preserving Codex session state')
+            return None, None, e.codex_state
+
         # The change must pass tests, and must not regress any unsafe count.
         n_op_test = self.test_op(n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
-            return n_new_code, n_plans
+            return n_new_code, n_plans, n_codex_state
         else:
-            return None, None
+            return None, None, n_codex_state
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1319,7 +1339,8 @@ class Workflow:
         n_code: TreeNode,
         n_test_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+        n_codex_state: TreeNode,
+    ) -> tuple[TreeNode | None, TreeNode | None, TreeNode]:
         self.fuel.use()
 
         # Don't provide the test code, so the agent can't
@@ -1327,11 +1348,17 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        try:
+            n_new_code, n_plans, n_codex_state = self.agent_safety_no_tests(
+                n_code, n_plans, n_codex_state)
+        except agent.CodexAgentError as e:
+            print(f'agent_safety_no_tests failed: {e}; preserving Codex session state')
+            return None, None, e.codex_state
+
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
-            return None, None
+            return None, None, n_codex_state
 
         # `agent_sim_no_tests` simulates the mode where no tests are
         # available and the only success criteria that CRISP can
@@ -1344,4 +1371,4 @@ class Workflow:
         assert n_op_test.exit_code == 0, \
             f'agent output failed tests: {n_op_test}'
 
-        return n_new_code, n_plans
+        return n_new_code, n_plans, n_codex_state

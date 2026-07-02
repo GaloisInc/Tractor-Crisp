@@ -2,9 +2,11 @@
 Rewrite operations using AI agent tools, such as codex-cli
 """
 
+import json
 import os
 from pathlib import Path
 import re
+from typing import Any
 
 from pathspec.pathspec import PathSpec
 
@@ -17,6 +19,17 @@ from .sandbox import run_sandbox
 AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+class CodexAgentError(CrispError):
+    def __init__(self, message: str, codex_state: TreeNode):
+        super().__init__(message)
+        self.codex_state = codex_state
+
 
 def _snapshot_to_family_alias(model: str) -> str:
     """
@@ -96,6 +109,73 @@ def _inject_codex_auth(sb):
     sb.checkout_file_untracked('.codex/auth.json', auth_bytes)
 
 
+def _walk_json_values(x: Any):
+    if isinstance(x, dict):
+        for v in x.values():
+            yield from _walk_json_values(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _walk_json_values(v)
+    elif isinstance(x, str):
+        yield x
+
+
+def _session_ids_from_jsonl(body: bytes) -> set[str]:
+    meta_ids = set()
+    fallback_ids = set()
+    for raw_line in body.splitlines():
+        try:
+            line = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(line, dict) and line.get('type') == 'session_meta':
+            payload = line.get('payload')
+            if isinstance(payload, dict):
+                session_id = payload.get('id')
+                if isinstance(session_id, str) and _UUID_RE.fullmatch(session_id):
+                    meta_ids.add(session_id)
+
+        for value in _walk_json_values(line):
+            if (m := _UUID_RE.fullmatch(value)) is not None:
+                fallback_ids.add(m.group(0))
+
+    return meta_ids or fallback_ids
+
+
+def _session_id_from_codex_state(mvir: MVIR, codex_state: TreeNode) -> str | None:
+    ids = set()
+    for path, node_id in codex_state.files.items():
+        if not (path.startswith('.codex/sessions/') and path.endswith('.jsonl')):
+            continue
+
+        ids.update(_UUID_RE.findall(path))
+        ids.update(_session_ids_from_jsonl(mvir.node(node_id).body()))
+
+    match sorted(ids):
+        case []:
+            return None
+        case [session_id]:
+            return session_id
+        case many:
+            print(
+                'warning: found multiple Codex session ids in persisted state '
+                f'{many}; falling back to `codex exec resume --last --all`')
+            return None
+
+
+def _codex_exec_args(prompt: str, session_id: str | None, resume_last: bool) -> list[str]:
+    common_args = [
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+    ]
+    if session_id is not None:
+        return ['resume', *common_args, session_id, prompt]
+    if resume_last:
+        return ['resume', *common_args, '--last', '--all', prompt]
+    return [*common_args, prompt]
+
+
 def run_rewrite(
     cfg: Config,
     mvir: MVIR,
@@ -106,9 +186,10 @@ def run_rewrite(
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
     codex_login: bool = False,
+    codex_state: TreeNode | None = None,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
-) -> tuple[TreeNode, TreeNode]:
+) -> tuple[TreeNode, TreeNode, TreeNode]:
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
         "the sandbox and could theoretically be leaked " \
@@ -131,6 +212,8 @@ def run_rewrite(
             sb.checkout(n)
         if planning_files is not None:
             sb.checkout(planning_files)
+        if codex_state is not None:
+            sb.checkout(codex_state)
 
         if codex_login:
             print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
@@ -139,11 +222,26 @@ def run_rewrite(
         codex_dir = sb.join(".codex")
         mkdir_codex = ['mkdir', '-p', codex_dir]
 
-        codex_cmd = _codex_command('exec', [
-            '--dangerously-bypass-approvals-and-sandbox',
-            '--skip-git-repo-check',
-            prompt,
-        ], codex_login=codex_login)
+        session_id = None
+        resume_last = False
+        if codex_state is not None and codex_state.files:
+            session_id = _session_id_from_codex_state(mvir, codex_state)
+            resume_last = session_id is None
+
+        if codex_state is None:
+            print('codex session: fresh (--persist-codex-session disabled)')
+        elif session_id is not None:
+            print(f'codex session: resume {session_id}')
+        elif resume_last:
+            print('codex session: resume --last --all')
+        else:
+            print('codex session: fresh (no prior session state)')
+
+        codex_cmd = _codex_command(
+            'exec',
+            _codex_exec_args(prompt, session_id, resume_last),
+            codex_login=codex_login,
+        )
         print(codex_cmd)
         all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 
@@ -160,7 +258,7 @@ def run_rewrite(
 
             # TODO: ensure API key doesn't get included in the AgentOpNode
             if exit_code != 0:
-                raise CrispError(f'codex-cli failed: exit code {exit_code}')
+                break
 
         ignore_lines = [
             '__pycache__/',
@@ -176,6 +274,7 @@ def run_rewrite(
 
     output_files = {}
     json_session_files = []
+    output_codex_state_files = {}
     output_plan_files = {}
     for path, node_id in raw_output_files.files.items():
         if any(path in n.files for n in extra_code):
@@ -192,6 +291,7 @@ def run_rewrite(
         elif path.startswith('.codex/sessions/') and path.endswith('.jsonl'):
             # This is a Codex session log file.
             json_session_files.append(node_id)
+            output_codex_state_files[path] = node_id
         elif Path(path).name in ['PLAN.md', 'SAFETY_PLAN.md']:
             # if the agent created a SAFETY_PLAN.md file, carry it over to future steps but
             # don't include it in the main output since it's not source code.
@@ -207,6 +307,7 @@ def run_rewrite(
 
     output_code = TreeNode.new(mvir, files=output_files)
     output_plans = TreeNode.new(mvir, files=output_plan_files)
+    output_codex_state = TreeNode.new(mvir, files=output_codex_state_files)
     n_op = CodexAgentOpNode.new(mvir,
         old_code = input_code.node_id(),
         new_code = output_code.node_id(),
@@ -220,4 +321,12 @@ def run_rewrite(
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
-    return (output_code, output_plans)
+    print(f'codex session files committed: {len(output_codex_state_files)}')
+
+    if exit_code != 0:
+        raise CodexAgentError(
+            f'codex-cli failed: exit code {exit_code}',
+            output_codex_state,
+        )
+
+    return (output_code, output_plans, output_codex_state)

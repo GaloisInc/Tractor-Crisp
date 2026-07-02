@@ -316,12 +316,14 @@ class Workflow:
         mvir: MVIR,
         codex_login: bool = False,
         persist_codex_session: bool = False,
+        resume_prompt: str = 'short',
     ):
         self.cfg = cfg
         self.mvir = mvir
         self.fuel = FuelCounter('safety tries')
         self.codex_login = codex_login
         self.persist_codex_session = persist_codex_session
+        self.resume_prompt = resume_prompt
         self._step_depth = 0
 
     def accept(self, code: TreeNode, reason = None):
@@ -1212,6 +1214,7 @@ class Workflow:
             codex_state=(
                 n_codex_state if self.persist_codex_session else None
             ),
+            resume_prompt=self.resume_prompt,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],

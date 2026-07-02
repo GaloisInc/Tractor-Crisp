@@ -17,6 +17,14 @@ from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
 AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+SHORT_RESUME_PROMPT = """
+Resume the Rust safety refactoring work.
+
+Continue reducing unsafe Rust while preserving behavior and ABI compatibility.
+Use the existing conversation context, current workspace state, and any
+SAFETY_PLAN.md notes to choose and complete the next useful step. Before
+finishing, update SAFETY_PLAN.md and run the required build and unsafe checks.
+""".strip()
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 _UUID_RE = re.compile(
@@ -187,9 +195,13 @@ def run_rewrite(
     clean_cmds: list[list[str]] = [],
     codex_login: bool = False,
     codex_state: TreeNode | None = None,
+    resume_prompt: str = 'short',
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
 ) -> tuple[TreeNode, TreeNode, TreeNode]:
+    if resume_prompt not in ('short', 'full'):
+        raise ValueError(f'unknown resume_prompt mode {resume_prompt!r}')
+
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
         "the sandbox and could theoretically be leaked " \
@@ -227,6 +239,11 @@ def run_rewrite(
         if codex_state is not None and codex_state.files:
             session_id = _session_id_from_codex_state(mvir, codex_state)
             resume_last = session_id is None
+        is_resume = session_id is not None or resume_last
+
+        codex_prompt = prompt
+        if is_resume and resume_prompt == 'short':
+            codex_prompt = SHORT_RESUME_PROMPT
 
         if codex_state is None:
             print('codex session: fresh (--persist-codex-session disabled)')
@@ -236,10 +253,12 @@ def run_rewrite(
             print('codex session: resume --last --all')
         else:
             print('codex session: fresh (no prior session state)')
+        if is_resume:
+            print(f'codex resume prompt: {resume_prompt}')
 
         codex_cmd = _codex_command(
             'exec',
-            _codex_exec_args(prompt, session_id, resume_last),
+            _codex_exec_args(codex_prompt, session_id, resume_last),
             codex_login=codex_login,
         )
         print(codex_cmd)
@@ -311,7 +330,7 @@ def run_rewrite(
     n_op = CodexAgentOpNode.new(mvir,
         old_code = input_code.node_id(),
         new_code = output_code.node_id(),
-        raw_prompt = FileNode.new(mvir, prompt).node_id(),
+        raw_prompt = FileNode.new(mvir, codex_prompt).node_id(),
         exit_code = exit_code,
         raw_output_files = raw_output_files.node_id(),
         json_session = json_session_node_id,

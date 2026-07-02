@@ -77,6 +77,10 @@ def parse_args():
     main.add_argument('--persist-codex-session', action='store_true',
         help='resume the previous Codex session on each agent turn; '
             'requires --llm-mode=agent or similar')
+    main.add_argument('--resume-prompt',
+        choices=('short', 'full'),
+        default='short',
+        help='prompt to use when resuming a persisted Codex session')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -92,6 +96,10 @@ def parse_args():
     safety_loop.add_argument('--persist-codex-session', action='store_true',
         help='resume the previous Codex session on each agent turn; '
             'requires --llm-mode=agent or similar')
+    safety_loop.add_argument('--resume-prompt',
+        choices=('short', 'full'),
+        default='short',
+        help='prompt to use when resuming a persisted Codex session')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -148,6 +156,9 @@ def parse_args():
     if (getattr(args, 'persist_codex_session', False)
             and getattr(args, 'llm_mode', None) not in AGENT_MODES):
         ap.error('--persist-codex-session requires --llm-mode=agent or similar')
+    if (getattr(args, 'resume_prompt', 'short') != 'short'
+            and getattr(args, 'llm_mode', None) not in AGENT_MODES):
+        ap.error('--resume-prompt=full requires --llm-mode=agent or similar')
     return args
 
 
@@ -238,7 +249,8 @@ def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir,
         codex_login=args.codex_login,
-        persist_codex_session=args.persist_codex_session)
+        persist_codex_session=args.persist_codex_session,
+        resume_prompt=args.resume_prompt)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
@@ -609,7 +621,8 @@ def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir,
         codex_login=args.codex_login,
-        persist_codex_session=args.persist_codex_session)
+        persist_codex_session=args.persist_codex_session,
+        resume_prompt=args.resume_prompt)
 
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)

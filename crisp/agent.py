@@ -5,6 +5,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 import os
 from pathlib import Path
 import re
+import shlex
 
 from pathspec.pathspec import PathSpec
 
@@ -15,6 +16,7 @@ from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
 AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+BASELINE_DIR = '/tmp/crisp-baseline'
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 
@@ -96,6 +98,29 @@ def _inject_codex_auth(sb):
     sb.checkout_file_untracked('.codex/auth.json', auth_bytes)
 
 
+def _normalize_baseline_path(path: str) -> str:
+    path = os.path.normpath(path)
+    if os.path.isabs(path) or path.startswith(os.pardir + os.sep) or path == os.pardir:
+        raise ValueError(f'baseline path must be relative to the sandbox work dir: {path!r}')
+    return path
+
+
+def _with_baseline_setup(sb, cmd: list[str], baseline_paths: list[str]) -> list[str]:
+    if len(baseline_paths) == 0:
+        return cmd
+
+    script_lines = [f'rm -rf {shlex.quote(BASELINE_DIR)}']
+    for path in baseline_paths:
+        path = _normalize_baseline_path(path)
+        src = sb.join(path)
+        dest = os.path.join(BASELINE_DIR, path)
+        script_lines.append(f'mkdir -p {shlex.quote(os.path.dirname(dest))}')
+        script_lines.append(f'cp -a {shlex.quote(src)} {shlex.quote(dest)}')
+    script_lines.append(f'exec {shlex.join(cmd)}')
+
+    return ['sh', '-c', ' && '.join(script_lines)]
+
+
 def run_rewrite(
     cfg: Config,
     mvir: MVIR,
@@ -108,6 +133,7 @@ def run_rewrite(
     codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
+    baseline_paths: list[str] | None = None,
 ) -> tuple[TreeNode, TreeNode]:
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
@@ -124,6 +150,8 @@ def run_rewrite(
 
     if env is None:
         env = {}
+    if baseline_paths is None:
+        baseline_paths = []
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
@@ -144,6 +172,7 @@ def run_rewrite(
             '--skip-git-repo-check',
             prompt,
         ], codex_login=codex_login)
+        codex_cmd = _with_baseline_setup(sb, codex_cmd, baseline_paths)
         print(codex_cmd)
         all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 

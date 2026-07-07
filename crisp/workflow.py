@@ -149,6 +149,12 @@ For FFI entry points, the following rules apply:
 
 {after_refactoring_instruction}
 
+This workspace is not a Git repository, so `git diff` and `git status` will not show your changes. A baseline copy of the Rust code from the start of this turn is available at `/tmp/crisp-baseline/{cargo_dir_path}`. To inspect your current changes, run:
+```sh
+git diff --no-index /tmp/crisp-baseline/{cargo_dir_path} {cargo_dir_path} || true
+```
+Do not edit files under `/tmp/crisp-baseline`, as this will break your ability to diff cleanly.
+
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
@@ -1203,6 +1209,7 @@ class Workflow:
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            baseline_paths = [cargo_dir],
         )
 
     @step

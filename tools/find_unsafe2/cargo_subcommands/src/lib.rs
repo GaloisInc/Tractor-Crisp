@@ -18,19 +18,6 @@ fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-fn fresh_target_dir() -> PathBuf {
-    let timestamp_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let target_dir = env::temp_dir().join(format!(
-        "find_unsafe2-target-{}-{timestamp_nanos}",
-        process::id()
-    ));
-    fs::create_dir_all(&target_dir).unwrap();
-    target_dir
-}
-
 pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let opt_toolchain = option_env!("RUSTUP_TOOLCHAIN");
 
@@ -60,7 +47,26 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let opt_json_dir = env::var_os(JSON_DIR_VAR);
     let json_dir = opt_json_dir.as_ref().map_or(Path::new("find_unsafe2_json"), |x| Path::new(x));
     let json_dir_abs = path::absolute(&json_dir).unwrap();
-    let target_dir = fresh_target_dir();
+
+    // Create a fresh target dir for each run to ensure that Cargo actually runs our
+    // rustc wrapper.
+    //
+    // If we try to run `cargo build` within the normal workspace and the workspace
+    // is clean (i.e. no changes have been made since the last `cargo build`), then
+    // `cargo build` is a no-op and never actually invokes our wrapper. This means
+    // that if the agent does `cargo build` right before (or at the same time as)
+    // `cargo check-unsafe2` then we won't report any increased unsafe counts. To
+    // ensure that Cargo always builds the project, we use a temp dir as the target
+    // dir, forcing a full build every time.
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let target_dir = env::temp_dir().join(format!(
+        "find_unsafe2-target-{}-{timestamp_nanos}",
+        process::id()
+    ));
+    fs::create_dir_all(&target_dir).unwrap();
 
     // Use `cargo +toolchain` instead of `$CARGO` here in case the parent `cargo` process is from a
     // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is

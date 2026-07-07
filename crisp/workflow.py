@@ -149,10 +149,11 @@ For FFI entry points, the following rules apply:
 
 {after_refactoring_instruction}
 
-This workspace is not a Git repository, so `git diff` and `git status` will not show your changes. A baseline copy of the Rust code from the start of this turn is available at `/tmp/crisp-baseline/{cargo_dir_path}`. To inspect your current changes, run:
+This workspace is not a Git repository, so `git diff` and `git status` will not show your changes. A baseline copy of the Rust code from the start of this turn is available at `/tmp/crisp-baseline/{cargo_dir_path}`. To inspect your current changes, prefer diffing individual source files against their baseline copies, for example:
 ```sh
-git diff --no-index /tmp/crisp-baseline/{cargo_dir_path} {cargo_dir_path} || true
+git diff --no-index /tmp/crisp-baseline/{cargo_dir_path}/path/to/file.rs {cargo_dir_path}/path/to/file.rs || true
 ```
+Replace `path/to/file.rs` with the relative path of the source file you edited. Avoid directory-level diffs after running `cargo build`, because generated files under `target/` can flood the output. Also avoid `git diff --no-index OLD_DIR NEW_DIR -- path`; `--no-index` expects two concrete paths, so pass the two files directly.
 Do not edit files under `/tmp/crisp-baseline`, as this will break your ability to diff cleanly.
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:

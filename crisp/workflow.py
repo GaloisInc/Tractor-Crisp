@@ -468,6 +468,7 @@ class Workflow:
             sb.checkout(n_c_code)
             sb.checkout_file(COMPILE_COMMANDS_PATH, n_cc)
 
+
             # Create each directory mentioned in compile_commands.json, since
             # c2rust may assume that they already exist.
             j = n_cc.body_json()
@@ -477,17 +478,16 @@ class Workflow:
             for d in cc_dirs:
                 sb.run(['mkdir', '-p', d])
 
+
+            # Run c2rust-transpile (or Hayroll, if enabled)
             c2rust_cmd = []
-            # Run c2rust-transpile
             if not hayroll:
                 sb.run(['mkdir', '-p', output_path])
 
                 c2rust_cmd += [
-                    "c2rust",
-                    "transpile",
+                    "c2rust", "transpile",
                     sb.join(COMPILE_COMMANDS_PATH),
-                    "--output-dir",
-                    sb.join(output_path),
+                    "--output-dir", sb.join(output_path),
                     "--emit-build-files",
                 ]
                 if src_loc_annotations:
@@ -517,33 +517,37 @@ class Workflow:
                     '--binary', art_cfg.bin_main,
                     '--thin-binaries',
                     ))
+
             exit_code, logs = sb.run(c2rust_cmd)
 
+
+            # Hayroll produces a bunch of temporary files as it runs.  Remove
+            # them so they don't clutter the output.
             if hayroll and exit_code == 0:
                 exit_code, logs2 = sb.run([
                     'find', sb.join(output_path), '-name', '*.*.*', '-delete',
                 ])
                 logs = b'\n\n'.join((logs, logs2))
 
+
+            # Apply any requested c2rust-refactor transforms
             for transform in refactor_transforms:
                 if exit_code == 0:
                     c2rust_refactor_cmd = [
-                        "c2rust",
-                        "refactor",
+                        "c2rust", "refactor",
                         "--cargo",
                         "--rewrite-mode", "inplace",
                         transform,
                     ]
-                    new_exit_code, new_logs = sb.run(
-                        c2rust_refactor_cmd, cwd=output_path
-                    )
-                    exit_code = new_exit_code
-                    logs += new_logs
+                    exit_code, logs2 = sb.run(c2rust_refactor_cmd, cwd=output_path)
+                    logs = b'\n\n'.join((logs, logs2))
 
+
+            # Clean build artifacts that may be produced by c2rust-refactor.
             if exit_code == 0:
-                new_exit_code, new_logs = sb.run(["cargo", "clean"], cwd=output_path)
-                exit_code = new_exit_code
-                logs += new_logs
+                exit_code, logs2 = sb.run(["cargo", "clean"], cwd=output_path)
+                logs = b'\n\n'.join((logs, logs2))
+
 
             if exit_code == 0:
                 n_rust_code = sb.commit_dir(output_path)

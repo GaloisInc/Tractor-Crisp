@@ -160,6 +160,23 @@ Your changes must not introduce new unsafe code within implementation functions.
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+
+The current unsafe analysis JSON is available under `unsafe_json/*.json`, and the absolute directory is in `$FIND_UNSAFE2_JSON_DIR`. Do not use `grep`, `cat`, or `sed` to dump these JSON files; they are large single-line files and that will flood your transcript. Use `jq` to extract exactly what you need. Each JSON file has this shape:
+- `.total_unsafe`: the total counted unsafe operations, excluding FFI entry points.
+- `.fns`: map from fully qualified function name to per-function counts. Useful fields include `total_unsafe`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`, `calls_unsafe`, `uses_static_mut`, `uses_union_field`, `uses_foreign_fn`, `casts_int_to_ptr`, `sig_contains_raw_ptr`, and `is_ffi_entry_point`.
+- `.types`: map from fully qualified type name to `field_contains_raw_ptr`, a map from field name to raw-pointer count.
+
+Useful queries:
+```sh
+# Show the functions that still count as unsafe, largest first.
+jq -r '.fns | to_entries[] | select(.value.total_unsafe > 0) | [.value.total_unsafe, .key, .value.derefs_raw_ptr, .value.calls_unsafe, (.value.uses_static_mut | length), (.value.uses_union_field | length), .value.is_unsafe_fn, .value.is_ffi_entry_point] | @tsv' unsafe_json/*.json | sort -nr
+
+# Inspect one family of functions by name.
+jq -r '.fns | to_entries[] | select(.key | test("FUNCTION_OR_PATTERN")) | {name: .key, info: .value}' unsafe_json/*.json
+
+# List raw-pointer fields in types.
+jq -r '.types | to_entries[] | .key as $type | .value.field_contains_raw_ptr | to_entries[] | select(.value > 0) | [$type, .key, .value] | @tsv' unsafe_json/*.json
+```
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''

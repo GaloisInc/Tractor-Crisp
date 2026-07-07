@@ -83,6 +83,8 @@ class SudoSandbox:
         files = {}
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -93,8 +95,6 @@ class SudoSandbox:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
-                    continue
                 f = t.extractfile(info)
                 # Prefix output paths with the requested `rel_path`.
                 dest_path = os.path.normpath(os.path.join(rel_path, info.name))

@@ -1,7 +1,9 @@
 use std::env;
-use std::path::{self, Path};
+use std::fs;
+use std::path::{self, Path, PathBuf};
 use std::process::{self, Command};
 use std::os::unix::process::CommandExt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     let mut cmd = Command::new("rustc");
@@ -16,25 +18,17 @@ fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-fn cargo_cmd(opt_toolchain: Option<&str>) -> Command {
-    let mut cmd = Command::new("cargo");
-    if let Some(toolchain) = opt_toolchain {
-        cmd.arg(format!("+{toolchain}"));
-    }
-    cmd
-}
-
-fn manifest_path_arg() -> Option<String> {
-    let mut args = env::args().skip(2);
-    while let Some(arg) = args.next() {
-        if arg == "--manifest-path" {
-            return args.next();
-        }
-        if let Some(value) = arg.strip_prefix("--manifest-path=") {
-            return Some(value.to_owned());
-        }
-    }
-    None
+fn fresh_target_dir() -> PathBuf {
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let target_dir = env::temp_dir().join(format!(
+        "find_unsafe2-target-{}-{timestamp_nanos}",
+        process::id()
+    ));
+    fs::create_dir_all(&target_dir).unwrap();
+    target_dir
 }
 
 pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
@@ -66,30 +60,20 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let opt_json_dir = env::var_os(JSON_DIR_VAR);
     let json_dir = opt_json_dir.as_ref().map_or(Path::new("find_unsafe2_json"), |x| Path::new(x));
     let json_dir_abs = path::absolute(&json_dir).unwrap();
+    let target_dir = fresh_target_dir();
 
     // Use `cargo +toolchain` instead of `$CARGO` here in case the parent `cargo` process is from a
     // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is
     // too far apart in version, its `cargo` might be incompatible with `find_unsafe2`'s wrapped
     // `rustc`.
-    let mut clean_cmd = cargo_cmd(opt_toolchain);
-    clean_cmd.arg("clean");
-    if let Some(manifest_path) = manifest_path_arg() {
-        clean_cmd.arg("--manifest-path").arg(manifest_path);
+    let mut cmd = Command::new("cargo");
+    if let Some(toolchain) = opt_toolchain {
+        cmd.arg(format!("+{toolchain}"));
     }
-    clean_cmd.arg("--workspace");
-    eprintln!("exec: {clean_cmd:?}");
-    let status = clean_cmd.status().unwrap();
-    assert!(
-        status.success(),
-        "{:?} exited with code {:?}",
-        clean_cmd,
-        status
-    );
-
-    let mut cmd = cargo_cmd(opt_toolchain);
     cmd.arg("build")
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)
+        .env("CARGO_TARGET_DIR", target_dir)
         .env("RUSTC_WRAPPER", wrapper_exe)
         .env(SRC_DIR_VAR, src_dir_abs)
         .env(JSON_DIR_VAR, json_dir_abs);

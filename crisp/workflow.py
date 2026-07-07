@@ -172,7 +172,7 @@ Useful queries:
 jq -r '.fns | to_entries[] | select(.value.total_unsafe > 0) | [.value.total_unsafe, .key, .value.derefs_raw_ptr, .value.calls_unsafe, (.value.uses_static_mut | length), (.value.uses_union_field | length), .value.is_unsafe_fn, .value.is_ffi_entry_point] | @tsv' unsafe_json/*.json | sort -nr
 
 # Inspect one family of functions by name.
-jq -r '.fns | to_entries[] | select(.key | test("FUNCTION_OR_PATTERN")) | {name: .key, info: .value}' unsafe_json/*.json
+jq -r '.fns | to_entries[] | select(.key | test("FUNCTION_OR_PATTERN")) | {{name: .key, info: .value}}' unsafe_json/*.json
 
 # List raw-pointer fields in types.
 jq -r '.types | to_entries[] | .key as $type | .value.field_contains_raw_ptr | to_entries[] | select(.value > 0) | [$type, .key, .value] | @tsv' unsafe_json/*.json

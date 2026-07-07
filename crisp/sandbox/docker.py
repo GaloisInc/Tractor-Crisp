@@ -83,6 +83,8 @@ class WorkContainer:
         dest_prefix = os.path.dirname(rel_path)
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
+                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    continue
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -93,8 +95,6 @@ class WorkContainer:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
-                    continue
                 f = t.extractfile(info)
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path

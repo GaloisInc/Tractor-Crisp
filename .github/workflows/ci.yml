@@ -88,6 +88,9 @@ jobs:
       - name: Test on Test-Corpus (binary, runs c2rust transpile)
         run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/
 
+      - name: Test on Test-Corpus (multi-file library, runs hayroll and c2rust refactor)
+        run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B02_synthetic/char_to_bool/
+
       - name: Test on Test-Corpus (multi-file binary, runs c2rust transpile and c2rust refactor)
         run: ./scripts/test_eval.py Test-Corpus/Public-Tests/B01_synthetic/001_helloworld_with_header/
 

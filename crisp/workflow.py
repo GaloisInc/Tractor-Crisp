@@ -154,8 +154,6 @@ Your changes must not introduce new unsafe code within implementation functions.
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
-
-NOTE: Do not run `cargo build` or any other `cargo` command at the same time as `check-unsafe2`, as this can cause `check-unsafe2` to fail to report increased unsafe counts.
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''

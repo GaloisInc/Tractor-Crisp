@@ -19,12 +19,19 @@ if __name__ == '__main__':
 
     ## Use the GEPA evaluation function(s) to check the performance of any prompt ##
     for prompt_name in [ # insert prompt names for evaluation here (see examples below)
-        # '20260326_taskGPT5p4_reflGPT5p4',
+        # '20260616_taskGPT5p5_reflGPT5p5',
         # 'seed_prompt_2',
         # ...
     ]:
-        run_gepa_eval_on_prompt(
-            dataset_path = Path(__file__).resolve().parent.parent / 'Test-Corpus/Public-Tests/B01_organic',
-            optimized_prompt_folder = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}',
-            model = 'gpt-5.5'
-        )
+        for dataset_name in [ # insert names of datasets to be evaluated on here (see examples below)
+            'B01_organic',
+            'B01_synthetic',
+            'B02_organic',
+            'B02_synthetic',
+            # ...
+        ]:
+            run_gepa_eval_on_prompt(
+                dataset_path = Path(__file__).resolve().parent.parent / f'Test-Corpus/Public-Tests/{dataset_name}',
+                optimized_prompt_folder = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}',
+                model = 'gpt-5.5'
+            )

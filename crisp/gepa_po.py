@@ -51,6 +51,21 @@ class EvaluationResult:
     feedback: str
 
 
+def is_project_gepaready(project_folder: Path) -> bool:
+    """
+    Given a project folder, check if it has the required files to run GEPA and return True / False accordingly.
+    """
+    for required_file in [
+        project_folder / 'crisp.toml',
+        project_folder / 'crisp-storage/tags/c_code',
+        project_folder / 'crisp-storage/tags/current'
+    ]:
+        if not required_file.is_file():
+            print(f"Warning: Skipping '{project_folder.name}'. Required file(s) not found.")
+            return False
+    return True
+
+
 class ResponseEvaluator:
 
     def __init__(
@@ -255,7 +270,7 @@ def do_gepa(
 
     # Create datasets
     trainset, valset = [], []
-    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir()]
+    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
     random.shuffle(project_folders)
     for i,project_folder in enumerate(project_folders):
         cfg = Config.from_toml_file(
@@ -311,7 +326,7 @@ def run_gepa_eval_on_prompt(
         prompt = f.read()
 
     # Get project folders
-    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir())
+    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder))
 
     # Load response evaluator
     response_evaluator = ResponseEvaluator()
@@ -324,7 +339,7 @@ def run_gepa_eval_on_prompt(
     if output_csv_path.exists():
         output_csv_existed = True
         output_csv = pd.read_csv(output_csv_path)
-        done_already = set(output_csv['filepath'])
+        done_already = set(output_csv['project_folder'])
         del output_csv
 
     # Write to output CSV

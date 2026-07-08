@@ -219,27 +219,32 @@ source = { editable = "." }
 dependencies = [
     { name = "cbor" },
     { name = "docker" },
-    { name = "gepa" },
-    { name = "litellm" },
-    { name = "pandas" },
     { name = "pathspec" },
     { name = "pygit2" },
     { name = "requests" },
     { name = "toml" },
 ]
 
+[package.optional-dependencies]
+gepa = [
+    { name = "gepa" },
+    { name = "litellm" },
+    { name = "pandas" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "cbor", specifier = ">=1.0.0" },
     { name = "docker", specifier = ">=7.1.0" },
-    { name = "gepa", specifier = ">=0.1.1" },
-    { name = "litellm", specifier = ">=1.83.14" },
-    { name = "pandas", specifier = ">=3.0.2" },
+    { name = "gepa", marker = "extra == 'gepa'", specifier = ">=0.1.1" },
+    { name = "litellm", marker = "extra == 'gepa'", specifier = ">=1.83.14" },
+    { name = "pandas", marker = "extra == 'gepa'", specifier = ">=3.0.2" },
     { name = "pathspec", specifier = ">=1.0.4" },
     { name = "pygit2", specifier = ">=1.19.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "toml", specifier = ">=0.10.2" },
 ]
+provides-extras = ["gepa"]
 
 [[package]]
 name = "distro"

@@ -1,0 +1,150 @@
+You will be given one or more Rust source files inside tags of the form:
+
+<file name="path/to/file.rs">
+...code...
+</file>
+
+The code was auto-translated from C and may contain `unsafe` functions, raw pointer dereferences, libc calls, C-style allocation, `static mut`, and other C idioms. Your task is to rewrite the modified files as safe Rust while preserving the observable behavior expected by the tests.
+
+Output ONLY the complete rewritten code for each modified file, using the same `<file name="...">...</file>` format. Do not include explanations outside the file tags.
+
+Safety requirements:
+1. The final code must compile.
+2. The final code must contain no `unsafe` blocks.
+3. The final code must contain no `unsafe fn`.
+4. The final code must contain no calls to unsafe APIs.
+5. Do not dereference raw pointers directly.
+6. Do not call libc/foreign functions. Remove `extern "C" { ... }` libc declarations and replace them with safe Rust equivalents.
+7. Do not use APIs such as:
+   - `std::ffi::CStr::from_ptr`
+   - `std::slice::from_raw_parts`
+   - `std::slice::from_raw_parts_mut`
+   - `ptr::copy`, `ptr::copy_nonoverlapping`, `ptr::write_bytes`
+   - `Box::from_raw`, `Vec::from_raw_parts`
+   - `std::alloc::alloc`, `alloc_zeroed`, `dealloc`
+   - raw pointer `.as_ref()` / `.as_mut()` methods
+   because these are unsafe.
+8. Avoid `static mut` entirely when possible. Accessing a `static mut` is unsafe. Prefer immutable `static`/`const`, atomics, or normal owned state. If a mutable exported C global existed but is only used internally for tests, replace internal uses with a safe alternative.
+
+FFI entry point rule:
+- Any function marked `#[no_mangle]` or `#[export_name = "..."]` is an FFI entry point.
+- Its ABI, argument types, return type, and exported name must not be changed.
+- You may remove `unsafe` from the function declaration.
+- If the signature contains raw pointers, the raw pointer types must remain in the signature.
+- The body must still contain no unsafe code.
+
+Important implication:
+- Non-FFI helper functions may and should have their signatures changed to safe Rust types such as references, slices, arrays, `Vec`, `Box`, `Option`, or enums.
+- FFI functions with raw pointer signatures should be thin safe wrappers around a safe implementation. Validate null pointers and invalid lengths before using them.
+- If direct raw-pointer access would otherwise be required in an FFI wrapper, do not use unsafe. Use a safe abstraction instead.
+
+General replacement strategies:
+- `sqrtf(x)` -> `x.sqrt()`
+- `abs(x)` -> `x.abs()`
+- `memcmp(a, b, n)` -> compare safe byte slices or byte vectors
+- `memset(slice, value, n)` -> `slice.fill(value as u8)` or loops
+- `memcpy(dst, src, n)` -> safe slice copying such as `copy_from_slice`, or explicit loops over safe buffers
+- `malloc(sizeof(T))` for structs -> `Box::into_raw(Box::new(value))`
+- `calloc` for internal state -> use `Default`, `Box::new`, or struct literals
+- C assertions via `__assert_fail` -> `assert!` / `assert_eq!`
+- Raw pointer arithmetic for returning an address may use safe raw pointer methods like `wrapping_add` / `wrapping_sub`; do not use raw pointer `.add` or `.offset` because those are unsafe.
+- Pointer comparisons may be performed by casting to `usize`.
+
+When raw FFI memory must be read or written:
+- Safe Rust cannot dereference raw pointers or create slices from raw pointers.
+- If the FFI signature must remain raw and the behavior requires inspecting or modifying caller-provided memory, introduce a small safe “FFI memory” helper layer.
+- In the Linux test environment, one viable safe approach is to read/write the current process memory through `/proc/self/mem` using safe `std::fs::File`, `OpenOptions`, `Read`, `Write`, and `Seek`.
+- Example pattern:
+
+  ```rust
+  use std::fs::{File, OpenOptions};
+  use std::io::{Read, Seek, SeekFrom, Write};
+
+  fn read_process_bytes(addr: usize, len: usize) -> Option<Vec<u8>> {
+      let mut f = File::open("/proc/self/mem").ok()?;
+      f.seek(SeekFrom::Start(addr as u64)).ok()?;
+      let mut buf = vec![0u8; len];
+      f.read_exact(&mut buf).ok()?;
+      Some(buf)
+  }
+
+  fn write_process_bytes(addr: usize, bytes: &[u8]) -> bool {
+      let mut f = match OpenOptions::new().write(true).open("/proc/self/mem") {
+          Ok(f) => f,
+          Err(_) => return false,
+      };
+      if f.seek(SeekFrom::Start(addr as u64)).is_err() {
+          return false;
+      }
+      f.write_all(bytes).is_ok()
+  }
+
+  fn read_u8(addr: usize) -> Option<u8> {
+      read_process_bytes(addr, 1).and_then(|v| v.first().copied())
+  }
+
+  fn read_i32_ne(addr: usize) -> Option<i32> {
+      let b = read_process_bytes(addr, 4)?;
+      Some(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+  }
+
+  fn read_f32_ne(addr: usize) -> Option<f32> {
+      let b = read_process_bytes(addr, 4)?;
+      Some(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+  }
+
+  fn write_f32_ne(addr: usize, v: f32) -> bool {
+      write_process_bytes(addr, &v.to_ne_bytes())
+  }
+  ```
+
+- For simple `#[repr(C)]` structs made of integers/floats/arrays, you can safely reconstruct values by reading bytes at field offsets using `std::mem::offset_of!`, `size_of`, and `{i32,u32,f32,...}::from_ne_bytes`.
+- To write output structs or buffers back to caller-provided pointers, write the corresponding bytes using safe file I/O.
+- This should be a last resort for FFI wrappers. Prefer normal safe references/slices internally whenever the function is not an FFI entry point.
+
+C string handling:
+- Do not use `CStr::from_ptr`.
+- For an FFI raw C string pointer, if behavior requires scanning bytes until `\0`, read one byte at a time through the safe FFI-memory helper described above.
+- For example, basename-like logic can scan byte-by-byte, remember the index of the last `/` or `\\`, and return `path.wrapping_add(index + 1)`.
+
+Large arrays and constants:
+- Preserve exact values and exact array lengths.
+- Do not manually abbreviate or “summarize” long arrays unless you are certain the length is correct.
+- If shortening initialization, use a `const fn` generator to avoid element-count mistakes.
+- For example, a fixed DEFLATE table of length 320 must actually contain exactly 320 elements; an incorrect count will fail compilation.
+
+Behavior preservation:
+- Keep public exported symbols and `#[repr(C)]` layouts compatible unless changing them is clearly safe and not part of FFI.
+- Do not add extra null-pointer behavior to non-FFI safe helpers if it changes tested semantics. For FFI wrappers, null checks are acceptable where the original would otherwise have undefined behavior, but try to preserve normal valid-input behavior exactly.
+- Preserve integer wrapping behavior from C where relevant using `wrapping_add`, `wrapping_sub`, etc.
+- Be careful with C operator precedence when translating conditions.
+- If the original code used overlapping copy semantics, use a safe algorithm that preserves overlap behavior, usually an explicit loop over a safe buffer.
+- If the original code allocated memory and returned a pointer, use `Box::into_raw` for single structs or leak a boxed slice/Vec for arrays. Avoid `Box::from_raw` unless a safe deallocation API is explicitly required and can be implemented without unsafe.
+
+Borrowing and structure manipulation:
+- Replace raw arrays/pointer walking with safe arrays, slices, and indexes.
+- For structs like simplexes with fields `a`, `b`, `c`, `d`, avoid creating multiple mutable references in ways that violate the borrow checker. Use `match` on indexes or copy values into locals, modify, then write back.
+- Prefer safe helper functions such as:
+  - `fn foo_impl(s: &mut State) -> ...`
+  - `fn support(verts: &[Vec2], d: Vec2) -> i32`
+  - `fn make_proxy(shape: ShapeRef<'_>) -> Proxy`
+- FFI wrappers then adapt raw input into safe values without unsafe, using the FFI-memory helper if necessary.
+
+Compilation discipline:
+- After rewriting, mentally check for:
+  - no `unsafe` keyword anywhere
+  - no unsafe API calls
+  - no missing exported symbols
+  - exact array lengths
+  - no duplicate exported names except the intended `#[export_name]`
+  - no borrow-checker conflicts
+  - no type mismatches between `i8`/`u8`/`c_char`
+  - no reliance on removed libc declarations
+
+Output format:
+- Return every modified file in full.
+- Use exactly:
+  `<file name="...">`
+  followed by the full code,
+  followed by `</file>`.
+- Do not include Markdown explanations outside the file tags.

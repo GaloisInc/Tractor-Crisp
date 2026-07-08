@@ -1163,6 +1163,33 @@ class Workflow:
         return new_ffi_defs
 
     @step
+    def agent_rewrite(
+        self,
+        prompt: str,
+        inputs: dict[str, TreeNode],
+        output_filters: dict[str, Callable[[str], bool]],
+        clean_cmds: list[list[str]] = [],
+    ) -> dict[str, TreeNode]:
+        n_op = self.agent_rewrite_op(prompt, inputs, output_filters,
+            clean_cmds = clean_cmds,
+        )
+        return n_op.outputs
+
+    @step
+    def agent_rewrite_op(
+        self,
+        prompt: str,
+        inputs: dict[str, TreeNode],
+        output_filters: dict[str, Callable[[str], bool]],
+        clean_cmds: list[list[str]] = [],
+    ) -> CodexAgentOpNode:
+        return agent.run_rewrite(cfg, mvir, prompt, inputs, output_filters,
+            codex_login=self.codex_login,
+            clean_cmds = clean_cmds,
+            find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+        )
+
+    @step
     def agent_safety(
         self,
         n_code: TreeNode,
@@ -1182,11 +1209,13 @@ class Workflow:
         else:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
 
-        extra_code = [
-            self.find_unsafe2_json(n_code),
-        ]
+        inputs = {
+            'code': n_code,
+            'unsafe_json': self.find_unsafe2_json(n_code),
+            'plans': n_plans,
+        }
         if n_test_code is not None:
-            extra_code.append(n_test_code)
+            inputs['test_code'] = n_test_code
 
         prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
@@ -1195,15 +1224,18 @@ class Workflow:
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
-        return agent.run_rewrite(cfg, mvir, prompt, n_code,
-            extra_code = extra_code,
-            planning_files = n_plans,
-            codex_login=self.codex_login,
+        out = self.agent_rewrite(prompt, inputs,
+            {
+                'code': lambda path: (test_code is None or path not in n_test_code.files)
+                    and (path in n_code.files or path.endswith('.rs')),
+                'plans': lambda path:
+                    path.startswith('.codex/sessions/') and path.endswith('.jsonl'),
+            },
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
-            find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
         )
+        return (out['code'], out['plans'])
 
     @step
     def agent_safety_no_tests(

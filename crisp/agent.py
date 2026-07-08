@@ -100,37 +100,43 @@ def run_rewrite(
     cfg: Config,
     mvir: MVIR,
     prompt: str,
-    input_code: TreeNode,
-    extra_code: TreeNode | list[TreeNode] = [],
-    planning_files: TreeNode | None = None,
+    inputs: dict[str, TreeNode],
+    output_filters: dict[str, Callable[[str], bool]],
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
     codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
-) -> tuple[TreeNode, TreeNode]:
+) -> dict[str, TreeNode]:
+    """
+    Run the agent on some inputs to produce some outputs.
+
+    This checks out each `TreeNode` in `inputs` into a sandbox, runs the agent
+    with the provided `prompt`, and gathers up the outputs that match each
+    filter in `output_filters`.  For example, if `output_filters` consists of
+    `{'code': lambda path: path.endswith('.rs')}`, then the return value of
+    this function will be `{'code': tree}` where `tree` contains all the
+    outputs with the `.rs` extension.
+
+    The keys used for `inputs` are not significant; they're only present so
+    that the resulting MVIR node will include human-readable names.
+    """
+
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
         "the sandbox and could theoretically be leaked " \
         "by commands run by the agent; please make sure " \
         "to set limits on its usage.\033[0m"
 
-
     if 'CRISP_API_KEY' in os.environ:
         print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
-
-    if isinstance(extra_code, TreeNode):
-        extra_code = [extra_code]
 
     if env is None:
         env = {}
 
     with run_sandbox(cfg, mvir) as sb:
-        sb.checkout(input_code)
-        for n in extra_code:
-            sb.checkout(n)
-        if planning_files is not None:
-            sb.checkout(planning_files)
+        for tree in inputs.values():
+            sb.checkout(tree)
 
         if codex_login:
             print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
@@ -174,28 +180,16 @@ def run_rewrite(
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
         raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
 
-    output_files = {}
-    json_session_files = []
-    output_plan_files = {}
-    for path, node_id in raw_output_files.files.items():
-        if any(path in n.files for n in extra_code):
-            # This file came from the C code used for testing.  Ignore it.
-            pass
-        elif path in input_code.files:
-            # This is a modified copy of an original input file.
-            output_files[path] = node_id
-        elif path.endswith('.rs'):
-            # In some cases the agent might create a new Rust file, such as
-            # when refactoring to create a new module.  Add these files to the
-            # main output.
-            output_files[path] = node_id
-        elif path.startswith('.codex/sessions/') and path.endswith('.jsonl'):
-            # This is a Codex session log file.
-            json_session_files.append(node_id)
-        elif Path(path).name in ['PLAN.md', 'SAFETY_PLAN.md']:
-            # if the agent created a SAFETY_PLAN.md file, carry it over to future steps but
-            # don't include it in the main output since it's not source code.
-            output_plan_files[path] = node_id
+    outputs = {}
+    for key, filter_func in output_filters.items():
+        files = {}
+        for path, node_id in raw_output_files.files.items():
+            if filter_func(path):
+                files[path] = node_id
+        outputs[key] = TreeNode.new(mvir, files = files)
+
+    json_session_files = [node_id for path, node_id in raw_output_files.files.items()
+        if path.startswith('.codex/sessions/') and path.endswith('.jsonl')]
 
     # Set the `json_session` metadata field to the session file only if it's
     # unique.  In case of ambiguity, we leave this blank, but any files that
@@ -205,19 +199,16 @@ def run_rewrite(
     else:
         json_session_node_id = FileNode.new(mvir, '').node_id()
 
-    output_code = TreeNode.new(mvir, files=output_files)
-    output_plans = TreeNode.new(mvir, files=output_plan_files)
     n_op = CodexAgentOpNode.new(mvir,
-        old_code = input_code.node_id(),
-        new_code = output_code.node_id(),
+        inputs = {k: v.node_id() for k,v in inputs.items()},
+        outputs = {k: v.node_id() for k,v in outputs.items()},
         raw_prompt = FileNode.new(mvir, prompt).node_id(),
         exit_code = exit_code,
         raw_output_files = raw_output_files.node_id(),
         json_session = json_session_node_id,
-        planning_files = output_plans.node_id(),
         body = logs,
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
-    return (output_code, output_plans)
+    return n_op

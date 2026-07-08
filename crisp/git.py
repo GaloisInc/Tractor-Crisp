@@ -30,10 +30,14 @@ def get_repo(mvir: MVIR) -> pygit2.Repository:
 # names of the fields containing the old and new `TreeNode`s.
 OP_NODE_KINDS = {
     mvir_module.LlmOpNode.KIND: ('old_code', 'new_code'),
-    mvir_module.CodexAgentOpNode.KIND: ('old_code', 'new_code'),
+    # `outputs` is the key that will appear in the `IndexEntry`.  `old_code` is
+    # an alias for `inputs['code']` that will be used with `getattr` once the
+    # op node has been found.
+    mvir_module.CodexAgentOpNode.KIND: ('old_code', 'outputs'),
 
     # Backward compatibility with unmigrated `CodexAgentOp`s
     'codex_agent_op': ('old_code', 'new_code'),
+    'codex_agent_op_v2': ('old_code', 'new_code'),
 }
 
 HISTORY_INDEX_KEYS = set((kind, new) for (kind, (old, new)) in OP_NODE_KINDS.items())

@@ -164,6 +164,8 @@ This will report an error for any unsafe code that was improperly added during y
 
 The baseline unsafe analysis JSON for the start of this turn is available under `unsafe_json/*.json`, and the absolute directory is in `$FIND_UNSAFE2_JSON_DIR`. `cargo check-unsafe2` uses this baseline JSON to compare your edited code against the start-of-turn code. Do not delete, overwrite, or regenerate files under `unsafe_json/`, because that can make `cargo check-unsafe2` compare your edits against themselves and miss newly introduced unsafe code.
 
+When searching source text with `rg` or similar tools, search inside `{cargo_dir_path}/` rather than from the workspace root, for example `rg "PATTERN" {cargo_dir_path}` or `rg "PATTERN" {cargo_dir_path}/src`. Broad workspace-level searches can accidentally match the large `unsafe_json/*.json` files and flood your transcript. If you need information from `unsafe_json/*.json`, use the targeted `jq` queries below instead of text search.
+
 Do not use `grep`, `cat`, or `sed` to dump these JSON files; they are large single-line files and that will flood your transcript. Use `jq` to extract exactly what you need. Each JSON file has this shape:
 - `.total_unsafe`: the total counted unsafe operations, excluding FFI entry points.
 - `.fns`: map from fully qualified function name to per-function counts. Useful fields include `total_unsafe`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`, `calls_unsafe`, `uses_static_mut`, `uses_union_field`, `uses_foreign_fn`, `casts_int_to_ptr`, `sig_contains_raw_ptr`, and `is_ffi_entry_point`.

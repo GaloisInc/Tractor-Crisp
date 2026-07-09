@@ -1,5 +1,7 @@
 use std::process::{Command, Stdio};
 
+// Verify that `cargo check-unsafe2` works in a clean workspace, specifically
+// that the unsafe checker still reports increased unsafe after a `cargo build`.
 #[test]
 fn run_check_after_cargo_build() {
     let fixture_dir = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).unwrap();

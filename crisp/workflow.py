@@ -149,11 +149,49 @@ For FFI entry points, the following rules apply:
 
 {after_refactoring_instruction}
 
+This workspace is not a Git repository, so `git diff` and `git status` will not show your changes. A baseline copy of the Rust code from the start of this turn is available at `/tmp/crisp-baseline/{cargo_dir_path}`. To inspect your current changes, use `diff -u` on individual source files against their baseline copies, for example:
+```sh
+diff -u /tmp/crisp-baseline/{cargo_dir_path}/path/to/file.rs {cargo_dir_path}/path/to/file.rs || true
+```
+Replace `path/to/file.rs` with the relative path of the source file you edited. Avoid directory-level diffs after running `cargo build`, because generated files under `target/` can flood the output.
+Do not edit files under `/tmp/crisp-baseline`, as this will break your ability to diff cleanly.
+
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+
+The baseline unsafe analysis JSON for the start of this turn is available under `unsafe_json/*.json`, and the absolute directory is in `$FIND_UNSAFE2_JSON_DIR`. `cargo check-unsafe2` uses this baseline JSON to compare your edited code against the start-of-turn code. Do not delete, overwrite, or regenerate files under `unsafe_json/`, because that can make `cargo check-unsafe2` compare your edits against themselves and miss newly introduced unsafe code.
+
+When searching source text with `rg` or similar tools, search inside `{cargo_dir_path}/` rather than from the workspace root, for example `rg "PATTERN" {cargo_dir_path}` or `rg "PATTERN" {cargo_dir_path}/src`. Broad workspace-level searches can accidentally match the large `unsafe_json/*.json` files and flood your transcript. If you need information from `unsafe_json/*.json`, use the targeted `jq` queries below instead of text search.
+
+Do not use `grep`, `cat`, or `sed` to dump these JSON files; they are large single-line files and that will flood your transcript. Use `jq` to extract exactly what you need. Each JSON file has this shape:
+- `.total_unsafe`: the total counted unsafe operations, excluding FFI entry points.
+- `.fns`: map from fully qualified function name to per-function counts. Useful fields include `total_unsafe`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`, `calls_unsafe`, `uses_static_mut`, `uses_union_field`, `uses_foreign_fn`, `casts_int_to_ptr`, `sig_contains_raw_ptr`, and `is_ffi_entry_point`.
+- `.types`: map from fully qualified type name to `field_contains_raw_ptr`, a map from field name to raw-pointer count.
+
+Useful baseline queries:
+```sh
+# Show the functions that still count as unsafe, largest first.
+jq -r '.fns | to_entries[] | select(.value.total_unsafe > 0) | [.value.total_unsafe, .key, .value.derefs_raw_ptr, .value.calls_unsafe, (.value.uses_static_mut | length), (.value.uses_union_field | length), .value.is_unsafe_fn, .value.is_ffi_entry_point] | @tsv' "$FIND_UNSAFE2_JSON_DIR"/*.json | sort -nr
+
+# Inspect one family of functions by name.
+jq -r '.fns | to_entries[] | select(.key | test("FUNCTION_OR_PATTERN")) | {{name: .key, info: .value}}' "$FIND_UNSAFE2_JSON_DIR"/*.json
+
+# List raw-pointer fields in types.
+jq -r '.types | to_entries[] | .key as $type | .value.field_contains_raw_ptr | to_entries[] | select(.value > 0) | [$type, .key, .value] | @tsv' "$FIND_UNSAFE2_JSON_DIR"/*.json
+```
+
+If you need an up-to-date unsafe-count report for your edited code, write it to a separate temporary directory and query that directory instead of `unsafe_json/`:
+```sh
+rm -rf /tmp/current-unsafe-json
+FIND_UNSAFE2_JSON_DIR=/tmp/current-unsafe-json cargo find-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+jq -r '.total_unsafe' /tmp/current-unsafe-json/*.json
+jq -r '.fns | to_entries[] | select(.value.total_unsafe > 0) | [.value.total_unsafe, .key, .value.derefs_raw_ptr, .value.calls_unsafe, .value.is_unsafe_fn, .value.is_ffi_entry_point] | @tsv' /tmp/current-unsafe-json/*.json | sort -nr
+```
+
+After using `cargo find-unsafe2` for a current report, still run `cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml` before returning so your final edits are checked against the original baseline JSON.
 '''
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
@@ -1203,6 +1241,7 @@ class Workflow:
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            baseline_paths = [cargo_dir],
         )
 
     @step

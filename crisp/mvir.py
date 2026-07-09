@@ -817,6 +817,20 @@ class CargoFixOpNode(Node):
     cmd = property(lambda self: self._metadata['cmd'])
     exit_code = property(lambda self: self._metadata['exit_code'])
 
+class PostprocessOpNode(Node):
+    KIND = 'postprocess_op'
+    old_code: Metadata[NodeId]
+    # `new_code` is an empty `TreeNode` when the postprocess run failed.
+    new_code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    # `body` stores the log output
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+
 
 class DefNode(Node):
     KIND = 'def'
@@ -938,6 +952,7 @@ NODE_CLASSES = [
     CheckUnsafe2AnalysisNode,
     EditOpNode,
     CargoFixOpNode,
+    PostprocessOpNode,
 
     DefNode,
     CrateNode,

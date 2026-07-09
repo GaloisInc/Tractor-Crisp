@@ -253,6 +253,29 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'transpile'))
 
+    # Postprocess can fail by the tool itself failing, the output being not
+    # buildable, or the output failing the tests.  In all cases, failure is not
+    # fatal.
+    if w.codex_login:
+        # c2rust-postprocess does not support codex credentials yet.
+        print('skipping postprocess: not supported with --codex-login')
+    else:
+        try:
+            n_postprocess_code = w.postprocess(n_code)
+        except CrispError as e:
+            print(f'error: postprocess failed: {type(e).__name__}: {e}')
+        else:
+            if not w.cargo_check_json_op(n_postprocess_code).passed:
+                print('error: build failed after postprocess')
+            elif not w.test(n_postprocess_code, n_c_code):
+                print('error: tests failed after postprocess')
+            else:
+                n_code = n_postprocess_code
+                w.accept(n_code, ('main', 'postprocess'))
+
+    n_code = w.drop_c_decls_artifacts(n_code)
+    w.accept(n_code, ('main', 'drop_c_decls_artifacts'))
+
     n_code = w.split_ffi(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after split_ffi')

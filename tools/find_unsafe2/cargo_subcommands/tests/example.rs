@@ -10,10 +10,13 @@ fn run_check_after_cargo_build() {
     // these binaries to test the Cargo subcommands, but Cargo doesn't expose a way
     // for us to list those binaries as a dependency of this crate, so they won't
     // automatically be built if they don't exist.
-    let status = Command::new("cargo")
-        .current_dir(&fixture_dir)
+    let mut build_cmd = Command::new("cargo");
+    build_cmd.current_dir(&fixture_dir).arg("build");
+    if !cfg!(debug_assertions) {
+        build_cmd.arg("--release");
+    }
+    let status = build_cmd
         .args([
-            "build",
             "-p",
             "find_unsafe2",
             "--bin",

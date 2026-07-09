@@ -1,8 +1,7 @@
 use std::env;
 use std::path::{self, Path};
 use std::process::{self, Command};
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::CommandExt;
 
 fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     let mut cmd = Command::new("rustc");

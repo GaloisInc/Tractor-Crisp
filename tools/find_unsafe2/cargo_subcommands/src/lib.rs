@@ -1,9 +1,8 @@
 use std::env;
-use std::fs;
 use std::path::{self, Path};
 use std::process::{self, Command};
-use std::os::unix::process::CommandExt;
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 
 fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     let mut cmd = Command::new("rustc");
@@ -58,15 +57,10 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     // `cargo check-unsafe2` then we won't report any increased unsafe counts. To
     // ensure that Cargo always builds the project, we use a temp dir as the target
     // dir, forcing a full build every time.
-    let timestamp_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let target_dir = env::temp_dir().join(format!(
-        "find_unsafe2-target-{}-{timestamp_nanos}",
-        process::id()
-    ));
-    fs::create_dir_all(&target_dir).unwrap();
+    let target_dir = tempfile::Builder::new()
+        .prefix("find_unsafe2-target-")
+        .tempdir()
+        .unwrap();
 
     // Use `cargo +toolchain` instead of `$CARGO` here in case the parent `cargo` process is from a
     // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is
@@ -79,7 +73,7 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     cmd.arg("build")
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)
-        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TARGET_DIR", target_dir.path())
         .env("RUSTC_WRAPPER", wrapper_exe)
         .env(SRC_DIR_VAR, src_dir_abs)
         .env(JSON_DIR_VAR, json_dir_abs);

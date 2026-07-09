@@ -472,6 +472,9 @@ dependencies = [
 [[package]]
 name = "find_unsafe2_cargo_subcommands"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "fixedbitset"

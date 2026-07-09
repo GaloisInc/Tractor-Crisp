@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::{self, Path, PathBuf};
+use std::path::{self, Path};
 use std::process::{self, Command};
 use std::os::unix::process::CommandExt;
 use std::time::{SystemTime, UNIX_EPOCH};

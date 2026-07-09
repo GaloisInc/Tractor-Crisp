@@ -1,13 +1,15 @@
-use std::path::Path;
 use std::process::{Command, Stdio};
 
-// HACK: Manually build the find_unsafe2 and check_unsafe2 binaries. We need
-// these binaries to test the Cargo subcommands, but Cargo doesn't expose a way
-// for us to list those binaries as a dependency of this crate, so they won't
-// automatically be built if they don't exist.
-fn build_wrappers(fixture_dir: &Path) {
+#[test]
+fn run_check_after_cargo_build() {
+    let fixture_dir = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).unwrap();
+
+    // HACK: Manually build the find_unsafe2 and check_unsafe2 binaries. We need
+    // these binaries to test the Cargo subcommands, but Cargo doesn't expose a way
+    // for us to list those binaries as a dependency of this crate, so they won't
+    // automatically be built if they don't exist.
     let status = Command::new("cargo")
-        .current_dir(fixture_dir)
+        .current_dir(&fixture_dir)
         .args([
             "build",
             "-p",
@@ -20,19 +22,13 @@ fn build_wrappers(fixture_dir: &Path) {
         .status()
         .unwrap();
     assert!(status.success(), "failed to build wrapper binaries");
-}
-
-#[test]
-fn run_check_after_cargo_build() {
-    let fixture_dir = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).unwrap();
-
-    build_wrappers(&fixture_dir);
 
     let json_dir = format!(
         "{}/run_check_after_cargo_build",
         env!("CARGO_TARGET_TMPDIR")
     );
 
+    // Do the initial run of find-unsafe2 to generate the unsafe count JSON.
     let status = Command::new(env!("CARGO_BIN_EXE_cargo-find-unsafe2"))
         .current_dir(&fixture_dir)
         .arg("find-unsafe2")
@@ -43,6 +39,7 @@ fn run_check_after_cargo_build() {
         .unwrap();
     assert!(status.success(), "cargo-find-unsafe2 failed");
 
+    // Run `cargo build` on the workspace before running the unsafe checker.
     let status = Command::new("cargo")
         .current_dir(&fixture_dir)
         .args(["build", "--manifest-path", "example-new/Cargo.toml"])
@@ -50,6 +47,8 @@ fn run_check_after_cargo_build() {
         .unwrap();
     assert!(status.success(), "cargo build failed");
 
+    // Run `cargo check-unsafe2` after building the workspace to confirm that it
+    // still reports increased unsafe ops.
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-check-unsafe2"))
         .current_dir(&fixture_dir)
         .arg("check-unsafe2")

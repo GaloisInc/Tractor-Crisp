@@ -132,6 +132,23 @@ def run_rewrite(
         if planning_files is not None:
             sb.checkout(planning_files)
 
+        # Each agent turn gets a fresh sandbox, so make the checked-out files
+        # the baseline of a small local repository.  This lets the agent use
+        # ordinary Git commands (especially `git diff`) to inspect its edits.
+        # `git commit -a` alone does not include the initially untracked files,
+        # hence the explicit add before creating the baseline commit.
+        init_git_repo = [
+            'sh', '-c',
+            'git init -q && git add --all && '
+            'git -c user.name=CRISP -c user.email=crisp@localhost '
+            'commit --quiet -m "CRISP sandbox baseline"',
+        ]
+        exit_code, logs = sb.run(init_git_repo, cwd=cwd, stream=True)
+        if exit_code != 0:
+            raise CrispError(
+                f'failed to initialize Git repository in agent sandbox: '
+                f'exit code {exit_code}')
+
         if codex_login:
             print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
             _inject_codex_auth(sb)
@@ -163,6 +180,7 @@ def run_rewrite(
                 raise CrispError(f'codex-cli failed: exit code {exit_code}')
 
         ignore_lines = [
+            '.git/',
             '__pycache__/',
             'build/',
             'build-ninja/',

@@ -5,6 +5,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 import os
 from pathlib import Path
 import re
+import shlex
 
 from pathspec.pathspec import PathSpec
 
@@ -137,9 +138,23 @@ def run_rewrite(
         # ordinary Git commands (especially `git diff`) to inspect its edits.
         # `git commit -a` alone does not include the initially untracked files,
         # hence the explicit add before creating the baseline commit.
+        gitignore_lines = [
+            '# Cargo build output',
+            '/target/',
+            '**/*.rs.bk',
+            '*.pdb',
+        ]
+        if find_unsafe2_json_dir is not None:
+            gitignore_lines.extend([
+                '# CRISP unsafe-analysis results',
+                f'{find_unsafe2_json_dir.rstrip("/")}/',
+            ])
+        write_gitignore = (
+            f'printf %s {shlex.quote("\\n".join(gitignore_lines) + "\\n")} '
+            '> .gitignore')
         init_git_repo = [
             'sh', '-c',
-            'git init -q && git add --all && '
+            f'git init -q && {write_gitignore} && git add --all && '
             'git -c user.name=CRISP -c user.email=crisp@localhost '
             'commit --quiet -m "CRISP sandbox baseline"',
         ]

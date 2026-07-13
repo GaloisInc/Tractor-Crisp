@@ -6,7 +6,7 @@ import re
 import requests
 
 from . import llm_format
-from .config import Config, ModelConfig
+from .config import Config, ModelOptionsConfig
 from .error import CrispError
 from .mvir import MVIR, FileNode, TreeNode, LlmOpNode
 from .util import ChunkPrinter
@@ -240,11 +240,11 @@ def run_rewrite(
         think: bool = False,
         separate_system_prompt: bool = False
         ) -> tuple[TreeNode, LlmOpNode]:
-    model = API_MODEL or cfg.model
+    model = API_MODEL or cfg.models.rewriter
     if model is None:
         model = get_default_model()
     print('using model %r' % model)
-    model_cfg = cfg.models.get(model) or ModelConfig()
+    model_cfg = cfg.model_options.get(model) or ModelOptionsConfig()
 
     if LLM_FILE_FORMATTER is None:
         file_formatter = llm_format.get_file_formatter(

@@ -135,6 +135,9 @@ For FFI entry points, the following rules apply (these rules must be copied verb
 - For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
 - Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
 - Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
+- The FFI entry points should be as minimal as possible, and do as little
+  non-trivial work as necessary. All proper program logic should stay out of
+  the FFI wrappers and instead live in the internal safe Rust code.
 
 {after_refactoring_instruction}
 

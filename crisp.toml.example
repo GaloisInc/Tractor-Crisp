@@ -21,6 +21,15 @@ set -e
 cargo build --manifest-path rust/Cargo.toml
 """
 
+# Choose the models used by the different CRISP operations.
+[models]
+# Used by the Codex agent safety-refactoring mode.
+agent = "gpt-5.6-terra"
+# Used by the c2rust postprocessing pass.
+postprocess = "gpt-5.6-luna"
+# Used by direct LLM rewrite operations.  If omitted, CRISP asks the API for
+# its available models and uses the first one.
+#rewriter = "gpt-5.6-terra"
 
 [transpile]
 

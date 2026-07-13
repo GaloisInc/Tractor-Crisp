@@ -37,7 +37,10 @@ cd /root/project
 # Set up environment variables for accessing OpenAI models
 export CRISP_API_BASE=https://api.openai.com/v1
 export CRISP_API_KEY=sk-your-api-key-here
-export CRISP_API_MODEL=gpt-5-2025-08-07
+
+# Optional: override the `models.agent`, `models.rewriter`, etc. selections
+# in crisp.toml for this run.
+#export CRISP_API_MODEL=gpt-5.6-sol
 
 # As an alternative, you can direct CRISP to connect to llama.cpp or another
 # OpenAI-compatible provider running on the host machine:

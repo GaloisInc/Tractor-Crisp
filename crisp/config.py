@@ -39,6 +39,13 @@ class ConfigBase:
         return cls.from_dict(d, path, **kwargs)
 
 @dataclass(frozen = True)
+class ModelsConfig(ConfigBase):
+    agent: str  = "gpt-5.6-terra"
+    postprocess: str = "gpt-5.6-luna"
+    # `rewriter = None` means call `/v1/models` and pick the first from the list.
+    rewriter: str | None = None
+
+@dataclass(frozen = True)
 class Config(ConfigBase):
     config_path: str
 
@@ -58,10 +65,9 @@ class Config(ConfigBase):
     base_dir: str = '.'
     mvir_storage_dir: str = 'crisp-storage'
     on_accept: str | None = None
-    # `model = None` means call `/v1/models` and pick the first from the list.
-    model: str | None = None
 
-    models: dict[str, 'ModelConfig'] = field(default_factory=dict)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
+    model_options: dict[str, 'ModelOptionsConfig'] = field(default_factory=dict)
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)
@@ -171,7 +177,7 @@ class TranspileArtifactConfig(ConfigBase):
             os.path.join(config_dir, self.hayroll_project_dir))
 
 @dataclass(frozen = True)
-class ModelConfig(ConfigBase):
+class ModelOptionsConfig(ConfigBase):
     prefill: str = ''
     prefill_think: str = ''
     # Which mode to use for embedding files into the LLM input/output.  The

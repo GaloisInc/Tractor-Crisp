@@ -88,10 +88,31 @@ enum ItemKind<'a> {
     Static(&'a Ident),
 }
 
+#[derive(Clone, Debug)]
+enum TraversalScope<'a> {
+    Item(ItemKind<'a>),
+}
+
 #[derive(Clone, Debug, Default)]
 struct Visitor<'a> {
     out: Output,
-    current_item: Option<ItemKind<'a>>,
+    scopes: Vec<TraversalScope<'a>>,
+}
+
+impl<'a> Visitor<'a> {
+    fn with_scope(&mut self, scope: TraversalScope<'a>, visit: impl FnOnce(&mut Self)) {
+        self.scopes.push(scope);
+        visit(self);
+        self.scopes
+            .pop()
+            .expect("scope pushed immediately before traversal");
+    }
+
+    fn current_item(&self) -> Option<&ItemKind<'a>> {
+        self.scopes.iter().rev().find_map(|scope| match scope {
+            TraversalScope::Item(item) => Some(item),
+        })
+    }
 }
 
 impl<'ast> Visit<'ast> for Visitor<'ast> {
@@ -107,9 +128,9 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
             }
         }
 
-        let old = self.current_item.replace(ItemKind::Fn(ident));
-        visit::visit_item_fn(self, item_fn);
-        self.current_item = old;
+        self.with_scope(TraversalScope::Item(ItemKind::Fn(ident)), |visitor| {
+            visit::visit_item_fn(visitor, item_fn)
+        });
     }
 
     fn visit_item_static(&mut self, item_static: &'ast ItemStatic) {
@@ -119,13 +140,13 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
             self.out.mutable_statics.insert(name.clone());
         }
 
-        let old = self.current_item.replace(ItemKind::Static(ident));
-        visit::visit_item_static(self, item_static);
-        self.current_item = old;
+        self.with_scope(TraversalScope::Item(ItemKind::Static(ident)), |visitor| {
+            visit::visit_item_static(visitor, item_static)
+        });
     }
 
     fn visit_expr_unsafe(&mut self, x: &'ast ExprUnsafe) {
-        match self.current_item {
+        match self.current_item() {
             Some(ItemKind::Fn(ident)) => self.out.fns_containing_unsafe.insert(ident.to_string()),
             Some(ItemKind::Static(ident)) => self.out.statics_containing_unsafe.insert(ident.to_string()),
             None => <_>::default(),
@@ -164,7 +185,7 @@ impl<'ast> Visit<'ast> for Visitor<'ast> {
 
         if token_stream_contains_unsafe(mac.tokens.clone()) {
             // Attribute unsafe usage in macro invocation to the function we're in, if we can
-            match &self.current_item {
+            match self.current_item() {
                 Some(ItemKind::Fn(ident)) | Some(ItemKind::Static(ident)) => self.out.fns_containing_unsafe.insert(ident.to_string()),
                 None => self.out.global_macro_invocations_containing_unsafe.insert(name),
             };

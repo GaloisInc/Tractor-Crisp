@@ -45,7 +45,8 @@ class WorkContainer:
         self.container.put_archive('/root/work/', tar_bytes)
 
     def checkout(self, n_tree):
-        assert isinstance(n_tree, TreeNode)
+        assert isinstance(n_tree, TreeNode), \
+                f'expected TreeNode but got {n_tree!r} of type {type(n_tree)}'
         tar_io = io.BytesIO()
         with tarfile.open(fileobj=tar_io, mode='w') as t:
             for rel_path, n_file_id in n_tree.files.items():

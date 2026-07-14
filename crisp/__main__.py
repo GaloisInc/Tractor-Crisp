@@ -28,7 +28,7 @@ from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther,
+    AgentTargetOther, AgentTargetModule,
 )
 
 
@@ -68,7 +68,7 @@ def parse_args():
         help='Run COMMAND after each accepted CRISP state.')
     main.add_argument('--llm-mode',
         choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
-            'agent_rand_target'),
+            'agent_rand_target', 'agent_modules'),
         default='default',
         help='which style of LLM-based rewriting to use')
     main.add_argument('--codex-login', action='store_true',
@@ -80,7 +80,7 @@ def parse_args():
     safety_loop.add_argument('node', nargs='?', default='current')
     safety_loop.add_argument('--llm-mode',
         choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
-            'agent_rand_target'),
+            'agent_rand_target', 'agent_modules'),
         default='default',
         help='which style of LLM-based rewriting to use')
     safety_loop.add_argument('--codex-login', action='store_true',
@@ -136,7 +136,7 @@ def parse_args():
         help='check out files from this node into the sandbox')
 
     args = ap.parse_args()
-    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
+    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target', 'agent_modules')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
     return args
@@ -458,6 +458,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
                         n_code, n_c_code, n_plans)
 
+                case 'agent_modules':
+                    if target_goal is None or module_target_goal_is_done(w, n_code, target_goal):
+                        target_goal = pick_module_target_goal(w, n_code)
+                        target_goal_tries = limits.safety_tries_per_target
+                    if target_goal_tries == 0:
+                        raise ValueError(f'ran out of tries on module: {target_goal!r}')
+
+                    target_goal_tries -= 1
+
+                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                        n_code, n_c_code, n_plans,
+                        target_goal = target_goal)
+
                 case 'default':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code)
                     n_new_plans = n_plans
@@ -546,6 +559,31 @@ def target_goal_is_done(w, n_code, target_goal):
             case AgentTargetOther():
                 total += j['total_unsafe']
     return total == 0
+
+
+def module_target_goal_is_done(w, n_code, target_goal):
+    total = 0
+    num_fns = 0
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        for key in target_goal.expanded['items']:
+            f = j['fns'].get(key)
+            if f is not None and not f['is_ffi_entry_point']:
+                total += f['total_unsafe']
+                num_fns += 1
+    print(f'module_target_goal_is_done: processed {num_fns} fns, got {total} unsafe'
+        f' for {target_goal.module["desc"]}')
+    return total == 0
+
+def pick_module_target_goal(w, n_code):
+    j_m = json.load(open('MODULES.json'))
+    j_exp = json.load(open('EXPANDED.json'))
+    START = 19
+    for m, exp in zip(j_m['modules'][START:], j_exp['modules'][START:]):
+        tg = AgentTargetModule(m, exp)
+        if not module_target_goal_is_done(w, n_code, tg):
+            return tg
+    return AgentTargetOther()
 
 
 def do_safety_loop(args, cfg):

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import functools
 import inspect
+import json
 import os
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from .mvir import (
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, CodexAgentOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -151,8 +152,9 @@ For FFI entry points, the following rules apply:
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
-cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+cargo clean --manifest-path {cargo_dir_path}/Cargo.toml --workspace && cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
+(The `cargo clean` step is essential, as otherwise the `check-unsafe2` `$RUSTC_WRAPPER` may not get run due to Cargo thinking the build is still fresh.)
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
 '''
 
@@ -207,6 +209,52 @@ class AgentTargetOther(AgentTarget):
     """
     PROMPT_FMT = AGENT_TARGET_GOAL_OTHER
 
+
+AGENT_TARGET_GOAL_MODULE = '''
+The current module of interest is defined as follows:
+
+```json
+{module_json}
+```
+
+The schema for this module representation is as follows:
+
+```typescript
+{SINGLE_MODULE_JSON_SCHEMA}
+```
+'''
+
+SINGLE_MODULE_JSON_SCHEMA = '''
+// A name filter can be either a list of strings (exact match) or a single regex
+type NameFilter = string[] | string;
+
+type Filter = {
+  // If set, this filter matches only definitions from files with matching names.
+  // All paths should be relative to the root of the cargo workspace, e.g. `src/lib.rs`.
+  files?: NameFilter,
+  // If set, this filter matches only functions with matching names.
+  functions?: NameFilter,
+}
+
+type Module = {
+  // A few sentences describing the contents and functionality of the module.
+  desc: string,
+  // The module contains all definitions that match at least one filter.
+  filters: Filter[],
+}
+'''.strip()
+
+@dataclass(frozen = True)
+class AgentTargetModule(AgentTarget):
+    module: dict
+    expanded: dict
+
+    def prompt(self):
+        module_json = json.dumps(self.module, indent='  ').strip('\n')
+        return AGENT_TARGET_GOAL_MODULE.format(
+            module_json = module_json,
+            SINGLE_MODULE_JSON_SCHEMA = SINGLE_MODULE_JSON_SCHEMA,
+        )
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -1173,7 +1221,7 @@ class Workflow:
         n_op = self.agent_rewrite_op(prompt, inputs, output_filters,
             clean_cmds = clean_cmds,
         )
-        return n_op.outputs
+        return {k: self.mvir.node(v) for k,v in n_op.outputs.items()}
 
     @step
     def agent_rewrite_op(
@@ -1183,6 +1231,7 @@ class Workflow:
         output_filters: dict[str, Callable[[str], bool]],
         clean_cmds: list[list[str]] = [],
     ) -> CodexAgentOpNode:
+        cfg, mvir = self.cfg, self.mvir
         return agent.run_rewrite(cfg, mvir, prompt, inputs, output_filters,
             codex_login=self.codex_login,
             clean_cmds = clean_cmds,
@@ -1226,7 +1275,7 @@ class Workflow:
             prompt = f'{prompt}\n\n{prompt_suffix}'
         out = self.agent_rewrite(prompt, inputs,
             {
-                'code': lambda path: (test_code is None or path not in n_test_code.files)
+                'code': lambda path: (n_test_code is None or path not in n_test_code.files)
                     and (path in n_code.files or path.endswith('.rs')),
                 'plans': lambda path:
                     path.startswith('.codex/sessions/') and path.endswith('.jsonl'),

@@ -107,7 +107,7 @@ def run_rewrite(
     codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
-) -> dict[str, TreeNode]:
+) -> CodexAgentOpNode:
     """
     Run the agent on some inputs to produce some outputs.
 

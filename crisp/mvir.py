@@ -629,6 +629,11 @@ class TreeNode(Node):
 
     files = property(lambda self: self._metadata['files'])
 
+    @property
+    def sole_file(self):
+        assert len(self.files) == 1
+        return next(iter(self.files.values()))
+
 class CompileCommandsOpNode(Node):
     KIND = 'compile_commands_op_v2'
     c_code: Metadata[NodeId]

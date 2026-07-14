@@ -40,7 +40,8 @@ class ConfigBase:
 
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
-    agent: str  = "gpt-5.6-terra"
+    agent_plan: str = "gpt-5.6-sol"
+    agent_loop: str = "gpt-5.6-terra"
     postprocess: str = "gpt-5.6-luna"
     # `rewriter = None` means call `/v1/models` and pick the first from the list.
     rewriter: str | None = None

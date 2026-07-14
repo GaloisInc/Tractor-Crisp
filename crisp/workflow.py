@@ -1197,7 +1197,7 @@ class Workflow:
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
-        return agent.run_rewrite(cfg, mvir, prompt, n_code,
+        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
             codex_login=self.codex_login,
@@ -1316,7 +1316,7 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
         )
-        return agent.run_rewrite(cfg, mvir, prompt, n_code,
+        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             planning_files = None,
             codex_login=self.codex_login,

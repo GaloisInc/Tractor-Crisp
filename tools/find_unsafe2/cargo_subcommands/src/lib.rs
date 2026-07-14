@@ -1,7 +1,6 @@
 use std::env;
 use std::path::{self, Path};
 use std::process::{self, Command};
-use std::os::unix::process::CommandExt;
 
 fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     let mut cmd = Command::new("rustc");
@@ -16,7 +15,7 @@ fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
+pub fn cargo_subcommand_main(wrapper_exe: &Path) {
     let opt_toolchain = option_env!("RUSTUP_TOOLCHAIN");
 
     // LD_LIBRARY_PATH handling
@@ -46,6 +45,21 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
     let json_dir = opt_json_dir.as_ref().map_or(Path::new("find_unsafe2_json"), |x| Path::new(x));
     let json_dir_abs = path::absolute(&json_dir).unwrap();
 
+    // Create a fresh target dir for each run to ensure that Cargo actually runs our
+    // rustc wrapper.
+    //
+    // If we try to run `cargo build` within the normal workspace and the workspace
+    // is clean (i.e. no changes have been made since the last `cargo build`), then
+    // `cargo build` is a no-op and never actually invokes our wrapper. This means
+    // that if the agent does `cargo build` right before (or at the same time as)
+    // `cargo check-unsafe2` then we won't report any increased unsafe counts. To
+    // ensure that Cargo always builds the project, we use a temp dir as the target
+    // dir, forcing a full build every time.
+    let target_dir = tempfile::Builder::new()
+        .prefix("find_unsafe2-target-")
+        .tempdir()
+        .unwrap();
+
     // Use `cargo +toolchain` instead of `$CARGO` here in case the parent `cargo` process is from a
     // different toolchain from the one `find_unsafe2` was built with.  If the parent toolchain is
     // too far apart in version, its `cargo` might be incompatible with `find_unsafe2`'s wrapped
@@ -55,12 +69,18 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
         cmd.arg(format!("+{toolchain}"));
     }
     cmd.arg("build")
+        .arg("--target-dir")
+        .arg(target_dir.path())
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)
         .env("RUSTC_WRAPPER", wrapper_exe)
         .env(SRC_DIR_VAR, src_dir_abs)
         .env(JSON_DIR_VAR, json_dir_abs);
     eprintln!("exec: {cmd:?}");
-    let err = cmd.exec();
-    panic!("exec failed: {:?}", err);
+    let status = cmd
+        .status()
+        .expect("Failed to run `cargo build` with RUSTC_WRAPPER");
+    if !status.success() {
+        panic!("Failed to run {}: {status}", wrapper_exe.display())
+    }
 }

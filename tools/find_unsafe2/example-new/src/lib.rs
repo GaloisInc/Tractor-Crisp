@@ -41,12 +41,12 @@ fn f6(r: &i32) -> i32 {
 
 unsafe fn f7a(x: usize) -> i32 {
     // Error: integer-to-pointer casts are forbidden.
-    *(x as *const i32)
+    unsafe { *(x as *const i32) }
 }
 
 unsafe fn f7b(x: &i32) -> i32 {
     // No error; reference-to-pointer casts are allowed.
-    *(x as *const i32)
+    unsafe { *(x as *const i32) }
 }
 
 

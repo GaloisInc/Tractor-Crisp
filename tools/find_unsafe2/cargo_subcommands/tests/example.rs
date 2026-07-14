@@ -1,14 +1,5 @@
 use std::process::{Command, Stdio};
 
-// HACK: Clear RUSTFLAGS when running the build/tools on the unsafe code. When
-// running in CI we use `-D warnings`, which then leaks into the build of the
-// unsafe test code causing build errors. This helper clears that flag so that
-// we can allow warnings in the test code.
-fn clear_fixture_rustflags(cmd: &mut Command) -> &mut Command {
-    cmd.env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-}
-
 // Verify that `cargo check-unsafe2` works in a clean workspace, specifically
 // that the unsafe checker still reports increased unsafe after a `cargo build`.
 #[test]
@@ -43,8 +34,7 @@ fn run_check_after_cargo_build() {
     );
 
     // Do the initial run of find-unsafe2 to generate the unsafe count JSON.
-    let mut find_cmd = Command::new(env!("CARGO_BIN_EXE_cargo-find-unsafe2"));
-    let status = clear_fixture_rustflags(&mut find_cmd)
+    let status = Command::new(env!("CARGO_BIN_EXE_cargo-find-unsafe2"))
         .current_dir(&fixture_dir)
         .arg("find-unsafe2")
         .args(["--manifest-path", "example-old/Cargo.toml"])
@@ -55,8 +45,7 @@ fn run_check_after_cargo_build() {
     assert!(status.success(), "cargo-find-unsafe2 failed");
 
     // Run `cargo build` on the workspace before running the unsafe checker.
-    let mut cargo_build_cmd = Command::new("cargo");
-    let status = clear_fixture_rustflags(&mut cargo_build_cmd)
+    let status = Command::new("cargo")
         .current_dir(&fixture_dir)
         .args(["build", "--manifest-path", "example-new/Cargo.toml"])
         .status()
@@ -65,8 +54,7 @@ fn run_check_after_cargo_build() {
 
     // Run `cargo check-unsafe2` after building the workspace to confirm that it
     // still reports increased unsafe ops.
-    let mut check_cmd = Command::new(env!("CARGO_BIN_EXE_cargo-check-unsafe2"));
-    let output = clear_fixture_rustflags(&mut check_cmd)
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-check-unsafe2"))
         .current_dir(&fixture_dir)
         .arg("check-unsafe2")
         .args(["--manifest-path", "example-new/Cargo.toml"])

@@ -429,6 +429,10 @@ class Workflow:
 
         code = self.patch_cargo_toml_workspace(code)
 
+        # Note: the toolchain upgrade must run after c2rust-refactor, since
+        # that tool only supports an older version of Rust.
+        code = self.patch_upgrade_toolchain(code)
+
         if not self.cargo_check_json_op(code).passed:
             print('error: build failed after transpile')
             return None
@@ -788,6 +792,65 @@ class Workflow:
             body = f'patch build.rs (libs = {libs})',
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_build_rs')
+        return n_op
+
+    @step
+    def patch_upgrade_toolchain(self, code: TreeNode) -> TreeNode:
+        """
+        Patch `rust-toolchain.toml` and `.rs` files to make the project build
+        with a newer toolchain.  c2rust-transpile outputs code for a 2023
+        toolchain by default, but find-unsafe2 uses a newer 2026 toolchain;
+        this upgrades the project to work with the latter.
+
+        This is necessary because c2rust-transpile now outputs calls to the
+        strict provenance APIs, which were renamed in 2024, making the
+        transpiler output incompatible with find-unsafe2.  Upgrading to the
+        newer toolchain (and renaming the strict provenance calls in the
+        process) allows find-unsafe2 to work on the transpiled code.
+        """
+        n_op = self.patch_upgrade_toolchain_op(code)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_upgrade_toolchain_op(self, code: TreeNode) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        new_files = {}
+        for path, file_id in code.files.items():
+            if path.endswith('.rs'):
+                file = mvir.node(file_id)
+                old_src = file.body_str()
+                new_src = (old_src
+                    .replace('ptr::from_exposed_addr', 'ptr::with_exposed_provenance')
+                    .replace('.expose_addr()', '.expose_provenance()'))
+                new_file = FileNode.new(mvir, new_src)
+                new_file_id = new_file.node_id()
+
+            elif path.endswith('rust-toolchain.toml'):
+                file = mvir.node(file_id)
+                OLD_TOOLCHAIN = 'nightly-2023-04-15'
+                NEW_TOOLCHAIN = 'nightly-2026-06-17'
+                old_src = file.body_str()
+                assert OLD_TOOLCHAIN in old_src, f'old toolchain toml = {old_src!r}'
+                new_src = old_src.replace(OLD_TOOLCHAIN, NEW_TOOLCHAIN)
+                new_file = FileNode.new(mvir, new_src)
+                new_file_id = new_file.node_id()
+
+            else:
+                new_file_id = file_id
+
+            new_files[path] = new_file_id
+
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch to upgrade toolchain',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_upgrade_toolchain')
         return n_op
 
     @step

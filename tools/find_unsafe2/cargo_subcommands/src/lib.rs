@@ -70,9 +70,10 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
         cmd.arg(format!("+{toolchain}"));
     }
     cmd.arg("build")
+        .arg("--target-dir")
+        .arg(target_dir.path())
         .args(env::args().skip(2))
         .env(LIB_PATH_VAR, new_lib_path)
-        .env("CARGO_TARGET_DIR", target_dir.path())
         .env("RUSTC_WRAPPER", wrapper_exe)
         .env(SRC_DIR_VAR, src_dir_abs)
         .env(JSON_DIR_VAR, json_dir_abs);

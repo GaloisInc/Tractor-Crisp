@@ -1,7 +1,6 @@
 use std::env;
 use std::path::{self, Path};
 use std::process::{self, Command};
-use std::os::unix::process::CommandExt;
 
 fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     let mut cmd = Command::new("rustc");
@@ -16,7 +15,7 @@ fn rustc_print_sysroot(opt_toolchain: Option<&str>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
+pub fn cargo_subcommand_main(wrapper_exe: &Path) {
     let opt_toolchain = option_env!("RUSTUP_TOOLCHAIN");
 
     // LD_LIBRARY_PATH handling
@@ -78,6 +77,10 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) -> ! {
         .env(SRC_DIR_VAR, src_dir_abs)
         .env(JSON_DIR_VAR, json_dir_abs);
     eprintln!("exec: {cmd:?}");
-    let err = cmd.exec();
-    panic!("exec failed: {:?}", err);
+    let status = cmd
+        .status()
+        .expect("Failed to run `cargo build` with RUSTC_WRAPPER");
+    if !status.success() {
+        panic!("Failed to run {}: {status}", wrapper_exe.display())
+    }
 }

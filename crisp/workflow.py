@@ -596,21 +596,29 @@ class Workflow:
         with run_sandbox(cfg, mvir) as sb:
             sb.checkout(n_tree)
 
-            postprocess_cmd = [
-                'c2rust',
-                'postprocess',
-                '--update-rust',
-                '--on-error',
-                'warn',
-                '--no-update-cache',
-            ]
-            postprocess_cmd.append(sb.join(root_rust_source_file))
+            postprocess_model = (
+                os.environ.get('CRISP_API_MODEL') or cfg.models.postprocess
+            )
 
             postprocess_env = {
                 key: value
-                for key in ('CRISP_API_BASE', 'CRISP_API_KEY', 'CRISP_API_MODEL')
+                for key in ('CRISP_API_BASE', 'CRISP_API_KEY')
                 if (value := os.environ.get(key)) is not None
             }
+
+            # c2rust-postprocess uses CRISP credentials only when CRISP_API_MODEL is set.
+            if 'CRISP_API_KEY' in postprocess_env:
+                postprocess_env['CRISP_API_MODEL'] = postprocess_model
+
+            postprocess_cmd = [
+                'c2rust', 'postprocess',
+                '--update-rust',
+                '--on-error', 'warn',
+                '--no-update-cache',
+                '--llm-model', postprocess_model,
+                sb.join(root_rust_source_file),
+            ]
+
             exit_code, logs = sb.run(
                 postprocess_cmd, stream=True, env=postprocess_env)
 

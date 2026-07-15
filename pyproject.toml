@@ -21,8 +21,11 @@ gepa = [
 [project.scripts]
 crisp = "crisp.__main__:main"
 
-[tool.setuptools]
-packages = ["crisp"]
+[tool.setuptools.packages.find]
+include = ["crisp*"]
+
+[tool.setuptools.package-data]
+"crisp.agent" = ["codex/*.md", "codex/*.toml"]
 
 [tool.uv]
 package = true

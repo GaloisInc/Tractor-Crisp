@@ -3,18 +3,34 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 import os
-from pathlib import Path
 import re
+from pathlib import Path
+from typing import Sequence
 
 from pathspec.pathspec import PathSpec
 
-from . import llm
-from .config import Config
-from .error import CrispError
-from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
-from .sandbox import run_sandbox
+from .. import llm
+from ..config import Config
+from ..error import CrispError
+from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
+from ..sandbox import run_sandbox
+
+# Repo-side agent assets; installed into the sandbox as `.codex/`, the
+# directory codex-cli searches for project-level agents and instructions.
+_CODEX_ASSET_DIR = Path(__file__).parent / 'codex'
+_CODEX_SAFETY_CONSTRAINTS = 'safety_constraints.md'
+
+PLANNING_CODEX_AGENTS = (
+    'collections_analyst',
+    'ffi_abi_analyst',
+    'libc_analyst',
+    'macro_analyst',
+    'ownership_analyst',
+    'strings_analyst',
+)
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
+
 
 def _snapshot_to_family_alias(model: str) -> str:
     """
@@ -43,11 +59,11 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
             'model_providers.crisp.env_key': 'CRISP_API_KEY',
             'model_provider': 'crisp',
             'model': llm.API_MODEL or model,
-            # TODO: OpenAI pricing is based on input and output tokens, with 
+            # TODO: OpenAI pricing is based on input and output tokens, with
             # long context tokens costing twice as much as short context ones.
             # We might want to set limits to avoid the long context pricing.
             #
-            # Example config limits for gpt-5.5:  
+            # Example config limits for gpt-5.5:
             #
             # 'model_context_window': 272000
             # 'model_auto_compact_token_limit' = 240000
@@ -56,7 +72,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
             cmd += ['-c', f'{k}={v}']
 
     # Fast (aka. priority) mode delivers 1.5 faster tokens at 2.5x credit use [0].
-    # The service tier selection mechanism can be entirely disabled by setting 
+    # The service tier selection mechanism can be entirely disabled by setting
     # `fast_mode == false` [1].
     #
     # [0]: https://developers.openai.com/codex/speed
@@ -65,9 +81,14 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
         '-c', 'model_reasoning_effort="high"',
         '-c', 'features.fast_mode=false',
     ]
-    
+
     cmd += args
     return cmd
+
+def _checkout_bytes(sb, mvir: MVIR, rel_path: str, body: bytes):
+    """Add an ephemeral file to any supported CRISP sandbox."""
+    sb.checkout_file(rel_path, FileNode.new(mvir, body))
+
 
 def _inject_codex_auth(sb):
     """Copy the host's ``auth.json`` into the container's work
@@ -92,7 +113,42 @@ def _inject_codex_auth(sb):
     with open(host_auth, 'rb') as f:
         auth_bytes = f.read()
 
+    # Do not create an MVIR FileNode for credentials: that would persist the
+    # secret in CRISP's content-addressed storage.
     sb.checkout_file_untracked('.codex/auth.json', auth_bytes)
+
+
+def _inject_codex_agents(
+    sb,
+    mvir: MVIR,
+    agent_names: Sequence[str],
+):
+    """Install selected agent profiles from `codex/` into the sandbox's
+    `.codex/`, where codex-cli discovers them."""
+    if not agent_names:
+        return
+
+    available = {path.stem: path for path in _CODEX_ASSET_DIR.glob('*.toml')}
+    unknown = sorted(set(agent_names) - available.keys())
+    if unknown:
+        raise CrispError(
+            f'unknown Codex agent profile(s): {", ".join(unknown)}')
+
+    constraints = _CODEX_ASSET_DIR / _CODEX_SAFETY_CONSTRAINTS
+    _checkout_bytes(
+        sb,
+        mvir,
+        f'.codex/{_CODEX_SAFETY_CONSTRAINTS}',
+        constraints.read_bytes(),
+    )
+    for name in agent_names:
+        profile = available[name]
+        _checkout_bytes(
+            sb,
+            mvir,
+            f'.codex/agents/{profile.name}',
+            profile.read_bytes(),
+        )
 
 
 def run_rewrite(
@@ -108,6 +164,7 @@ def run_rewrite(
     codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
+    codex_agents: Sequence[str] = (),
 ) -> tuple[TreeNode, TreeNode]:
     # Print the warning in red so it stands out
     WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
@@ -161,6 +218,8 @@ def run_rewrite(
         exit_code, logs = sb.run(init_git_repo, cwd='.', shell=True, stream=True)
 
         if exit_code == 0:
+            _inject_codex_agents(sb, mvir, codex_agents)
+
             if codex_login:
                 print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
                 _inject_codex_auth(sb)

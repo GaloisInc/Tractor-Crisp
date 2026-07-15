@@ -22,6 +22,14 @@ Use the CRISP checkout that contains `safety-history`. Do not use `crisp eval` o
 
 The renderer creates the totals, validation notes, checkpoint, and table skeleton. Review every `Final edit summary` for concision and technical accuracy. Rewrite awkward session prose, but do not change IDs, counts, tokens, durations, or results without checking the CLI JSON.
 
+Inspect one row without filtering the full JSON externally:
+
+```sh
+crisp safety-history --agent-op <agent-op-id>
+```
+
+Use the returned node IDs with `crisp show`, for example `crisp show <agent-op-id>.json_session` or `crisp show <unsafe-check-node-id>`.
+
 ## Process a Resumed Run
 
 CRISP appends agent operations to one chronological MVIR history across process restarts. The full agent-operation node ID in `Last processed MVIR agent operation` is the exclusive checkpoint.

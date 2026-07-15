@@ -189,6 +189,7 @@ class SafetyHistoryTest(unittest.TestCase):
         self.assertEqual(data["rows"][0]["agent_op"], str(op3.node_id()))
         self.assertEqual(data["selection"], {
             "after": str(op2.node_id()),
+            "agent_op": None,
             "returned_rows": 1,
         })
         self.assertEqual(data["aggregate"]["completed_edits"], 3)
@@ -198,6 +199,27 @@ class SafetyHistoryTest(unittest.TestCase):
         unrelated = FileNode.new(self.mvir, "unrelated")
         with self.assertRaisesRegex(ValueError, "not present in safety history"):
             build_safety_history(self.mvir, after=unrelated.node_id())
+
+    def test_agent_op_selects_one_globally_numbered_row(self):
+        _, op2, _ = self.build_fixture()
+        data = build_safety_history(self.mvir, agent_op=op2.node_id())
+
+        self.assertEqual(len(data["rows"]), 1)
+        self.assertEqual(data["rows"][0]["number"], 2)
+        self.assertEqual(data["rows"][0]["agent_op"], str(op2.node_id()))
+        self.assertEqual(data["selection"], {
+            "after": None,
+            "agent_op": str(op2.node_id()),
+            "returned_rows": 1,
+        })
+        self.assertEqual(data["aggregate"]["completed_edits"], 3)
+
+    def test_agent_op_and_after_are_mutually_exclusive(self):
+        op1, op2, _ = self.build_fixture()
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            build_safety_history(
+                self.mvir, after=op1.node_id(), agent_op=op2.node_id()
+            )
 
 
 class SummaryRendererTest(unittest.TestCase):
@@ -238,7 +260,11 @@ class SummaryRendererTest(unittest.TestCase):
                 "net_unsafe_removed": 3,
                 "internal_check_unsafe2_increase_count": 0,
             },
-            "selection": {"after": after, "returned_rows": 1},
+            "selection": {
+                "after": after,
+                "agent_op": None,
+                "returned_rows": 1,
+            },
             "checkpoint": {"last_agent_op": agent_op},
             "coverage_warnings": [],
         }

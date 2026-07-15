@@ -85,7 +85,8 @@ def concise_message(message):
 def render(data, run_name):
     rows = data["rows"]
     aggregate = data["aggregate"]
-    if data.get("selection", {}).get("after") is not None:
+    selection = data.get("selection", {})
+    if selection.get("after") is not None or selection.get("agent_op") is not None:
         raise ValueError("render a complete summary from unfiltered history")
     deltas = [row["delta"] for row in rows if row["delta"] is not None]
     all_tests_passed = all(row["test_exit_code"] == 0 for row in rows)

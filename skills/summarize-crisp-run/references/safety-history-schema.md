@@ -3,9 +3,9 @@
 The command emits one JSON object with these top-level fields:
 
 - `schema_version`: output schema version.
-- `rows`: completed Codex agent operations, chronologically ordered. With `--after`, contains only rows after the exclusive checkpoint.
+- `rows`: completed Codex agent operations, chronologically ordered. With `--after`, contains only rows after the exclusive checkpoint. With `--agent-op`, contains exactly the selected globally numbered row.
 - `aggregate`: totals for the complete history, even when `rows` is filtered by `--after`.
-- `selection`: requested checkpoint and number of returned rows.
+- `selection`: requested `after` or `agent_op` selector and number of returned rows.
 - `checkpoint`: final agent-operation ID and timestamp in the complete history.
 - `coverage_warnings`: missing session or unsafe-count evidence.
 

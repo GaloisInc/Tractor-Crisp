@@ -14,8 +14,6 @@ from .error import CrispError
 from .mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from .sandbox import run_sandbox
 
-AGENT_DEFAULT_MODEL = "gpt-5.5-2026-04-23"
-
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 
 def _snapshot_to_family_alias(model: str) -> str:
@@ -26,7 +24,7 @@ def _snapshot_to_family_alias(model: str) -> str:
     m = _SNAPSHOT_SUFFIX.match(model)
     return m.group("alias") if m else model
 
-def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> list[str]:
+def _codex_command(cfg: Config, subcmd: str, args: list[str], codex_login: bool = False) -> list[str]:
     cmd = ['codex', subcmd]
 
     if codex_login:
@@ -34,7 +32,7 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
         # we attempt to convert snapshots to model family aliases.
-        model = _snapshot_to_family_alias(llm.API_MODEL or AGENT_DEFAULT_MODEL)
+        model = _snapshot_to_family_alias(llm.API_MODEL or cfg.models.agent)
         cmd += ['--model', model]
     else:
         config_settings = {
@@ -43,7 +41,7 @@ def _codex_command(subcmd: str, args: list[str], codex_login: bool = False) -> l
             #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
             'model_providers.crisp.env_key': 'CRISP_API_KEY',
             'model_provider': 'crisp',
-            'model': llm.API_MODEL or AGENT_DEFAULT_MODEL,
+            'model': llm.API_MODEL or cfg.models.agent,
             # TODO: OpenAI pricing is based on input and output tokens, with 
             # long context tokens costing twice as much as short context ones.
             # We might want to set limits to avoid the long context pricing.
@@ -167,7 +165,7 @@ def run_rewrite(
             codex_dir = sb.join(".codex")
             mkdir_codex = ['mkdir', '-p', codex_dir]
 
-            codex_cmd = _codex_command('exec', [
+            codex_cmd = _codex_command(cfg, 'exec', [
                 '--dangerously-bypass-approvals-and-sandbox',
                 '--skip-git-repo-check',
                 prompt,

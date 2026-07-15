@@ -23,3 +23,33 @@ fn g() {
     unsafe { }
     unsafe { unsafe { } }
 }
+
+struct H;
+
+// Inherent impl: mark `H::h` as containing unsafe.
+impl H {
+    fn h(&self) {
+        unsafe { }
+    }
+
+    // Mark `H::i` both as containing unsafe and as an unsafe fn.
+    unsafe fn i(&self) {
+        unsafe { }
+    }
+}
+
+trait J {
+    fn j(&self);
+
+    // Default trait method body: mark `J::k` as containing unsafe.
+    fn k(&self) {
+        unsafe { }
+    }
+}
+
+// Trait impl: mark `<H as J>::j` as containing unsafe.
+impl J for H {
+    fn j(&self) {
+        unsafe { }
+    }
+}

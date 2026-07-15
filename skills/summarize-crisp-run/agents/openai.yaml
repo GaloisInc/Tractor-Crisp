@@ -1,0 +1,4 @@
+interface:
+  display_name: "Summarize CRISP Run"
+  short_description: "Build CRISP summaries from safety history"
+  default_prompt: "Use $summarize-crisp-run to create or incrementally update SUMMARY.md from this CRISP workspace's MVIR."

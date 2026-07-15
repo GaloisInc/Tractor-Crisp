@@ -17,7 +17,7 @@ import sys
 import tempfile
 import traceback
 
-from . import analysis, inline_errors, llm, sandbox
+from . import analysis, inline_errors, llm, safety_history, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
@@ -111,6 +111,23 @@ def parse_args():
 
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
+
+    safety_history_parser = sub.add_parser(
+        'safety-history',
+        help='emit completed Codex safety-loop history from MVIR',
+    )
+    safety_history_parser.add_argument(
+        '--after', metavar='AGENT_OP',
+        help='emit only rows after this agent-operation node (exclusive)',
+    )
+    safety_history_parser.add_argument(
+        '--format', choices=('json',), default='json',
+        help='output format (default: json)',
+    )
+    safety_history_parser.add_argument(
+        '--compact', action='store_true',
+        help='emit compact JSON instead of indented JSON',
+    )
 
     commit = sub.add_parser('commit',
         help='import files and directories into MVIR')
@@ -626,6 +643,13 @@ def do_show(args, cfg):
             print(' --- %s: ---' % name)
             print(mvir.node(file_node_id).body().decode('utf-8'))
 
+
+def do_safety_history(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    after = parse_node_id_arg(mvir, args.after) if args.after is not None else None
+    data = safety_history.build_safety_history(mvir, after=after)
+    print(json.dumps(data, indent=None if args.compact else 2))
+
 def get_src_paths(cfg):
     files = set(f
         for g in cfg.src_globs
@@ -762,6 +786,8 @@ def main():
         do_show(args, cfg)
     elif args.cmd == 'index':
         do_index(args, cfg)
+    elif args.cmd == 'safety-history':
+        do_safety_history(args, cfg)
     elif args.cmd == 'commit':
         do_commit(args, cfg)
     elif args.cmd == 'checkout':

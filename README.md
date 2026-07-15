@@ -177,6 +177,22 @@ compiling the code ), use `crisp checkout 287272d --path ./out`; this will
 create `./out/Public-Tests/B01_organic/colourblind_lib/translated_rust/Cargo.lock`
 and so on.
 
+To inspect completed Codex safety-loop turns as structured JSON, including
+accepted and rejected returned edits, run:
+
+```sh
+crisp safety-history
+```
+
+Each row is identified by its agent-operation MVIR node ID and includes code
+IDs, unsafe-count changes, test and unsafe-check results, token usage, agent
+duration, and the final agent message.  To query only turns after a previously
+processed row while retaining full-run aggregates, use:
+
+```sh
+crisp safety-history --after <agent-operation-node-id>
+```
+
 # Testing
 
 To run all of the CI tests on `Test-Corpus`, you'll need access to

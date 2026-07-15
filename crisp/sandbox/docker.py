@@ -31,7 +31,7 @@ class WorkContainer:
         image_name = os.environ.get(DOCKER_IMAGE_ENV_VAR, DEFAULT_DOCKER_IMAGE)
         try:
             self.image = self.client.images.get(image_name)
-        except Exception:
+        except:
             print(f'error getting image `{image_name}` - you may need to build it first')
             raise
         self.container = None

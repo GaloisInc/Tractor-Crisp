@@ -186,8 +186,14 @@ crisp safety-history
 
 Each row is identified by its agent-operation MVIR node ID and includes code
 IDs, unsafe-count changes, test and unsafe-check results, token usage, agent
-duration, and the final agent message.  To query only turns after a previously
-processed row while retaining full-run aggregates, use:
+duration, and the final agent message.  To inspect one returned turn, use:
+
+```sh
+crisp safety-history --agent-op <agent-operation-node-id>
+```
+
+To query only turns after a previously processed row while retaining full-run
+aggregates, use:
 
 ```sh
 crisp safety-history --after <agent-operation-node-id>

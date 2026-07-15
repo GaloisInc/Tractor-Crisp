@@ -258,9 +258,13 @@ def _unsafe_rejection_reason(
 
 
 def build_safety_history(
-    mvir: MVIR, after: NodeId | None = None
+    mvir: MVIR,
+    after: NodeId | None = None,
+    agent_op: NodeId | None = None,
 ) -> dict[str, Any]:
     """Return JSON-serializable history for completed Codex safety turns."""
+    if after is not None and agent_op is not None:
+        raise ValueError("after and agent_op are mutually exclusive")
     op_log = _reflog(mvir, "op_history")
     agent_entries = [
         entry for entry in op_log if mvir.node(entry.node_id).kind == AGENT_KIND
@@ -376,13 +380,20 @@ def build_safety_history(
         })
 
     all_rows = rows
-    if after is not None:
-        matches = [i for i, row in enumerate(rows) if row["agent_op"] == str(after)]
+    selected_agent_op = agent_op if agent_op is not None else after
+    if selected_agent_op is not None:
+        matches = [
+            i for i, row in enumerate(rows)
+            if row["agent_op"] == str(selected_agent_op)
+        ]
         if not matches:
             raise ValueError(
-                f"agent operation {after} is not present in safety history"
+                f"agent operation {selected_agent_op} is not present in safety history"
             )
-        rows = rows[matches[-1] + 1:]
+        if agent_op is not None:
+            rows = [rows[matches[-1]]]
+        else:
+            rows = rows[matches[-1] + 1:]
 
     token_values = [
         row["tokens_used"] for row in all_rows if row["tokens_used"] is not None
@@ -429,6 +440,7 @@ def build_safety_history(
         },
         "selection": {
             "after": str(after) if after is not None else None,
+            "agent_op": str(agent_op) if agent_op is not None else None,
             "returned_rows": len(rows),
         },
         "checkpoint": {

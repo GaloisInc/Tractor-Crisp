@@ -116,9 +116,14 @@ def parse_args():
         'safety-history',
         help='emit completed Codex safety-loop history from MVIR',
     )
-    safety_history_parser.add_argument(
+    safety_history_selection = safety_history_parser.add_mutually_exclusive_group()
+    safety_history_selection.add_argument(
         '--after', metavar='AGENT_OP',
         help='emit only rows after this agent-operation node (exclusive)',
+    )
+    safety_history_selection.add_argument(
+        '--agent-op', metavar='AGENT_OP',
+        help='emit exactly this agent-operation row',
     )
     safety_history_parser.add_argument(
         '--format', choices=('json',), default='json',
@@ -647,7 +652,13 @@ def do_show(args, cfg):
 def do_safety_history(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     after = parse_node_id_arg(mvir, args.after) if args.after is not None else None
-    data = safety_history.build_safety_history(mvir, after=after)
+    agent_op = (
+        parse_node_id_arg(mvir, args.agent_op)
+        if args.agent_op is not None else None
+    )
+    data = safety_history.build_safety_history(
+        mvir, after=after, agent_op=agent_op
+    )
     print(json.dumps(data, indent=None if args.compact else 2))
 
 def get_src_paths(cfg):

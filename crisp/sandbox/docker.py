@@ -11,6 +11,10 @@ from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
+DEFAULT_DOCKER_IMAGE = 'tractor-crisp-user'
+DOCKER_IMAGE_ENV_VAR = 'CRISP_DOCKER_IMAGE'
+
+
 class WorkContainer:
     """
     Helper for managing a Docker/Podman container for building and running user
@@ -24,10 +28,11 @@ class WorkContainer:
     def __init__(self, mvir):
         self.mvir = mvir
         self.client = docker.from_env()
+        image_name = os.environ.get(DOCKER_IMAGE_ENV_VAR, DEFAULT_DOCKER_IMAGE)
         try:
-            self.image = self.client.images.get('tractor-crisp-user')
-        except:
-            print('error getting image `tractor-crisp-user` - you may need to build it first')
+            self.image = self.client.images.get(image_name)
+        except Exception:
+            print(f'error getting image `{image_name}` - you may need to build it first')
             raise
         self.container = None
 

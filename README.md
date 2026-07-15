@@ -84,6 +84,14 @@ uv sync
 docker build --target tractor-crisp-user --tag tractor-crisp-user .
 ```
 
+By default, CRISP uses the image named `tractor-crisp-user`. To use a
+different image, set `CRISP_DOCKER_IMAGE` when running CRISP:
+
+```sh
+docker build --target tractor-crisp-user --tag my-tractor-crisp-user .
+CRISP_DOCKER_IMAGE=my-tractor-crisp-user crisp main
+```
+
 ## Configuring CRISP
 
 Set up `crisp.toml` as above.

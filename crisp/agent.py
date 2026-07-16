@@ -130,37 +130,63 @@ def run_rewrite(
         if planning_files is not None:
             sb.checkout(planning_files)
 
-        if codex_login:
-            print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
-            _inject_codex_auth(sb)
-
-        codex_dir = sb.join(".codex")
-        mkdir_codex = ['mkdir', '-p', codex_dir]
-
-        codex_cmd = _codex_command(cfg, 'exec', [
-            '--dangerously-bypass-approvals-and-sandbox',
-            '--skip-git-repo-check',
-            prompt,
-        ], codex_login=codex_login)
-        print(codex_cmd)
-        all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
-
-        if 'CODEX_HOME' not in env:
-            env['CODEX_HOME'] = codex_dir
+        # Each agent turn gets a fresh sandbox, so make the entire sandbox
+        # (including input_code, unsafety JSON, and planning_files) the baseline
+        # of a small local repository.  The repository is rooted at `.` even
+        # when Codex runs in a narrower `cwd`; Git will find the parent repo.
+        # This lets the agent use ordinary Git commands (especially `git diff`)
+        # to inspect its edits.  `git commit -a` alone does not include the
+        # initially untracked files, hence the explicit add before creating the
+        # baseline commit.
+        gitignore_lines = [
+            '# Cargo build output',
+            'target/',
+        ]
         if find_unsafe2_json_dir is not None:
-            env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
+            gitignore_lines.extend([
+                '# CRISP unsafe-analysis results',
+                f'{find_unsafe2_json_dir.rstrip("/")}/',
+            ])
+        gitignore_file = FileNode.new(
+            mvir, '\n'.join(gitignore_lines) + '\n')
+        sb.checkout_file('.gitignore', gitignore_file)
+        init_git_repo = (
+            'git init -q && git add --all && '
+            'git -c user.name=CRISP -c user.email=crisp@localhost '
+            'commit --quiet -m "CRISP sandbox baseline"')
+        exit_code, logs = sb.run(init_git_repo, cwd='.', shell=True, stream=True)
 
-        exit_code = 0
-        logs = b''
-        for cmd in all_cmds:
-            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
-            logs += logs2
+        if exit_code == 0:
+            if codex_login:
+                print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
+                _inject_codex_auth(sb)
 
-            # TODO: ensure API key doesn't get included in the AgentOpNode
-            if exit_code != 0:
-                raise CrispError(f'codex-cli failed: exit code {exit_code}')
+            codex_dir = sb.join(".codex")
+            mkdir_codex = ['mkdir', '-p', codex_dir]
+
+            codex_cmd = _codex_command(cfg, 'exec', [
+                '--dangerously-bypass-approvals-and-sandbox',
+                '--skip-git-repo-check',
+                prompt,
+            ], codex_login=codex_login)
+            print(codex_cmd)
+            all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
+
+            if 'CODEX_HOME' not in env:
+                env['CODEX_HOME'] = codex_dir
+            if find_unsafe2_json_dir is not None:
+                env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
+
+            for cmd in all_cmds:
+                exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
+                logs += logs2
+
+                # TODO: ensure API key doesn't get included in the AgentOpNode
+                if exit_code != 0:
+                    break
 
         ignore_lines = [
+            '.git/',
             '__pycache__/',
             'build/',
             'build-ninja/',
@@ -217,5 +243,9 @@ def run_rewrite(
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+
+    if exit_code != 0:
+        raise CrispError(
+            f'agent invocation failed: exit code {exit_code}', n_op)
 
     return (output_code, output_plans)

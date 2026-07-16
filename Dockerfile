@@ -97,7 +97,21 @@ RUN mkdir /opt/codex-cli \
     && wget --quiet "$codex_url" \
     && tar -xzf "$(basename "$codex_url")" \
     && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex \
+    && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/apply_patch \
     && rm "$(basename "$codex_url")"
+
+# Verify that the Codex file-editing helper is available and functional.
+RUN workdir="$(mktemp -d)" \
+    && cd "$workdir" \
+    && printf '%s\n' \
+        '*** Begin Patch' \
+        '*** Add File: probe.txt' \
+        '+working' \
+        '*** End Patch' \
+        | apply_patch \
+    && test "$(cat probe.txt)" = working \
+    && cd / \
+    && rm -rf "$workdir"
 
 # Append the location of the Rust binaries to PATH
 # since `sh -l` overwrites that variable with the value

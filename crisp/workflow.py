@@ -843,8 +843,12 @@ class Workflow:
                 file = mvir.node(file_id)
                 old_src = file.body_str()
                 new_src = (old_src
+                    # This handles both `from_exposed_addr` and `from_exposed_addr_mut`
                     .replace('ptr::from_exposed_addr', 'ptr::with_exposed_provenance')
-                    .replace('.expose_addr()', '.expose_provenance()'))
+                    .replace('.expose_addr()', '.expose_provenance()')
+                    # `raw_ref_op` no longer requires a feature gate
+                    .replace('#![feature(raw_ref_op)]', '')
+                    )
                 new_file = FileNode.new(mvir, new_src)
                 new_file_id = new_file.node_id()
 

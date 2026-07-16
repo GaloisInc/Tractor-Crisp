@@ -521,6 +521,11 @@ class PickTarget:
 
     def current_target_goal(self, w, n_code):
         # Keep going with the current goal if possible.
+
+        # Optimistically take fuel from both the target and file to continue
+        # with the current goal.  If the target is out of fuel, we change
+        # targets and `give()` the target more fuel below; if the file is out
+        # of fuel, we changes files and targets and `give()` both more fuel.
         target_had_fuel = self.fuel_target.try_use()
         file_had_fuel = self.fuel_file.try_use()
 
@@ -565,8 +570,13 @@ class PickTarget:
         # Found no goal in any file, but `count_unsafe2` still reported some
         # unsafe code.  Tell the agent to check the entire codebase for
         # leftover unsafety.
+        self.target_goal = AgentTargetOther()
+        self.fuel_file.give()
+        self.fuel_file.use()
+        self.fuel_target.give()
+        self.fuel_target.use()
         print('PickTarget: no valid targets')
-        return AgentTargetOther()
+        return self.target_goal
 
 
 def pick_file_and_list_targets(w, n_code):

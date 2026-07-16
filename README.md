@@ -192,6 +192,16 @@ duration, and the final agent message.  To inspect one returned turn, use:
 crisp safety-history --agent-op <agent-operation-node-id>
 ```
 
+For a rejected turn, include the complete stored outputs from the agent's
+internal `cargo check-unsafe2` calls with:
+
+```sh
+crisp safety-history --agent-op <agent-operation-node-id> --include-internal-output
+```
+
+Use `--include-agent-commands` when the chronological shell-command sequence is
+needed to establish which code state an internal check examined.
+
 To query only turns after a previously processed row while retaining full-run
 aggregates, use:
 

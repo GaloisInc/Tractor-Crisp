@@ -17,7 +17,18 @@ Important row fields:
 - Safety: `before_count`, `candidate_count`, `after_count`, `delta`.
 - Agent session: `tokens_used`, `agent_duration`, `final_message`, `json_session`.
 - CRISP validation: `test_node`, `test_exit_code`, `unsafe_check_node`, `unsafe_check_exit_code`, `unsafe_check_diagnostics`.
-- Internal experiments: `internal_check_unsafe2_count`, `internal_check_unsafe2_increase_count`, `internal_check_unsafe2_runs`.
+- Internal experiments: `internal_check_unsafe2_count`, `internal_check_unsafe2_increase_count`, `internal_check_unsafe2_runs`, `internal_find_unsafe2_count`, `internal_find_unsafe2_runs`.
+
+Each `internal_check_unsafe2_runs` entry contains the tool-call ID, command,
+whether an increase was reported, and matching diagnostic lines. With
+`--include-internal-output`, it also contains the complete stored tool output
+in `output`; this is opt-in because full-run output can be large.
+The corresponding `internal_find_unsafe2_*` fields expose agent-side report
+generation, which can overwrite the comparison baseline when both commands use
+the same JSON directory.
+
+With `--include-agent-commands`, a row also has `agent_commands`, containing the
+chronological stored shell commands with their call IDs and timestamps.
 
 For rejected rows, `candidate_count` can be null because CRISP compares the candidate against the old unsafe report without necessarily running a standalone unsafe-count analysis on the rejected code. `after_count` remains the old accepted count and `delta` is zero.
 

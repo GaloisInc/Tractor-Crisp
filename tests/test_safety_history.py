@@ -96,6 +96,11 @@ class SafetyHistoryTest(unittest.TestCase):
             self.mvir, "\n".join(json.dumps(event) for event in events)
         )
 
+    def session_file(self, events):
+        return FileNode.new(
+            self.mvir, "\n".join(json.dumps(event) for event in events)
+        )
+
     def add_agent(self, old_code, new_code, message, accepted, check_body=""):
         op = CodexAgentOpNode.new(
             self.mvir,
@@ -220,6 +225,66 @@ class SafetyHistoryTest(unittest.TestCase):
             build_safety_history(
                 self.mvir, after=op1.node_id(), agent_op=op2.node_id()
             )
+
+    def test_internal_output_is_opt_in(self):
+        op1, _, _ = self.build_fixture()
+
+        default = build_safety_history(self.mvir, agent_op=op1.node_id())
+        self.assertNotIn(
+            "output", default["rows"][0]["internal_check_unsafe2_runs"][0]
+        )
+
+        detailed = build_safety_history(
+            self.mvir,
+            agent_op=op1.node_id(),
+            include_internal_output=True,
+        )
+        self.assertEqual(
+            detailed["rows"][0]["internal_check_unsafe2_runs"][0]["output"],
+            "check passed",
+        )
+
+        commands = build_safety_history(
+            self.mvir,
+            agent_op=op1.node_id(),
+            include_agent_commands=True,
+        )
+        self.assertEqual(
+            commands["rows"][0]["agent_commands"][0]["command"],
+            "cargo check-unsafe2 --manifest-path rust/Cargo.toml",
+        )
+
+    def test_heredoc_mentions_are_not_checker_runs(self):
+        old_code = self.code("old")
+        new_code = self.code("new")
+        self.add_unsafe_count(old_code, 1)
+        self.add_unsafe_count(new_code, 0)
+        events = [{
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "plan",
+                "arguments": json.dumps({
+                    "cmd": "cat <<'EOF' > PLAN\ncargo check-unsafe2\nEOF"
+                }),
+            },
+        }]
+        op = CodexAgentOpNode.new(
+            self.mvir,
+            old_code=old_code.node_id(),
+            new_code=new_code.node_id(),
+            raw_prompt=FileNode.new(self.mvir, "prompt").node_id(),
+            exit_code=0,
+            raw_output_files=self.empty_tree.node_id(),
+            json_session=self.session_file(events).node_id(),
+            planning_files=self.empty_tree.node_id(),
+            body="agent output",
+        )
+        self.mvir.set_tag("op_history", op.node_id(), op.kind)
+
+        data = build_safety_history(self.mvir)
+        self.assertEqual(data["rows"][0]["internal_check_unsafe2_count"], 0)
 
 
 class SummaryRendererTest(unittest.TestCase):

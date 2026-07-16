@@ -1091,8 +1091,8 @@ class Workflow:
                     sb.join(rust_path_rel, 'Cargo.toml')])
 
                 # `cargo fmt` sometimes fails with an internal error about
-                # being unable to remove trailing whitespace.  We log the error
-                # in that case and then suppress it.
+                # being unable to remove trailing whitespace (see issue #146).
+                # We log the error in that case and then suppress it.
                 if exit_code != 0:
                     logs2 += f'\n`cargo fmt` failed with code {exit_code}\n'.encode()
                     exit_code = 0

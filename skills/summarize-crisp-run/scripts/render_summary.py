@@ -10,17 +10,48 @@ from statistics import mean, median
 import sys
 
 
+SECTION_MARKER = re.compile(
+    r"(?:\n|\s)+(?:(?:I also |and )?[Uu]pdated|Created/updated) SAFETY_PLAN|"
+    r"(?:\n|\s)+\*\*(?:Validation|Validated|Verified|Plan|Next(?: Iteration)?)\*\*|"
+    r"\n+Verification(?: passed)?:|\n+Verified with:|"
+    r"\n+Tests passed|\n+Workspace|\n+Only the|\n+Note:",
+    re.I,
+)
+
+SESSION_SENTENCE = re.compile(
+    r"^(?:Validation|Validated|Verified|Tests?|Workspace|Existing warnings|"
+    r"The checker reports|The generated|Test execution|Left (?:the )?pre-existing|"
+    r"Removed the generated|Only `SAFETY_PLAN|The next iteration)",
+    re.I,
+)
+
+PLAN_SENTENCE = re.compile(
+    r"^(?:Updated|Recorded|Compacted|Queued|Selected)", re.I
+)
+
+PLAN_TERM = re.compile(
+    r"\b(?:iteration|continuation|progress|handoff|next|plan|notes|target)\b",
+    re.I,
+)
+
+
+def _shorten_at_sentence(text, limit=450):
+    if len(text) <= limit:
+        return text
+    shortened = text[:limit]
+    sentence_end = max(shortened.rfind(". "), shortened.rfind("! "),
+                       shortened.rfind("? "))
+    if sentence_end >= 0:
+        return shortened[:sentence_end + 1]
+    return shortened.rsplit(" ", 1)[0] + "..."
+
+
 def concise_message(message):
     if not message:
         return "Final agent summary unavailable from the stored session."
     text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", message)
-    text = re.split(
-        r"(?:\n|\s)+(?:(?:I also |and )?[Uu]pdated|Created/updated) SAFETY_PLAN|"
-        r"\n+Verification(?: passed)?:|\n+Verified with:|"
-        r"\n+Tests passed|\n+Workspace|\n+Only the|\n+Note:",
-        text,
-        maxsplit=1,
-    )[0]
+    text = SECTION_MARKER.split(text, maxsplit=1)[0]
+    text = re.sub(r"^\*\*[^*]+\*\*\s*", "", text)
     paragraphs = [
         part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()
     ]
@@ -59,10 +90,33 @@ def concise_message(message):
         )
         if paragraph:
             kept.append(paragraph)
-        if sum(len(item) for item in kept) >= 500:
-            break
     summary = " ".join(kept).replace("|", "\\|")
     summary = re.sub(r"\s+", " ", summary).strip()
+
+    cleaned_sentences = []
+    for sentence in re.split(r"(?<=[.!?])\s+", summary):
+        if "SAFETY_PLAN.md" in sentence:
+            if PLAN_SENTENCE.match(sentence):
+                continue
+            plan_start = re.search(
+                r"\s+(?:Added|Updated|Recorded|Compacted|Queued|Selected)\b",
+                sentence,
+                re.I,
+            )
+            if plan_start:
+                sentence = sentence[:plan_start.start()].strip()
+            else:
+                continue
+        if not sentence or SESSION_SENTENCE.match(sentence):
+            continue
+        plan_sentence = re.sub(r"^`?rust/[^`\s]+`?\s+", "", sentence)
+        if PLAN_SENTENCE.match(plan_sentence) and PLAN_TERM.search(plan_sentence):
+            continue
+        if re.fullmatch(r"`?rust/[^`\s]+`?", sentence):
+            continue
+        cleaned_sentences.append(sentence)
+    summary = " ".join(cleaned_sentences)
+
     bare_names = re.match(r"^((?:`[^`]+`\s*)+)Their bodies\b", summary)
     if bare_names:
         names = re.findall(r"`[^`]+`", bare_names.group(1))
@@ -77,12 +131,43 @@ def concise_message(message):
         )
     if summary:
         summary = summary[0].upper() + summary[1:]
-    if len(summary) > 550:
-        summary = summary[:547].rsplit(" ", 1)[0] + "..."
+    summary = _shorten_at_sentence(summary)
     return summary or "Completed the returned safety edit."
 
 
+def validate_summary_data(data):
+    rows = data["rows"]
+    aggregate = data["aggregate"]
+    checkpoint = data["checkpoint"]
+    completed = aggregate["completed_edits"]
+    if completed != len(rows):
+        raise ValueError(
+            f"aggregate completed_edits is {completed}, but history has "
+            f"{len(rows)} rows"
+        )
+
+    accepted = sum(row["result"] == "accepted" for row in rows)
+    rejected = sum(row["result"] == "rejected" for row in rows)
+    if accepted != aggregate["accepted_edits"]:
+        raise ValueError("aggregate accepted_edits does not match rows")
+    if rejected != aggregate["rejected_edits"]:
+        raise ValueError("aggregate rejected_edits does not match rows")
+    if accepted + rejected != len(rows):
+        raise ValueError("history contains an unknown edit result")
+
+    if rows:
+        if rows[-1]["after_count"] != aggregate["final_unsafe_count"]:
+            raise ValueError("final row unsafe count does not match aggregate")
+        if rows[-1]["agent_op"] != checkpoint["last_agent_op"]:
+            raise ValueError("final row agent operation does not match checkpoint")
+
+    prefixes = [row["agent_op"][:12] for row in rows]
+    if len(prefixes) != len(set(prefixes)):
+        raise ValueError("12-character agent operation prefixes are not unique")
+
+
 def render(data, run_name):
+    validate_summary_data(data)
     rows = data["rows"]
     aggregate = data["aggregate"]
     selection = data.get("selection", {})

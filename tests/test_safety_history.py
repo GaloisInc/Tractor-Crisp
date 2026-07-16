@@ -294,7 +294,9 @@ class SummaryRendererTest(unittest.TestCase):
             Path(__file__).parents[1]
             / "skills/summarize-crisp-run/scripts/render_summary.py"
         )
-        cls.render = staticmethod(runpy.run_path(script)["render"])
+        renderer = runpy.run_path(script)
+        cls.render = staticmethod(renderer["render"])
+        cls.concise_message = staticmethod(renderer["concise_message"])
 
     def data(self, after=None):
         agent_op = "a" * 64
@@ -314,6 +316,7 @@ class SummaryRendererTest(unittest.TestCase):
         return {
             "rows": [row],
             "aggregate": {
+                "completed_edits": 1,
                 "accepted_edits": 1,
                 "rejected_edits": 0,
                 "total_tokens_used": 70,
@@ -344,6 +347,75 @@ class SummaryRendererTest(unittest.TestCase):
     def test_rejects_filtered_history(self):
         with self.assertRaisesRegex(ValueError, "complete summary"):
             self.render(self.data(after="a" * 64), "example")
+
+    def test_cleans_inline_session_prose(self):
+        message = (
+            "**Completed** Replaced a raw parser with a safe slice helper. "
+            "Updated `SAFETY_PLAN.md:1` with the next target. "
+            "**Validation** `cargo check-unsafe2` passes. Tests pass."
+        )
+        self.assertEqual(
+            self.concise_message(message),
+            "Replaced a raw parser with a safe slice helper.",
+        )
+
+    def test_cleans_path_prefixed_plan_prose(self):
+        message = (
+            "Simplified `parse_string` to the raw allocation boundary. "
+            "`rust/src/cJSON.rs:852` Updated iteration notes and identified "
+            "the next migration target. `SAFETY_PLAN.md:42`"
+        )
+        self.assertEqual(
+            self.concise_message(message),
+            "Simplified `parse_string` to the raw allocation boundary.",
+        )
+
+    def test_removes_compacted_plan_bullet_without_fragment(self):
+        message = (
+            "**Completed**\n"
+            "- Removed obsolete unsafe imports.\n"
+            "- Compacted and updated continuing notes in `SAFETY_PLAN.md:1`."
+        )
+        self.assertEqual(
+            self.concise_message(message),
+            "Removed obsolete unsafe imports.",
+        )
+
+    def test_preserves_technical_updated_sentence_and_zero_delta_outcome(self):
+        message = (
+            "**Iteration Result** Updated object-key lookup to use safe "
+            "`CStr` comparison. No Rust source change was retained for the "
+            "allocator experiment."
+        )
+        self.assertEqual(
+            self.concise_message(message),
+            "Updated object-key lookup to use safe `CStr` comparison. "
+            "No Rust source change was retained for the allocator experiment.",
+        )
+
+    def test_long_summary_stops_at_complete_sentence(self):
+        message = "First technical change. " + ("Detailed behavior text " * 40)
+        summary = self.concise_message(message)
+        self.assertLessEqual(len(summary), 450)
+        self.assertTrue(summary.endswith("."))
+        self.assertFalse(summary.endswith("..."))
+
+    def test_validates_aggregate_counts(self):
+        data = self.data()
+        data["aggregate"]["completed_edits"] = 2
+        with self.assertRaisesRegex(ValueError, "completed_edits"):
+            self.render(data, "example")
+
+    def test_validates_final_count_and_checkpoint(self):
+        data = self.data()
+        data["aggregate"]["final_unsafe_count"] = 8
+        with self.assertRaisesRegex(ValueError, "final row unsafe count"):
+            self.render(data, "example")
+
+        data = self.data()
+        data["checkpoint"]["last_agent_op"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "checkpoint"):
+            self.render(data, "example")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,9 @@ uv run --project /path/to/Tractor-Crisp crisp safety-history --compact \
 
 Use the CRISP checkout that contains `safety-history`. Do not use `crisp eval` or parse captured stdout/stderr logs.
 
-The renderer creates the totals, validation notes, checkpoint, and table skeleton. Review every `Final edit summary` for concision and technical accuracy. Rewrite awkward session prose, but do not change IDs, counts, tokens, durations, or results without checking the CLI JSON.
+The renderer creates the totals, validation notes, checkpoint, and table. It removes plan-maintenance, validation-command, warning, and workspace-artifact chatter from final agent messages while preserving technical changes and meaningful no-change outcomes. It also rejects inconsistent completed/accepted/rejected totals, final unsafe counts, checkpoints, and non-unique 12-character operation prefixes.
+
+Review every `Final edit summary` for concision and technical accuracy. If a recurring message shape renders poorly, improve `scripts/render_summary.py` and its tests instead of creating a report-specific postprocessor. Do not change IDs, counts, tokens, durations, or results without checking the CLI JSON.
 
 Inspect one row without filtering the full JSON externally:
 

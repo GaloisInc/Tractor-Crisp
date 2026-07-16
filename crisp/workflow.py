@@ -21,7 +21,7 @@ from .mvir import (
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, PostprocessOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -492,6 +492,7 @@ class Workflow:
                     "--output-dir",
                     sb.join(output_path),
                     "--emit-build-files",
+                    "--emit-c-decl-map",
                 ]
                 if src_loc_annotations:
                     c2rust_cmd += [
@@ -577,6 +578,105 @@ class Workflow:
         print('c2rust process %s with code %d:\n%s' % (
             'succeeded' if n_op.exit_code == 0 else 'failed', n_op.exit_code, n_op.cmd))
 
+        return n_op
+
+    @step
+    def postprocess(self, n_tree: TreeNode) -> TreeNode:
+        n_op = self.postprocess_op(n_tree)
+        return self.mvir.node(n_op.new_code)
+
+    @step
+    def postprocess_op(self, n_tree: TreeNode) -> PostprocessOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        rust_path_rel = cfg.relative_path(cfg.transpile.output_dir)
+        root_file_rel = analysis.detect_root_file(cfg, mvir, n_tree)
+        root_rust_source_file = os.path.join(rust_path_rel, root_file_rel)
+
+        with run_sandbox(cfg, mvir) as sb:
+            sb.checkout(n_tree)
+
+            postprocess_model = (
+                os.environ.get('CRISP_API_MODEL') or cfg.models.postprocess
+            )
+
+            postprocess_env = {
+                key: value
+                for key in ('CRISP_API_BASE', 'CRISP_API_KEY')
+                if (value := os.environ.get(key)) is not None
+            }
+
+            # c2rust-postprocess uses CRISP credentials only when CRISP_API_MODEL is set.
+            if 'CRISP_API_KEY' in postprocess_env:
+                postprocess_env['CRISP_API_MODEL'] = postprocess_model
+
+            postprocess_cmd = [
+                'c2rust', 'postprocess',
+                '--update-rust',
+                '--on-error', 'warn',
+                '--no-update-cache',
+                '--llm-model', postprocess_model,
+                sb.join(root_rust_source_file),
+            ]
+
+            exit_code, logs = sb.run(
+                postprocess_cmd, stream=True, env=postprocess_env)
+
+            if exit_code == 0:
+                n_new_tree = sb.commit_dir(rust_path_rel)
+                if n_new_tree.node_id() == n_tree.node_id():
+                    print(
+                        'warning: c2rust-postprocess completed successfully, '
+                        'but the committed tree is unchanged'
+                    )
+            else:
+                # Placeholder so the failed run is still recorded in the MVIR.
+                n_new_tree = TreeNode.new(mvir, files={})
+
+        n_op = PostprocessOpNode.new(
+            mvir,
+            old_code=n_tree.node_id(),
+            new_code=n_new_tree.node_id(),
+            cmd=postprocess_cmd,
+            exit_code=exit_code,
+            body=logs.decode('utf-8', errors='replace'),
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+
+        if exit_code != 0:
+            raise CrispError('c2rust-postprocess failed', n_op)
+
+        return n_op
+
+    @step
+    def drop_c_decls_artifacts(self, code: TreeNode) -> TreeNode:
+        n_op = self.drop_c_decls_artifacts_op(code)
+        if n_op.new_code == code.node_id():
+            return code
+        return self.mvir.node(n_op.new_code)
+
+    @step
+    def drop_c_decls_artifacts_op(self, code: TreeNode) -> EditOpNode:
+        mvir = self.mvir
+
+        new_files = {
+            path: node_id
+            for path, node_id in code.files.items()
+            if not path.endswith('.c_decls.json')
+        }
+        new_code = TreeNode.new(mvir, files=new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code=code.node_id(),
+            new_code=new_code.node_id(),
+            body='drop c2rust c-decl artifacts',
+        )
+        mvir.set_tag(
+            'op_history',
+            n_op.node_id(),
+            n_op.kind + ' drop_c_decls_artifacts',
+        )
         return n_op
 
     @step

@@ -55,6 +55,12 @@ RUN cd /opt/c2rust \
     && cargo-docker-clean.sh cargo install --locked --path /opt/c2rust/c2rust
 RUN cd /opt/c2rust \
     && cargo-docker-clean.sh cargo install --locked --path c2rust-refactor
+# `c2rust` discovers subcommands by looking for `c2rust-*` binaries adjacent
+# to its own executable, but `uv sync` installs `postprocess` elsewhere.
+# Expose the installed entry point at the name and location `c2rust` expects.
+RUN cd /opt/c2rust/c2rust-postprocess \
+    && uv sync \
+    && ln -s /opt/c2rust/c2rust-postprocess/.venv/bin/postprocess /usr/local/cargo/bin/c2rust-postprocess
 
 # Install hayroll
 #

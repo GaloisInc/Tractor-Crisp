@@ -155,9 +155,8 @@ def run_rewrite(
             'git -c user.name=CRISP -c user.email=crisp@localhost '
             'commit --quiet -m "CRISP sandbox baseline"')
         exit_code, logs = sb.run(init_git_repo, cwd='.', shell=True, stream=True)
-        git_init_failed = exit_code != 0
 
-        if not git_init_failed:
+        if exit_code == 0:
             if codex_login:
                 print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
                 _inject_codex_auth(sb)
@@ -178,15 +177,13 @@ def run_rewrite(
             if find_unsafe2_json_dir is not None:
                 env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
 
-            exit_code = 0
-            logs = b''
             for cmd in all_cmds:
                 exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
                 logs += logs2
 
                 # TODO: ensure API key doesn't get included in the AgentOpNode
                 if exit_code != 0:
-                    raise CrispError(f'codex-cli failed: exit code {exit_code}')
+                    break
 
         ignore_lines = [
             '.git/',
@@ -247,9 +244,8 @@ def run_rewrite(
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
-    if git_init_failed:
+    if exit_code != 0:
         raise CrispError(
-            f'failed to initialize Git repository in agent sandbox: '
-            f'exit code {exit_code}')
+            f'agent invocation failed: exit code {exit_code}', n_op)
 
     return (output_code, output_plans)

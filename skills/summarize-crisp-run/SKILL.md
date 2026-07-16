@@ -28,6 +28,19 @@ Inspect one row without filtering the full JSON externally:
 crisp safety-history --agent-op <agent-op-id>
 ```
 
+When investigating whether the agent saw an unsafe increase, add
+`--include-internal-output`. This exposes the stored output for each detected
+agent-side `cargo check-unsafe2` invocation without dumping the entire JSON
+session:
+
+```sh
+crisp safety-history --agent-op <agent-op-id> --include-internal-output
+```
+
+Add `--include-agent-commands` when command ordering is necessary to determine
+which intermediate code state an internal check examined. This emits commands,
+call IDs, and timestamps, but not unrelated tool outputs.
+
 Use the returned node IDs with `crisp show`, for example `crisp show <agent-op-id>.json_session` or `crisp show <unsafe-check-node-id>`.
 
 ## Process a Resumed Run

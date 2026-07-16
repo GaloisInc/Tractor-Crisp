@@ -133,6 +133,14 @@ def parse_args():
         '--compact', action='store_true',
         help='emit compact JSON instead of indented JSON',
     )
+    safety_history_parser.add_argument(
+        '--include-internal-output', action='store_true',
+        help='include stored output for agent-side cargo check-unsafe2 calls',
+    )
+    safety_history_parser.add_argument(
+        '--include-agent-commands', action='store_true',
+        help='include the stored chronological agent shell-command sequence',
+    )
 
     commit = sub.add_parser('commit',
         help='import files and directories into MVIR')
@@ -657,7 +665,11 @@ def do_safety_history(args, cfg):
         if args.agent_op is not None else None
     )
     data = safety_history.build_safety_history(
-        mvir, after=after, agent_op=agent_op
+        mvir,
+        after=after,
+        agent_op=agent_op,
+        include_internal_output=args.include_internal_output,
+        include_agent_commands=args.include_agent_commands,
     )
     print(json.dumps(data, indent=None if args.compact else 2))
 

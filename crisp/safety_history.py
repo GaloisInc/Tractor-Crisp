@@ -16,6 +16,7 @@ FIND_UNSAFE_KIND = "find_unsafe2_analysis"
 CHECK_UNSAFE_KIND = "check_unsafe2_analysis"
 TEST_KIND = "test_result_node"
 CHECK_COMMAND_RE = re.compile(r"\bcargo\s+check-unsafe2\b")
+FIND_COMMAND_RE = re.compile(r"\bcargo\s+find-unsafe2\b")
 INCREASE_RE = re.compile(r"\bincreased:\s*\d+\s*->\s*\d+")
 
 
@@ -98,13 +99,18 @@ def _session_events(mvir: MVIR, op: Any) -> tuple[str, list[dict[str, Any]]]:
     return session_id, events
 
 
-def _session_info(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _session_info(
+    events: list[dict[str, Any]],
+    include_internal_output: bool = False,
+    include_agent_commands: bool = False,
+) -> dict[str, Any]:
     timestamps = [_parse_iso(event.get("timestamp")) for event in events]
     timestamps = [value for value in timestamps if value is not None]
     final_message = None
     duration_seconds = None
     final_usage = None
     calls: dict[str, dict[str, Any]] = {}
+    call_timestamps: dict[str, str | None] = {}
     outputs: dict[str, str] = {}
 
     for event in events:
@@ -142,6 +148,7 @@ def _session_info(events: list[dict[str, Any]]) -> dict[str, Any]:
             call_id = payload.get("call_id")
             if call_id:
                 calls[call_id] = payload
+                call_timestamps[call_id] = event.get("timestamp")
         if event_type == "response_item" and payload_type == "function_call_output":
             call_id = payload.get("call_id")
             if call_id:
@@ -158,6 +165,8 @@ def _session_info(events: list[dict[str, Any]]) -> dict[str, Any]:
         tokens_used = input_tokens - cached_tokens + output_tokens
 
     check_runs = []
+    find_runs = []
+    agent_commands = []
     for call_id, payload in calls.items():
         if payload.get("name") not in {"exec_command", "functions.exec_command"}:
             continue
@@ -167,18 +176,35 @@ def _session_info(events: list[dict[str, Any]]) -> dict[str, Any]:
         except json.JSONDecodeError:
             args = {}
         command = str((args or {}).get("cmd", ""))
-        if not CHECK_COMMAND_RE.search(command) or "--help" in command:
-            continue
+        if include_agent_commands:
+            agent_commands.append({
+                "timestamp": call_timestamps.get(call_id),
+                "call_id": call_id,
+                "command": command,
+            })
+        # A heredoc body may merely mention a command in prose. Only its first
+        # line is shell syntax when deciding whether this tool call invokes it.
+        command_syntax = command.splitlines()[0] if "<<" in command else command
         output = outputs.get(call_id, "")
+        if FIND_COMMAND_RE.search(command_syntax) and "--help" not in command_syntax:
+            find_run = {"call_id": call_id, "command": command}
+            if include_internal_output:
+                find_run["output"] = output
+            find_runs.append(find_run)
+        if not CHECK_COMMAND_RE.search(command_syntax) or "--help" in command_syntax:
+            continue
         increase_lines = [
             line.strip() for line in output.splitlines() if INCREASE_RE.search(line)
         ]
-        check_runs.append({
+        check_run = {
             "call_id": call_id,
             "command": command,
             "reported_increase": bool(increase_lines),
             "increase_lines": increase_lines,
-        })
+        }
+        if include_internal_output:
+            check_run["output"] = output
+        check_runs.append(check_run)
 
     return {
         "started_at": _iso(timestamps[0]) if timestamps else None,
@@ -192,6 +218,9 @@ def _session_info(events: list[dict[str, Any]]) -> dict[str, Any]:
             run["reported_increase"] for run in check_runs
         ),
         "internal_check_unsafe2_runs": check_runs,
+        "internal_find_unsafe2_count": len(find_runs),
+        "internal_find_unsafe2_runs": find_runs,
+        "agent_commands": agent_commands if include_agent_commands else None,
     }
 
 
@@ -261,6 +290,8 @@ def build_safety_history(
     mvir: MVIR,
     after: NodeId | None = None,
     agent_op: NodeId | None = None,
+    include_internal_output: bool = False,
+    include_agent_commands: bool = False,
 ) -> dict[str, Any]:
     """Return JSON-serializable history for completed Codex safety turns."""
     if after is not None and agent_op is not None:
@@ -306,7 +337,17 @@ def build_safety_history(
             mvir, op, entry.timestamp, next_time, test_log
         )
         session_id, events = _session_events(mvir, op)
-        session = _session_info(events)
+        session = _session_info(
+            events,
+            include_internal_output=(
+                include_internal_output
+                and (agent_op is None or _node_id(entry.node_id) == _node_id(agent_op))
+            ),
+            include_agent_commands=(
+                include_agent_commands
+                and (agent_op is None or _node_id(entry.node_id) == _node_id(agent_op))
+            ),
+        )
 
         test_exit = test_node.exit_code if test_node is not None else None
         check_exit = check_node.exit_code if check_node is not None else None
@@ -376,6 +417,17 @@ def build_safety_history(
             ),
             "internal_check_unsafe2_runs": (
                 session["internal_check_unsafe2_runs"]
+            ),
+            "internal_find_unsafe2_count": (
+                session["internal_find_unsafe2_count"]
+            ),
+            "internal_find_unsafe2_runs": (
+                session["internal_find_unsafe2_runs"]
+            ),
+            **(
+                {"agent_commands": session["agent_commands"]}
+                if session["agent_commands"] is not None
+                else {}
             ),
         })
 

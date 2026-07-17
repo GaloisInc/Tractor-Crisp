@@ -284,17 +284,27 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
         if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
     ]
 
-    match matches:
-        case [ie]:
-            op_node = mvir.node(ie.node_id)
+    if not matches:
+        return None
+
+    if len(matches) == 1:
+        op_node = mvir.node(matches[0].node_id)
+        return mvir.node(op_node.planning_files)
+
+    # An agent step can update SAFETY_PLAN.md without changing any source
+    # files.  Several successful steps can therefore produce the same code
+    # node with different planning nodes.  The reverse index is not ordered,
+    # so use the timestamped operation reflog to find the latest producer.
+    match_ids = {ie.node_id for ie in matches}
+    for entry in reversed(mvir.tag_reflog('op_history')):
+        if entry.node_id in match_ids:
+            op_node = mvir.node(entry.node_id)
             return mvir.node(op_node.planning_files)
-        case []:
-            return None
-        case _:
-            raise CrispError(
-                f'multiple Codex agent ops produced code node {n_code.node_id()}: '
-                + ', '.join(str(ie.node_id) for ie in matches)
-            )
+
+    raise CrispError(
+        f'no op_history entry found for Codex producers of {n_code.node_id()}: '
+        + ', '.join(str(ie.node_id) for ie in matches)
+    )
 
 
 @dataclass(frozen = True)

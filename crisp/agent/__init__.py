@@ -2,6 +2,7 @@
 Rewrite operations using AI agent tools, such as codex-cli
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -30,6 +31,12 @@ PLANNING_CODEX_AGENTS = (
 )
 
 _SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
+
+# Print the warning in red so it stands out
+WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
+    "the sandbox and could theoretically be leaked " \
+    "by commands run by the agent; please make sure " \
+    "to set limits on its usage.\033[0m"
 
 
 def _snapshot_to_family_alias(model: str) -> str:
@@ -166,13 +173,6 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     codex_agents: Sequence[str] = (),
 ) -> tuple[TreeNode, TreeNode]:
-    # Print the warning in red so it stands out
-    WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
-        "the sandbox and could theoretically be leaked " \
-        "by commands run by the agent; please make sure " \
-        "to set limits on its usage.\033[0m"
-
-
     if 'CRISP_API_KEY' in os.environ:
         print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
 
@@ -312,3 +312,120 @@ def run_rewrite(
             f'agent invocation failed: exit code {exit_code}', n_op)
 
     return (output_code, output_plans)
+
+
+def run_review(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    model: str,
+    old_code: TreeNode,
+    new_code: TreeNode,
+    extra_code: TreeNode | list[TreeNode] = [],
+    cwd: str = '.',
+    codex_login: bool = False,
+    env: dict | None = None,
+) -> tuple[str, bytes, bool]:
+    """
+    Run `codex exec review` over the change from `old_code` to `new_code` and
+    return the reviewer's final message, the full log output, and whether the
+    reviewer successfully ran at least one command (evidence that it actually
+    inspected the change rather than answering blind).
+
+    `codex exec review` is used rather than a plain `codex exec` prompt
+    because review mode reports findings in a fixed, machine-parseable format
+    (it overrides any output convention requested in the prompt).  Codex's own
+    sandbox is bypassed (it cannot start inside the CRISP sandbox).
+
+    Review mode can only review a git diff.  The review runs in its own
+    fresh sandbox (the rewrite sandbox and its repo are gone by now, and
+    `.git/` is never committed to MVIR), so the change is staged as
+    uncommitted edits on a baseline commit in a throwaway repo built from
+    the MVIR nodes; nothing is committed back to MVIR.  Codex rejects 
+    `--uncommitted` when custom review instructions are given, so `prompt`
+    itself must direct the reviewer at the uncommitted changes.
+    """
+    def _review_ran_commands(logs: bytes) -> bool:
+        """True iff the codex `--json` event stream in `logs` shows at
+           least one successfully executed command."""
+        for line in logs.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            item = ev.get('item')
+            if (ev.get('type') == 'item.completed'
+                    and isinstance(item, dict)
+                    and item.get('type') == 'command_execution'
+                    and item.get('exit_code') == 0):
+                return True
+        return False
+
+    if 'CRISP_API_KEY' in os.environ:
+        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
+
+    if isinstance(extra_code, TreeNode):
+        extra_code = [extra_code]
+
+    if env is None:
+        env = {}
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(old_code)
+        for n in extra_code:
+            sb.checkout(n)
+        # Keep sandbox-only files out of the reviewed diff.
+        _checkout_bytes(sb, mvir, '.gitignore', b'.codex/\ntarget/\n')
+
+        if codex_login:
+            print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
+            _inject_codex_auth(sb)
+
+        codex_dir = sb.join('.codex')
+        last_message_path = sb.join('.codex/last_message.txt')
+
+        setup_cmds = [
+            ['mkdir', '-p', codex_dir],
+            ['git', 'init', '-q'],
+            ['git', 'add', '-A'],
+            ['git', '-c', 'user.name=crisp', '-c', 'user.email=crisp@localhost',
+                'commit', '-qm', 'baseline'],
+        ]
+        deleted_files = [path for path in old_code.files if path not in new_code.files]
+        if deleted_files:
+            setup_cmds.append(['rm', '-f'] + deleted_files)
+        for cmd in setup_cmds:
+            exit_code, logs = sb.run(cmd, cwd=cwd, env=env)
+            if exit_code != 0:
+                raise CrispError(f'{cmd[0]} failed: exit code {exit_code}: {logs!r}')
+        sb.checkout(new_code)
+
+        codex_cmd = _codex_command(cfg, 'exec', [
+            'review',
+            # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
+            # sandbox; the CRISP sandbox is the containment layer.
+            '--dangerously-bypass-approvals-and-sandbox',
+            # Structured events let us verify the reviewer ran commands.
+            '--json',
+            '--output-last-message', last_message_path,
+            prompt,
+        ], codex_login=codex_login, model=model)
+        print(codex_cmd)
+
+        if 'CODEX_HOME' not in env:
+            env['CODEX_HOME'] = codex_dir
+
+        exit_code, logs = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)
+        if exit_code != 0:
+            raise CrispError(f'codex-cli failed: exit code {exit_code}')
+
+        cat_exit_code, report_bytes = sb.run(['cat', last_message_path], cwd=cwd, env=env)
+        if cat_exit_code != 0:
+            print(f'warning: failed to read reviewer message: {report_bytes!r}')
+            report_bytes = b''
+
+    ran_commands = _review_ran_commands(logs)
+    return report_bytes.decode('utf-8', errors='replace'), logs, ran_commands
+

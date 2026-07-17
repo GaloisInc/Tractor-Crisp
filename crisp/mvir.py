@@ -709,6 +709,23 @@ class CodexAgentOpNode(Node):
     json_session = property(lambda self: self._metadata['json_session'])
     planning_files = property(lambda self: self._metadata['planning_files'])
 
+class CodexReviewOpNode(Node):
+    KIND = 'codex_review_op'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    raw_prompt: Metadata[NodeId]
+    # The reviewer's final message
+    report: Metadata[NodeId]
+    # 'PASS' or 'FAIL'
+    verdict: Metadata[str]
+    # `body` stores the log output
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
+    report = property(lambda self: self._metadata['report'])
+    verdict = property(lambda self: self._metadata['verdict'])
+
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -930,6 +947,7 @@ NODE_CLASSES = [
     SplitFfiOpNode,
     LlmOpNode,
     CodexAgentOpNode,
+    CodexReviewOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,

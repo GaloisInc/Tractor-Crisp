@@ -5,6 +5,7 @@ from datetime import datetime
 import functools
 import inspect
 import os
+import re
 import subprocess
 import sys
 import toml
@@ -17,7 +18,7 @@ from .config import Config
 from .error import CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
-    LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
+    LlmOpNode, CodexReviewOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
@@ -118,6 +119,21 @@ New signatures:
 {input_files}
 '''
 
+FFI_ENTRY_POINT_RULES = '''
+The code contains two kinds of functions: implementation functions and FFI entry points. A function is an FFI entry point if it has the `#[no_mangle]` or `#[export_name]` attribute ("export attributes"). Note that just having `unsafe extern "C"` qualifiers without export attributes does NOT make a function an FFI entry point. All functions without export attributes are implementation functions. Implementation code may be freely refactored to improve safety. For FFI entry points, the following rules apply and must never be changed or broken:
+- You must not change the signature. FFI entry point signatures must remain exactly as-is to ensure ABI compatibility with the current version of the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
+- For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
+- Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
+- The FFI entry points should be as minimal as possible, and do as little
+  non-trivial work as necessary. All proper program logic should stay out of
+  the FFI wrappers and instead live in the internal safe Rust code.
+- Don't hide implementation logic in macros. Macro expansions count as part of
+  the FFI entry point body: an entry point must dispatch to a named
+  implementation function, and must not invoke macros that expand to program
+  logic or unsafe code.
+- Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
+'''.strip()
+
 AGENT_PLAN_PROMPT = '''
 Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{cargo_dir_path}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
 
@@ -161,19 +177,21 @@ Wait for all agents to finish.  If an agent fails or returns an unusably thin re
 
 # FFI entry point rules (copy verbatim into the plan)
 
-The code contains two kinds of functions: implementation functions and FFI entry points. A function is an FFI entry point if it has the `#[no_mangle]` or `#[export_name]` attribute ("export attributes"). Note that just having `unsafe extern "C"` qualifiers without export attributes does NOT make a function an FFI entry point. All functions without export attributes are implementation functions. Implementation code may be freely refactored to improve safety. For FFI entry points, the following rules apply and must never be changed or broken:
-- You must not change the signature. FFI entry point signatures must remain exactly as-is to ensure ABI compatibility with the current version of the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
-- For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
-- Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
-- Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
-- The FFI entry points should be as minimal as possible, and do as little
-  non-trivial work as necessary. All proper program logic should stay out of
-  the FFI wrappers and instead live in the internal safe Rust code.
-- Don't hide implementation logic in macros. Macro expansions count as part of
-  the FFI entry point body: an entry point must dispatch to a named
-  implementation function, and must not invoke macros that expand to program
-  logic or unsafe code.
+''' + FFI_ENTRY_POINT_RULES + '\n'
+
+AGENT_FFI_REVIEW_PROMPT = '''
+Review the uncommitted changes to the Rust project in `{cargo_dir_path}` ONLY for violations of the FFI entry point rules below.  The changes were made by a refactoring agent whose goal is to make the implementation code fully safe; ordinary code-review concerns (bugs, style, performance) are out of scope unless they violate these rules.
+
+Focus on the FFI entry points touched by the diff.  Read the surrounding code as needed for context; in particular, follow the definition of any macro invoked from an entry point to check for logic hidden in macro expansions.
+
+''' + FFI_ENTRY_POINT_RULES + '''
+
+Report only genuine rule violations present in the changed code; if there are none, report no findings.  For each violation, cite the entry point, the rule violated, and the offending code.
 '''
+
+# `codex exec review` renders each finding as `- [P1] title -- file:line`;
+# a clean review is prose with no such lines.
+AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
 
 AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
@@ -1334,6 +1352,59 @@ class Workflow:
         )
 
     @step
+    def ffi_review_op(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+    ) -> CodexReviewOpNode:
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        prompt = AGENT_FFI_REVIEW_PROMPT.format(cargo_dir_path = cargo_dir)
+        report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
+            cfg.models.agent_loop, n_old_code, n_new_code,
+            codex_login = self.codex_login)
+
+        if report.strip() == '':
+            # Fail closed on a missing report.
+            print('warning: FFI review returned an empty report')
+            passed = False
+        elif not ran_commands:
+            # Fail closed when the reviewer never successfully ran a command:
+            # it cannot have inspected the diff, whatever the report says.
+            print('warning: FFI review ran no commands; ignoring its report')
+            passed = False
+        else:
+            passed = AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
+
+        n_op = CodexReviewOpNode.new(mvir,
+            old_code = n_old_code.node_id(),
+            new_code = n_new_code.node_id(),
+            raw_prompt = FileNode.new(mvir, prompt).node_id(),
+            report = FileNode.new(mvir, report).node_id(),
+            verdict = 'PASS' if passed else 'FAIL',
+            body = logs,
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+        return n_op
+
+    @step
+    def do_ffi_review(self, n_old_code: TreeNode, n_new_code: TreeNode) -> bool:
+        """
+        Diff-triggered FFI review: if the change touched any FFI entry point,
+        have a reviewer agent check it against the FFI entry point rules.
+        Returns `True` if the change is acceptable.
+        """
+        old_defs = self.extract_ffi_defs(n_old_code).defs
+        new_defs = self.extract_ffi_defs(n_new_code).defs
+        if old_defs == new_defs:
+            return True
+
+        n_op = self.ffi_review_op(n_old_code, n_new_code)
+        print(self.mvir.node(n_op.report).body_str())
+        return n_op.verdict == 'PASS'
+
+    @step
     def agent_safety_no_tests(
         self,
         n_code: TreeNode,
@@ -1465,10 +1536,12 @@ class Workflow:
         n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal)
-        # The change must pass tests, and must not regress any unsafe count.
+        # The change must pass tests, must not regress any unsafe count, and
+        # must not break the FFI entry point rules.
         n_op_test = self.test_op(n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0:
+        if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0 \
+                and self.do_ffi_review(n_code, n_new_code):
             return n_new_code, n_plans
         else:
             return None, None
@@ -1491,6 +1564,8 @@ class Workflow:
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
+            return None, None
+        if not self.do_ffi_review(n_code, n_new_code):
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

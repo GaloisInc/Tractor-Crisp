@@ -1310,6 +1310,13 @@ class Workflow:
             self.find_unsafe2_json(n_code),
         ]
         if n_test_code is not None:
+            # In planning mode, we do provide the entire C code to the planner
+            # since that might increase the quality of the plan. However, if
+            # we later run the safety loop in `agent_sim_no_tests` mode the
+            # safety agent will not have access to the C code, and the plan
+            # might contain references to it. This might confuse the agent and
+            # break the `agent_sim_no_tests` mode.
+            # TODO: un-break that mode somehow (without hiding the C code).
             extra_code.append(n_test_code)
 
         prompt = AGENT_PLAN_PROMPT.format(

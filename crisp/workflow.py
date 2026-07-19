@@ -189,9 +189,28 @@ Focus on the FFI entry points touched by the diff.  Read the surrounding code as
 Report only genuine rule violations present in the changed code; if there are none, report no findings.  For each violation, cite the entry point, the rule violated, and the offending code.
 '''
 
-# `codex exec review` renders each finding as `- [P1] title -- file:line`;
+# `codex exec review` renders each finding as `- [P1] title — file:line`;
 # a clean review is prose with no such lines.
 AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
+# Same format, capturing the title for `merge_ffi_finding_titles`.
+AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
+    r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
+# Trailing `— file:line` location; stripped because locations go stale.
+AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
+    r'\s+(?:—|--)\s+\S+:\d+(?:[-:]\d+)*$')
+
+FFI_SEEN_FINDINGS_CAP = 10
+
+def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
+    """
+    Merge finding titles from a rejecting FFI review `report` into `seen`,
+    deduplicated and bounded to the most recent `FFI_SEEN_FINDINGS_CAP`.
+    """
+    for m in AGENT_FFI_REVIEW_FINDING_TITLE_RE.finditer(report):
+        title = AGENT_FFI_REVIEW_FINDING_LOCATION_RE.sub('', m.group(1)).strip()
+        if title and title not in seen:
+            seen.append(title)
+    return seen[-FFI_SEEN_FINDINGS_CAP:]
 
 AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
@@ -214,6 +233,16 @@ A previous attempt at this step was rejected because it violated the FFI entry p
 {report}
 
 Do not repeat this mistake.
+'''.strip()
+
+# Sticky reminder injected into every attempt after the first FFI review
+# rejection in a run, built from harvested reviewer finding titles.
+AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
+Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
+
+{findings}
+
+Do not repeat these mistakes.
 '''.strip()
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''

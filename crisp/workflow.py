@@ -131,7 +131,7 @@ The code contains two kinds of functions: implementation functions and FFI entry
   the FFI entry point body: an entry point must dispatch to a named
   implementation function, and must not invoke macros that expand to program
   logic or unsafe code.
-- Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
+- Don't add calls to FFI entry points (`*_ffi` functions), and don't use them as function-pointer values (e.g. don't assign an FFI entry point as a default callback or store it in a function-pointer field -- use the corresponding implementation function instead).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
 '''.strip()
 
 AGENT_PLAN_PROMPT = '''
@@ -207,6 +207,14 @@ cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
 '''
+
+AGENT_FFI_REJECTED_PROMPT = '''
+A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
+
+{report}
+
+Do not repeat this mistake.
+'''.strip()
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this script:
@@ -1389,20 +1397,28 @@ class Workflow:
         return n_op
 
     @step
-    def do_ffi_review(self, n_old_code: TreeNode, n_new_code: TreeNode) -> bool:
+    def do_ffi_review(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+    ) -> tuple[bool, str | None]:
         """
         Diff-triggered FFI review: if the change touched any FFI entry point,
         have a reviewer agent check it against the FFI entry point rules.
-        Returns `True` if the change is acceptable.
+        Returns `(passed, report)`; `report` is the reviewer's findings when
+        the change is rejected, or `None` if there is no usable report.
         """
         old_defs = self.extract_ffi_defs(n_old_code).defs
         new_defs = self.extract_ffi_defs(n_new_code).defs
         if old_defs == new_defs:
-            return True
+            return True, None
 
         n_op = self.ffi_review_op(n_old_code, n_new_code)
-        print(self.mvir.node(n_op.report).body_str())
-        return n_op.verdict == 'PASS'
+        report = self.mvir.node(n_op.report).body_str()
+        print(report)
+        if n_op.verdict == 'PASS':
+            return True, None
+        return False, report if report.strip() else None
 
     @step
     def agent_safety_no_tests(
@@ -1530,7 +1546,7 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
         self.fuel.use()
 
         n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
@@ -1540,11 +1556,14 @@ class Workflow:
         # must not break the FFI entry point rules.
         n_op_test = self.test_op(n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code == 0 and n_op_unsafe.exit_code == 0 \
-                and self.do_ffi_review(n_code, n_new_code):
-            return n_new_code, n_plans
-        else:
-            return None, None
+        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
+            return None, None, None
+        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
+        if not ffi_ok:
+            # Surface the reviewer's report so the caller can feed it back
+            # into the next attempt's prompt.
+            return None, None, ffi_report
+        return n_new_code, n_plans, None
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1565,7 +1584,7 @@ class Workflow:
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             return None, None
-        if not self.do_ffi_review(n_code, n_new_code):
+        if not self.do_ffi_review(n_code, n_new_code)[0]:
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

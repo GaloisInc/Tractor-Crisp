@@ -31,10 +31,13 @@ The following FFI rules are mandatory:
   the FFI entry point body: an entry point must dispatch to a named
   implementation function, and must not invoke macros that expand to program
   logic or unsafe code.
-- Don't add calls to FFI entry points (`*_ffi` functions). These entry points
-  are only for use from C. When changing a non-FFI function's signature, update
-  all call sites to handle the new signature rather than changing some call
-  sites to call the FFI entry point that still has the old signature.
+- Don't add calls to FFI entry points (`*_ffi` functions), and don't use them
+  as function-pointer values (e.g. don't assign an FFI entry point as a default
+  callback or store it in a function-pointer field -- use the corresponding
+  implementation function instead). These entry points are only for use from C.
+  When changing a non-FFI function's signature, update all call sites to handle
+  the new signature rather than changing some call sites to call the FFI entry
+  point that still has the old signature.
 
 Do not recommend editing tests or original C code to make validation pass. Do
 not recommend new unsafe or unsafe-adjacent implementation code, including raw

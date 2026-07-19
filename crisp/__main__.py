@@ -29,7 +29,7 @@ from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther,
+    AgentTargetOther, AGENT_FFI_REJECTED_PROMPT,
 )
 
 
@@ -390,6 +390,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
+    # Report from the most recent FFI review rejection since the last accepted
+    # step; fed back into the next attempt's prompt.
+    ffi_feedback = None
     n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
@@ -425,6 +428,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         prev_fuel = cur_fuel
 
         try:
+            ffi_report = None
+            ffi_suffix = None
+            if ffi_feedback is not None:
+                ffi_suffix = AGENT_FFI_REJECTED_PROMPT.format(
+                    report = ffi_feedback)
+
             match args.llm_mode:
                 case 'agent':
                     match consecutive_failures:
@@ -461,14 +470,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                                 'or this run will be terminated.'
                             )
 
-                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                    if ffi_suffix is not None:
+                        suffix = ffi_suffix if suffix is None \
+                            else f'{suffix}\n\n{ffi_suffix}'
+
+                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = suffix)
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)
-                    n_new_code, n_new_plans = w.do_safety_step_agent(
+                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
+                        prompt_suffix = ffi_suffix,
                         target_goal = target_goal)
 
                 case 'agent_sim_no_tests':
@@ -491,6 +505,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
                 n_plans = n_new_plans
+                ffi_feedback = None
+            elif ffi_report is not None:
+                ffi_feedback = ffi_report
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')

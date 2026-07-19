@@ -143,6 +143,8 @@ def run_rewrite(
         gitignore_lines = [
             '# Cargo build output',
             'target/',
+            '# Codex home; may contain auth.json',
+            '.codex/',
         ]
         if find_unsafe2_json_dir is not None:
             gitignore_lines.extend([

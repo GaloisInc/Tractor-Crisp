@@ -29,7 +29,8 @@ from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther, AGENT_FFI_REJECTED_PROMPT,
+    AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
+    merge_ffi_finding_titles,
 )
 
 
@@ -393,6 +394,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
+    # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
+    # never cleared by an accepted step.
+    ffi_seen_findings = []
     n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
@@ -429,10 +433,14 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
         try:
             ffi_report = None
-            ffi_suffix = None
+            ffi_parts = []
+            if ffi_seen_findings:
+                ffi_parts.append(AGENT_FFI_SEEN_FINDINGS_PROMPT.format(
+                    findings = '\n'.join(f'- {t}' for t in ffi_seen_findings)))
             if ffi_feedback is not None:
-                ffi_suffix = AGENT_FFI_REJECTED_PROMPT.format(
-                    report = ffi_feedback)
+                ffi_parts.append(AGENT_FFI_REJECTED_PROMPT.format(
+                    report = ffi_feedback))
+            ffi_suffix = '\n\n'.join(ffi_parts) if ffi_parts else None
 
             match args.llm_mode:
                 case 'agent':
@@ -508,6 +516,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 ffi_feedback = None
             elif ffi_report is not None:
                 ffi_feedback = ffi_report
+                ffi_seen_findings = merge_ffi_finding_titles(
+                    ffi_seen_findings, ffi_report)
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')

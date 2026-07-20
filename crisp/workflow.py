@@ -134,6 +134,7 @@ For FFI entry points, the following rules apply (these rules must be copied verb
 - You must not change the signature. FFI entry point signatures must remain exactly as-is to ensure ABI compatibility with the current version of the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
 - For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
 - Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
+- Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.
 
 {after_refactoring_instruction}
 
@@ -164,6 +165,7 @@ After refactoring, make sure the code still passes the tests.  Run the tests usi
 ```sh
 {test_cmd}
 ```
+Note: you MUST NOT edit the tests (or the original C code) to get them to pass.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()
 
 AGENT_AFTER_REFACTORING_BUILD = '''
@@ -216,7 +218,12 @@ _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 @dataclass
 class FuelCounter:
     desc: str
+    default_give: int | None = None
     fuel: int = 0
+
+    def __post_init__(self):
+        if self.default_give is not None:
+            self.give()
 
     def use(self):
         if self.fuel == 0:
@@ -224,7 +231,21 @@ class FuelCounter:
         else:
             self.fuel -= 1
 
-    def give(self, amount):
+    def try_use(self) -> bool:
+        if self.fuel == 0:
+            return False
+        else:
+            self.fuel -= 1
+            return True
+
+    def is_empty(self) -> bool:
+        return self.fuel == 0
+
+    def give(self, amount: int | None = None):
+        if amount is None:
+            amount = self.default_give
+        if amount is None:
+            raise ValueError('must provide `amount` because `default_give` is None')
         if amount > self.fuel:
             self.fuel = amount
 
@@ -428,6 +449,10 @@ class Workflow:
         code = TreeNode.new(mvir, files = all_files)
 
         code = self.patch_cargo_toml_workspace(code)
+
+        # Note: the toolchain upgrade must run after c2rust-refactor, since
+        # that tool only supports an older version of Rust.
+        code = self.patch_upgrade_toolchain(code)
 
         if not self.cargo_check_json_op(code).passed:
             print('error: build failed after transpile')
@@ -791,6 +816,69 @@ class Workflow:
         return n_op
 
     @step
+    def patch_upgrade_toolchain(self, code: TreeNode) -> TreeNode:
+        """
+        Patch `rust-toolchain.toml` and `.rs` files to make the project build
+        with a newer toolchain.  c2rust-transpile outputs code for a 2023
+        toolchain by default, but find-unsafe2 uses a newer 2026 toolchain;
+        this upgrades the project to work with the latter.
+
+        This is necessary because c2rust-transpile now outputs calls to the
+        strict provenance APIs, which were renamed in 2024, making the
+        transpiler output incompatible with find-unsafe2.  Upgrading to the
+        newer toolchain (and renaming the strict provenance calls in the
+        process) allows find-unsafe2 to work on the transpiled code.
+        """
+        n_op = self.patch_upgrade_toolchain_op(code)
+        new_code = self.mvir.node(n_op.new_code)
+        return new_code
+
+    @step
+    def patch_upgrade_toolchain_op(self, code: TreeNode) -> EditOpNode:
+        cfg, mvir = self.cfg, self.mvir
+
+        new_files = {}
+        for path, file_id in code.files.items():
+            if path.endswith('.rs'):
+                file = mvir.node(file_id)
+                old_src = file.body_str()
+                new_src = (old_src
+                    # This handles both `from_exposed_addr` and `from_exposed_addr_mut`
+                    .replace('ptr::from_exposed_addr', 'ptr::with_exposed_provenance')
+                    .replace('.expose_addr()', '.expose_provenance()')
+                    # `raw_ref_op` no longer requires a feature gate
+                    .replace('#![feature(raw_ref_op)]', '')
+                    )
+                new_file = FileNode.new(mvir, new_src)
+                new_file_id = new_file.node_id()
+
+            elif path.endswith('rust-toolchain.toml'):
+                file = mvir.node(file_id)
+                OLD_TOOLCHAIN = 'nightly-2023-04-15'
+                NEW_TOOLCHAIN = 'nightly-2026-06-17'
+                old_src = file.body_str()
+                assert OLD_TOOLCHAIN in old_src, f'old toolchain toml = {old_src!r}'
+                new_src = old_src.replace(OLD_TOOLCHAIN, NEW_TOOLCHAIN)
+                new_file = FileNode.new(mvir, new_src)
+                new_file_id = new_file.node_id()
+
+            else:
+                new_file_id = file_id
+
+            new_files[path] = new_file_id
+
+        new_code = TreeNode.new(mvir, files = new_files)
+
+        n_op = EditOpNode.new(
+            mvir,
+            old_code = code.node_id(),
+            new_code = new_code.node_id(),
+            body = f'patch to upgrade toolchain',
+        )
+        mvir.set_tag('op_history', n_op.node_id(), n_op.kind + ' patch_upgrade_toolchain')
+        return n_op
+
+    @step
     def test(self, code: TreeNode, c_code: TreeNode) -> bool:
         n = self.test_op(code, c_code)
         return n.exit_code == 0
@@ -1001,6 +1089,14 @@ class Workflow:
                 exit_code, logs2 = sb.run([
                     'cargo', 'fmt', '--manifest-path',
                     sb.join(rust_path_rel, 'Cargo.toml')])
+
+                # `cargo fmt` sometimes fails with an internal error about
+                # being unable to remove trailing whitespace (see issue #146).
+                # We log the error in that case and then suppress it.
+                if exit_code != 0:
+                    logs2 += f'\n`cargo fmt` failed with code {exit_code}\n'.encode()
+                    exit_code = 0
+
                 logs = b'\n\n'.join((logs, logs2))
 
             if exit_code == 0:

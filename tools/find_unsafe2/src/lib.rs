@@ -12,7 +12,7 @@ use std::ops::ControlFlow;
 use indexmap::IndexMap;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::{DefId, CrateDef, CrateItem, ItemKind};
+use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
     AggregateKind,
@@ -179,6 +179,8 @@ pub struct Outputs {
 pub struct FunctionOutputs {
     /// Sum of all unsafe counts for this function.
     pub total_unsafe: usize,
+    /// Name of the file that contains this function.
+    pub filename: String,
 
     /// Unsafety: the function itself is unsafe.
     ///
@@ -229,6 +231,9 @@ pub struct FunctionOutputs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TypeOutputs {
+    /// Name of the file that contains this type.
+    pub filename: String,
+
     /// Progress: a field of this type contains a raw pointer.
     ///
     /// For type alias like `type Foo = *const u8;`, we treat the RHS as a field named "type", so
@@ -240,7 +245,7 @@ pub struct TypeOutputs {
 impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
-            ref mut total_unsafe,
+            ref mut total_unsafe, filename: _,
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
@@ -261,6 +266,7 @@ impl FunctionOutputs {
 impl TypeOutputs {
     fn total_unsafe(&self) -> usize {
         let TypeOutputs {
+            filename: _,
             // Progress, not safety
             field_contains_raw_ptr: _,
         } = *self;
@@ -448,6 +454,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
             let key: String = item.name();
             let mut value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
+                filename: item.span().get_filename(),
                 is_unsafe_fn: is_unsafe_fn(item),
                 is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
@@ -479,6 +486,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
     for td in crate_type_defs(tcx) {
         let key: String = td.name();
         let value = TypeOutputs {
+            filename: td.span().get_filename(),
             field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),
         };
         out.total_unsafe += value.total_unsafe();

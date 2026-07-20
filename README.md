@@ -38,7 +38,7 @@ cd /root/project
 export CRISP_API_BASE=https://api.openai.com/v1
 export CRISP_API_KEY=sk-your-api-key-here
 
-# Optional: override the `models.agent`, `models.rewriter`, etc. selections
+# Optional: override the `models.agent_plan`, `models.agent_loop`, `models.rewriter`, etc. selections
 # in crisp.toml for this run.
 #export CRISP_API_MODEL=gpt-5.6-sol
 

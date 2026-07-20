@@ -24,7 +24,8 @@ def _snapshot_to_family_alias(model: str) -> str:
     m = _SNAPSHOT_SUFFIX.match(model)
     return m.group("alias") if m else model
 
-def _codex_command(cfg: Config, subcmd: str, args: list[str], codex_login: bool = False) -> list[str]:
+def _codex_command(cfg: Config, subcmd: str, args: list[str],
+                   model: str, codex_login: bool = False) -> list[str]:
     cmd = ['codex', subcmd]
 
     if codex_login:
@@ -32,7 +33,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str], codex_login: bool 
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
         # we attempt to convert snapshots to model family aliases.
-        model = _snapshot_to_family_alias(llm.API_MODEL or cfg.models.agent)
+        model = _snapshot_to_family_alias(llm.API_MODEL or model)
         cmd += ['--model', model]
     else:
         config_settings = {
@@ -41,7 +42,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str], codex_login: bool 
             #'model_providers.crisp.api_key': llm.API_KEY or 'sk-no-api-key',
             'model_providers.crisp.env_key': 'CRISP_API_KEY',
             'model_provider': 'crisp',
-            'model': llm.API_MODEL or cfg.models.agent,
+            'model': llm.API_MODEL or model,
             # TODO: OpenAI pricing is based on input and output tokens, with 
             # long context tokens costing twice as much as short context ones.
             # We might want to set limits to avoid the long context pricing.
@@ -98,6 +99,7 @@ def run_rewrite(
     cfg: Config,
     mvir: MVIR,
     prompt: str,
+    model: str,
     input_code: TreeNode,
     extra_code: TreeNode | list[TreeNode] = [],
     planning_files: TreeNode | None = None,
@@ -168,7 +170,7 @@ def run_rewrite(
                 '--dangerously-bypass-approvals-and-sandbox',
                 '--skip-git-repo-check',
                 prompt,
-            ], codex_login=codex_login)
+            ], codex_login=codex_login, model=model)
             print(codex_cmd)
             all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 

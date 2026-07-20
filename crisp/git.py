@@ -37,6 +37,7 @@ OP_NODE_KINDS = {
 }
 
 HISTORY_INDEX_KEYS = set((kind, new) for (kind, (old, new)) in OP_NODE_KINDS.items())
+HISTORY_INDEX_OLD_KEYS = set((kind, old) for (kind, (old, new)) in OP_NODE_KINDS.items())
 
 def render(mvir: MVIR, target: TreeNode) -> pygit2.Oid:
     """
@@ -49,7 +50,19 @@ def render(mvir: MVIR, target: TreeNode) -> pygit2.Oid:
         # Try to find an op that produced the last tree.
         tree = trees[-1]
         op_node_id = None
-        for ie in mvir.index(tree.node_id()):
+        index = mvir.index(tree.node_id())
+
+        # Save a set of all nodes with `old_code`
+        old_node_ids = set()
+        for ie in index:
+            if (ie.kind, ie.key) in HISTORY_INDEX_OLD_KEYS:
+                old_node_ids.add(ie.node_id)
+
+        for ie in index:
+            if ie.node_id in old_node_ids:
+                # Ignore nodes where `old_code==new_code`,
+                # such as the planning node from agent mode
+                continue
             if (ie.kind, ie.key) in HISTORY_INDEX_KEYS:
                 op_node_id = ie.node_id
                 break

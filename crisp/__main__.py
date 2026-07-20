@@ -291,10 +291,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
         op_node = mvir.node(matches[0].node_id)
         return mvir.node(op_node.planning_files)
 
-    # An agent step can update SAFETY_PLAN.md without changing any source
-    # files.  Several successful steps can therefore produce the same code
-    # node with different planning nodes.  The reverse index is not ordered,
-    # so use the timestamped operation reflog to find the latest producer.
+    # Multiple ops can produce the same tree (planning step, no-op safety
+    # steps); take the most recent one from the `op_history` reflog.
     match_ids = {ie.node_id for ie in matches}
     for entry in reversed(mvir.tag_reflog('op_history')):
         if entry.node_id in match_ids:

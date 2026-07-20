@@ -284,25 +284,25 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
         if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
     ]
 
-    if not matches:
-        return None
-
-    if len(matches) == 1:
-        op_node = mvir.node(matches[0].node_id)
-        return mvir.node(op_node.planning_files)
-
-    # Multiple ops can produce the same tree (planning step, no-op safety
-    # steps); take the most recent one from the `op_history` reflog.
-    match_ids = {ie.node_id for ie in matches}
-    for entry in reversed(mvir.tag_reflog('op_history')):
-        if entry.node_id in match_ids:
-            op_node = mvir.node(entry.node_id)
+    match matches:
+        case [ie]:
+            op_node = mvir.node(ie.node_id)
             return mvir.node(op_node.planning_files)
+        case []:
+            return None
+        case _:
+            # Multiple ops can produce the same tree (planning step, no-op safety
+            # steps); take the most recent one from the `op_history` reflog.
+            match_ids = {ie.node_id for ie in matches}
+            for entry in reversed(mvir.tag_reflog('op_history')):
+                if entry.node_id in match_ids:
+                    op_node = mvir.node(entry.node_id)
+                    return mvir.node(op_node.planning_files)
 
-    raise CrispError(
-        f'no op_history entry found for Codex producers of {n_code.node_id()}: '
-        + ', '.join(str(ie.node_id) for ie in matches)
-    )
+            raise CrispError(
+                f'no op_history entry found for Codex producers of {n_code.node_id()}: '
+                + ', '.join(str(ie.node_id) for ie in matches)
+            )
 
 
 @dataclass(frozen = True)

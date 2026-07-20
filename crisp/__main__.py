@@ -291,8 +291,16 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
         case []:
             return None
         case _:
+            # Multiple ops can produce the same tree (planning step, no-op safety
+            # steps); take the most recent one from the `op_history` reflog.
+            match_ids = {ie.node_id for ie in matches}
+            for entry in reversed(mvir.tag_reflog('op_history')):
+                if entry.node_id in match_ids:
+                    op_node = mvir.node(entry.node_id)
+                    return mvir.node(op_node.planning_files)
+
             raise CrispError(
-                f'multiple Codex agent ops produced code node {n_code.node_id()}: '
+                f'no op_history entry found for Codex producers of {n_code.node_id()}: '
                 + ', '.join(str(ie.node_id) for ie in matches)
             )
 

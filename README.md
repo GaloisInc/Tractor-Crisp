@@ -1,5 +1,28 @@
 # TRACTOR CRISP
 
+CRISP is a tool for migrating C code to safe Rust.
+
+## Features
+
+The following features have been implemented in the CRISP transpiler loop:
+
+* Automatic translation of C to unsafe Rust using either c2rust-transpile or
+  [Hayroll](https://github.com/UW-HARVEST/Hayroll).  CRISP tries Hayroll first
+  and falls back to ordinary c2rust-transpile only if it fails.
+* Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
+  unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
+  builds, passes the tests, and does not introduce new unsafety before
+  accepting it.
+* Automatic detection of unsafe code.  The CRISP transpiler loop stops once
+  there is no unsafe code left to make safe.
+* FFI function splitting.  To preserve ABI compatibility when translating
+  libraries, some function signatures must remain unsafe.  To minimize the
+  amount of unsafe code, CRISP splits each such function into a small unsafe
+  wrapper and a separate implementation function that can then be made safe.
+* High-level planning.  CRISP prompts the agent to develop a high-level safety
+  plan for the codebase, then has the agent implement the plan step by step.
+
+
 # Running in Docker
 
 This is the easiest way to get started using CRISP.
@@ -119,27 +142,6 @@ Set up environment variables (`CRISP_API_BASE` etc.) as above.
 
 Follow the same sequence of `crisp commit` + `crisp main` + `crisp checkout` as
 above.
-
-
-# Features
-
-The following features have been implemented in the CRISP transpiler loop:
-
-* Automatic translation of C to unsafe Rust using either c2rust-transpile or
-  [Hayroll](https://github.com/UW-HARVEST/Hayroll).  CRISP tries Hayroll first
-  and falls back to ordinary c2rust-transpile only if it fails.
-* Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
-  unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
-  builds, passes the tests, and does not introduce new unsafety before
-  accepting it.
-* Automatic detection of unsafe code.  The CRISP transpiler loop stops once
-  there is no unsafe code left to make safe.
-* FFI function splitting.  To preserve ABI compatibility when translating
-  libraries, some function signatures must remain unsafe.  To minimize the
-  amount of unsafe code, CRISP splits each such function into a small unsafe
-  wrapper and a separate implementation function that can then be made safe.
-* High-level planning.  CRISP prompts the agent to develop a high-level safety
-  plan for the codebase, then has the agent implement the plan step by step.
 
 
 # Reading the output

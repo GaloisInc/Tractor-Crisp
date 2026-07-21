@@ -38,6 +38,34 @@ WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
     "by commands run by the agent; please make sure " \
     "to set limits on its usage.\033[0m"
 
+# Turn the sandbox contents into the baseline commit of a small local repo
+GIT_BASELINE_CMD = (
+    'git init -q && git add --all && '
+    'git -c user.name=CRISP -c user.email=crisp@localhost '
+    'commit --quiet -m "CRISP sandbox baseline"')
+
+
+def _normalize_run_args(
+    extra_code: TreeNode | list[TreeNode],
+    env: dict | None,
+) -> tuple[list[TreeNode], dict]:
+    """Shared argument normalization for the codex entry points below."""
+    if 'CRISP_API_KEY' in os.environ:
+        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
+    if isinstance(extra_code, TreeNode):
+        extra_code = [extra_code]
+    return extra_code, {} if env is None else env
+
+
+def _setup_codex_home(sb, env: dict, codex_login: bool) -> str:
+    """Point CODEX_HOME at the sandbox `.codex/` dir; inject auth if requested."""
+    if codex_login:
+        print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
+        _inject_codex_auth(sb)
+    codex_dir = sb.join('.codex')
+    env.setdefault('CODEX_HOME', codex_dir)
+    return codex_dir
+
 
 def _snapshot_to_family_alias(model: str) -> str:
     """
@@ -173,14 +201,7 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     codex_agents: Sequence[str] = (),
 ) -> tuple[TreeNode, TreeNode]:
-    if 'CRISP_API_KEY' in os.environ:
-        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
-
-    if isinstance(extra_code, TreeNode):
-        extra_code = [extra_code]
-
-    if env is None:
-        env = {}
+    extra_code, env = _normalize_run_args(extra_code, env)
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
@@ -211,20 +232,12 @@ def run_rewrite(
         gitignore_file = FileNode.new(
             mvir, '\n'.join(gitignore_lines) + '\n')
         sb.checkout_file('.gitignore', gitignore_file)
-        init_git_repo = (
-            'git init -q && git add --all && '
-            'git -c user.name=CRISP -c user.email=crisp@localhost '
-            'commit --quiet -m "CRISP sandbox baseline"')
-        exit_code, logs = sb.run(init_git_repo, cwd='.', shell=True, stream=True)
+        exit_code, logs = sb.run(GIT_BASELINE_CMD, cwd='.', shell=True, stream=True)
 
         if exit_code == 0:
             _inject_codex_agents(sb, mvir, codex_agents)
 
-            if codex_login:
-                print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
-                _inject_codex_auth(sb)
-
-            codex_dir = sb.join(".codex")
+            codex_dir = _setup_codex_home(sb, env, codex_login)
             mkdir_codex = ['mkdir', '-p', codex_dir]
 
             codex_cmd = _codex_command(cfg, 'exec', [
@@ -235,8 +248,6 @@ def run_rewrite(
             print(codex_cmd)
             all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 
-            if 'CODEX_HOME' not in env:
-                env['CODEX_HOME'] = codex_dir
             if find_unsafe2_json_dir is not None:
                 env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
 
@@ -363,14 +374,7 @@ def run_review(
                 return True
         return False
 
-    if 'CRISP_API_KEY' in os.environ:
-        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
-
-    if isinstance(extra_code, TreeNode):
-        extra_code = [extra_code]
-
-    if env is None:
-        env = {}
+    extra_code, env = _normalize_run_args(extra_code, env)
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(old_code)
@@ -379,27 +383,20 @@ def run_review(
         # Keep sandbox-only files out of the reviewed diff.
         _checkout_bytes(sb, mvir, '.gitignore', b'.codex/\ntarget/\n')
 
-        if codex_login:
-            print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
-            _inject_codex_auth(sb)
-
-        codex_dir = sb.join('.codex')
+        codex_dir = _setup_codex_home(sb, env, codex_login)
         last_message_path = sb.join('.codex/last_message.txt')
 
-        setup_cmds = [
+        setup_cmds: list[str | list[str]] = [
             ['mkdir', '-p', codex_dir],
-            ['git', 'init', '-q'],
-            ['git', 'add', '-A'],
-            ['git', '-c', 'user.name=crisp', '-c', 'user.email=crisp@localhost',
-                'commit', '-qm', 'baseline'],
+            GIT_BASELINE_CMD,
         ]
         deleted_files = [path for path in old_code.files if path not in new_code.files]
         if deleted_files:
             setup_cmds.append(['rm', '-f'] + deleted_files)
         for cmd in setup_cmds:
-            exit_code, logs = sb.run(cmd, cwd=cwd, env=env)
+            exit_code, logs = sb.run(cmd, cwd=cwd, shell=isinstance(cmd, str), env=env)
             if exit_code != 0:
-                raise CrispError(f'{cmd[0]} failed: exit code {exit_code}: {logs!r}')
+                raise CrispError(f'{cmd!r} failed: exit code {exit_code}: {logs!r}')
         sb.checkout(new_code)
 
         codex_cmd = _codex_command(cfg, 'exec', [
@@ -413,9 +410,6 @@ def run_review(
             prompt,
         ], codex_login=codex_login, model=model)
         print(codex_cmd)
-
-        if 'CODEX_HOME' not in env:
-            env['CODEX_HOME'] = codex_dir
 
         exit_code, logs = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)
         if exit_code != 0:

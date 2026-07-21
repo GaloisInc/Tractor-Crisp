@@ -1,7 +1,8 @@
 # TRACTOR CRISP
 
-
 # Running in Docker
+
+This is the easiest way to get started using CRISP.
 
 ## Building the Docker image
 
@@ -29,7 +30,7 @@ Run the Docker container:
 docker run --rm -it -v /path/to/my-project:/root/project tractor-crisp
 ```
 
-Then, within the container, run these commands:
+Then, within the container, run CRISP on the project:
 
 ```sh
 cd /root/project
@@ -38,8 +39,8 @@ cd /root/project
 export CRISP_API_BASE=https://api.openai.com/v1
 export CRISP_API_KEY=sk-your-api-key-here
 
-# Optional: override the `models.agent_plan`, `models.agent_loop`, `models.rewriter`, etc. selections
-# in crisp.toml for this run.
+# Optional: override the `models.agent_plan`, `models.agent_loop`,
+# `models.rewriter`, etc. selections # in crisp.toml for this run.
 #export CRISP_API_MODEL=gpt-5.6-sol
 
 # As an alternative, you can direct CRISP to connect to llama.cpp or another
@@ -54,9 +55,14 @@ find . -name \*.c -o -name \*.h -o -name CMakeLists.txt \
     | xargs crisp commit -t c_code
 
 # Run the CRISP transpiler loop
-crisp main
+crisp main --llm-mode agent_rand_target
 
-# Export translated Rust from CRISP
+# CRISP sets a default limit on the number of rewrite attempts to avoid
+# excessive token usage.  If `crisp main` stops early, run this to keep going:
+#crisp safety-loop --llm-mode agent_rand_target
+
+# Export translated Rust from CRISP.  Rust code will be located in the
+# `transpile.output_dir` specified in `crisp.toml`.
 crisp checkout
 ls rust/
 ```
@@ -66,6 +72,7 @@ ls rust/
 
 CRISP can also run directly on the host machine, using Docker to sandbox
 building and testing of the project (to protect against erroneous LLM outputs).
+This is useful when developing CRISP.
 
 ## Setting up the Python virtual environment
 
@@ -121,18 +128,18 @@ The following features have been implemented in the CRISP transpiler loop:
 * Automatic translation of C to unsafe Rust using either c2rust-transpile or
   [Hayroll](https://github.com/UW-HARVEST/Hayroll).  CRISP tries Hayroll first
   and falls back to ordinary c2rust-transpile only if it fails.
-* LLM-based safety refactoring.  CRISP uses an LLM to convert unsafe Rust to
-  safe Rust.  CRISP checks that the LLM-generated code builds and passes the
-  tests before accepting it.
-* LLM-based build and test repair.  When code fails to build or doesn't pass
-  tests, CRISP invokes an LLM to attempt to fix the problem.  Output is built
-  and tested again before accepting it.
+* Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
+  unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
+  builds, passes the tests, and does not introduce new unsafety before
+  accepting it.
 * Automatic detection of unsafe code.  The CRISP transpiler loop stops once
   there is no unsafe code left to make safe.
 * FFI function splitting.  To preserve ABI compatibility when translating
   libraries, some function signatures must remain unsafe.  To minimize the
   amount of unsafe code, CRISP splits each such function into a small unsafe
   wrapper and a separate implementation function that can then be made safe.
+* High-level planning.  CRISP prompts the agent to develop a high-level safety
+  plan for the codebase, then has the agent implement the plan step by step.
 
 
 # Reading the output
@@ -177,6 +184,7 @@ compiling the code ), use `crisp checkout 287272d --path ./out`; this will
 create `./out/Public-Tests/B01_organic/colourblind_lib/translated_rust/Cargo.lock`
 and so on.
 
+
 # Testing
 
 To run all of the CI tests on `Test-Corpus`, you'll need access to
@@ -187,6 +195,15 @@ and has to be explicitly checked out with
 ```sh
 git submodule update --init --checkout Test-Corpus
 ```
+
+The helper script at `scripts/test_eval.py` will automatically generate a
+`crisp.toml`, import `c_code`, and run `crisp main` on any `Test-Corpus` test
+case.  Run it like this:
+
+```sh
+uv run scripts/test_eval.py /path/to/Test-Corpus/foo/bar -- --llm-mode agent_rand_target
+```
+
 
 # GEPA prompt optimization
 GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.org/abs/2507.19457)). GEPA can be used to optimize the system prompt on any dataset to achieve better performance of converting unsafe Rust to safe Rust via LLMs.

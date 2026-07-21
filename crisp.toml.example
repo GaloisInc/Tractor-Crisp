@@ -10,16 +10,17 @@ src_globs = "rust/src/*.rs"
 # This can also be a list of globs:
 #src_globs = ["rust/src/*.rs", "rust/src/*/*.rs"]
 
-# CRISP runs these shell commands to check whether translation steps correctly
-# preserve the behavior of the original program.  The example `test_command`
-# just builds the code, but doesn't test it; you may wish to add additional
-# steps to build and run project-specific test cases.  The `test_command`
-# should exit with code 0 on success (e.g. when the tests pass) and nonzero
-# otherwise.
+# CRISP runs these shell commands after each translation step to check whether
+# it correctly # preserved the behavior of the original program.  The example
+# `test_command` just builds the code, but doesn't test it; you may wish to add
+# additional steps to build and run project-specific test cases.  The
+# `test_command` should exit with code 0 on success (e.g. when the tests pass)
+# and nonzero otherwise.
 test_command = """
 set -e
 cargo build --manifest-path rust/Cargo.toml
 """
+
 
 # Choose the models used by the different CRISP operations.
 [models]
@@ -31,19 +32,43 @@ postprocess = "gpt-5.6-luna"
 # its available models and uses the first one.
 #rewriter = "gpt-5.6-terra"
 
-[transpile]
 
-# Directory containing the main `CMakeLists.txt` for the C project.
-cmake_src_dir = "."
+[transpile]
 
 # Where to output the generated Rust code.  If you change this, also change
 # `src_globs` above to match.
 output_dir = "rust"
 
-# If the C project produces a binary instead of a library, uncomment this.
-#bin_main = "main"
 
-# If this is set to the name of a CMake target, only source files relevant to
-# that target will be transpiled.  Otherwise, all source files from all targets
-# will be transpiled.
-#single_target = "target_name"
+# Define a `transpile.artifacts` section for the binary or library to
+# transpile.
+#
+# CRISP doesn't yet fully support multi-artifact projects, so adding more than
+# one `transpile.artifacts` section is not recommended.
+[[transpile.artifacts]]
+
+# A name for this artifact.  This will be used as the name of the generated
+# Rust crate.  If this is set to `foo`, then `cargo build` on the CRISP output
+# will produce a binary named `foo` or a library named `libfoo.so`.
+name = "driver"
+
+# Command to configure the build system for this artifact.  This can also be a
+# list of commands, e.g. `["./foo", "./bar"]`.
+configure_cmds = "cmake -B build ."
+
+# Command to build this artifact.  Each source file compiled while running this
+# command will be transpiled and included in the current artifact.
+#
+# Configuration scripts should be called in `configure_cmds`, not here, because
+# they often build small helper files to test compiler functionality, and those
+# files should not be transpiled.
+build_cmds = "cmake --build build"
+
+# System libraries that this artifact depends on.  CRISP will generate a
+# build.rs that links against each named library.
+system_libs = [ "crypto" ]
+
+# If this section describes a binary artifact, `bin_main` must be set to the
+# name (without `.c` extension) of the C file where the `main` function is
+# defined.  If this is unset, CRISP will produce a library crate.
+bin_main = "driver"

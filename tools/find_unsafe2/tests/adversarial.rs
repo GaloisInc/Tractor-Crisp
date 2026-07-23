@@ -95,10 +95,10 @@ fn count_compression() {
     assert_rejected("count_compression");
 }
 
-// An unrelated earlier closure rekeys a later unsafe closure: spurious reject.
+// A binding closure created inside an FFI entry point inherits its exemption.
 #[test]
-fn closure_reindex() {
-    assert_rejected("closure_reindex");
+fn entry_point_closure_exempt() {
+    assert_accepted("entry_point_closure_exempt");
 }
 
 // Renaming an unsafe fn reads as a new function: spurious reject.
@@ -180,10 +180,10 @@ fn struct_carried_ptr_sig() {
     assert_rejected("struct_carried_ptr_sig");
 }
 
-// A helper closure naming a raw pointer is spuriously rejected as a new item.
+// A helper closure's raw-pointer param doesn't charge the enclosing signature.
 #[test]
 fn closure_ptr_param() {
-    assert_rejected("closure_ptr_param");
+    assert_accepted("closure_ptr_param");
 }
 
 // Impl code routing a call through an exempt entry point is charged.

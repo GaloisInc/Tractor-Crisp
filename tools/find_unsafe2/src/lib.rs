@@ -286,6 +286,79 @@ impl FunctionOutputs {
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
     }
+
+    /// Fold a closure's metrics into `self`, its enclosing item.  Only body-derived metrics
+    /// merge; declaration properties (qualifiers, signature, export status) are the enclosing
+    /// item's own, so a closure's raw-pointer parameters never charge the enclosing signature.
+    fn merge_from(&mut self, other: &FunctionOutputs) {
+        fn merge_map(dest: &mut IndexMap<String, usize>, src: &IndexMap<String, usize>) {
+            for (k, &v) in src {
+                *dest.entry(k.clone()).or_insert(0) += v;
+            }
+        }
+
+        self.derefs_raw_ptr += other.derefs_raw_ptr;
+        self.calls_unsafe += other.calls_unsafe;
+        self.inline_asm += other.inline_asm;
+        merge_map(&mut self.uses_static_mut, &other.uses_static_mut);
+        merge_map(&mut self.uses_union_field, &other.uses_union_field);
+        merge_map(&mut self.uses_foreign_fn, &other.uses_foreign_fn);
+        merge_map(&mut self.uses_ffi_entry_point, &other.uses_ffi_entry_point);
+        self.casts_int_to_ptr += other.casts_int_to_ptr;
+    }
+}
+
+/// Strip trailing closure-like path segments (`{closure#N}`, `{constant#N}`, `{coroutine...}`)
+/// so an item folds into its enclosing named item.  Segments like `{impl#N}` in the middle of a
+/// path are preserved.
+fn attribution_key(name: &str) -> &str {
+    let mut end = name.len();
+    while let Some(idx) = name[..end].rfind("::") {
+        let seg = &name[idx + 2..end];
+        if seg.starts_with("{closure#")
+            || seg.starts_with("{constant#")
+            || seg.starts_with("{coroutine")
+        {
+            end = idx;
+        } else {
+            break;
+        }
+    }
+    &name[..end]
+}
+
+/// Merge closure (and other unnamed-item) entries into their enclosing named functions, then
+/// recompute all totals.  Closure keys are positional (`{closure#N}`) and rekey on unrelated
+/// edits, so they must not act as standalone baseline entries; folding also lets closures
+/// created inside FFI entry points inherit the entry-point exemption.
+pub fn fold_closure_entries(out: &mut Outputs) {
+    let fns = std::mem::take(&mut out.fns);
+    let mut folded: IndexMap<String, FunctionOutputs> = IndexMap::new();
+    // Insert named items first, so folding never depends on the order rustc emits items.
+    let mut children: Vec<(String, FunctionOutputs)> = Vec::new();
+    for (name, value) in fns {
+        if attribution_key(&name) == name {
+            folded.insert(name, value);
+        } else {
+            children.push((name, value));
+        }
+    }
+    for (name, value) in children {
+        let key = attribution_key(&name);
+        if let Some(existing) = folded.get_mut(key) {
+            existing.merge_from(&value);
+        } else {
+            folded.insert(key.to_string(), value);
+        }
+    }
+    for v in folded.values_mut() {
+        v.calc_total_unsafe();
+    }
+    out.total_unsafe = folded.values()
+        .filter(|v| !v.is_ffi_entry_point)
+        .map(|v| v.total_unsafe)
+        .sum();
+    out.fns = folded;
 }
 
 impl TypeOutputs {
@@ -548,8 +621,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
             let key: String = item.name();
             let item_ffi_symbol = ffi_symbol(item);
-            let mut value = FunctionOutputs {
-                total_unsafe: 0,    // Calculated later
+            let value = FunctionOutputs {
+                total_unsafe: 0,    // Calculated in `fold_closure_entries`
                 filename: item.span().get_filename(),
                 is_unsafe_fn: is_unsafe_fn(item),
                 is_mut_static: is_mut_static(item),
@@ -575,14 +648,13 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 is_ffi_entry_point: is_ffi_entry_point(item, &item_ffi_symbol),
                 ffi_symbol: item_ffi_symbol,
             };
-            value.calc_total_unsafe();
-            if !value.is_ffi_entry_point {
-                out.total_unsafe += value.total_unsafe;
-            }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());
         }
     }
+
+    // Attribute closures to their enclosing functions and compute all totals.
+    fold_closure_entries(&mut out);
 
     for td in crate_type_defs(tcx) {
         let key: String = td.name();

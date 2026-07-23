@@ -233,7 +233,7 @@ fn main() {
         }
 
         let json_path = json_dir.join(format!("{crate_name}.json"));
-        let old_out = if fs::exists(&json_path).unwrap() {
+        let mut old_out = if fs::exists(&json_path).unwrap() {
             serde_json::from_reader(
                 File::open(&json_path).unwrap(),
             ).unwrap()
@@ -245,6 +245,8 @@ fn main() {
             // Skip dependencies
             return ControlFlow::<(), ()>::Continue(());
         };
+        // Baselines written before closure attribution still carry `{closure#N}` entries.
+        find_unsafe2::fold_closure_entries(&mut old_out);
 
         let new_out = find_unsafe2::process(tcx);
 

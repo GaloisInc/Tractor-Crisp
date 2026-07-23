@@ -1,6 +1,0 @@
----
-source: find_unsafe2/tests/adversarial.rs
-expression: out.stdout
----
-adv_closure_reindex::work::{closure#1}: raw pointer derefs increased: 0 -> 1
-adv_closure_reindex::work::{closure#1}: raw pointer types in signature increased: 0 -> 1

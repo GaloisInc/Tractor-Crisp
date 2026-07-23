@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_entry_point_promotion::adv_promote: FFI export flag changed: false -> true

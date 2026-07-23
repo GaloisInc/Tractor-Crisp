@@ -42,6 +42,9 @@ The following FFI rules are mandatory:
 Do not recommend editing tests or original C code to make validation pass. Do
 not recommend new unsafe or unsafe-adjacent implementation code, including raw
 pointer fields or arguments, int-to-pointer casts, or calls to unsafe FFI APIs.
+Moving or converting unsafe operations between functions that already contain
+unsafe code is acceptable when it enables later removal (the crate-wide total
+must still shrink over time); introducing new unsafe helper functions is not.
 
 Dependency policy: a Rust crate may be recommended as a replacement for a
 dependency of the original C project (for example, a zlib crate where the C
@@ -61,13 +64,17 @@ parent's spawn message may give the concrete path). Each file contains:
   points.
 - `fns`: a map from function name to a record with `filename`, `total_unsafe`,
   `is_ffi_entry_point`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`,
-  `calls_unsafe`, and the maps `uses_static_mut` and `uses_union_field` (keyed
-  by the static or field used), plus the progress metrics `uses_foreign_fn`,
-  `casts_int_to_ptr`, and `sig_contains_raw_ptr`.
+  `calls_unsafe`, `inline_asm`, and the maps `uses_static_mut` and
+  `uses_union_field` (keyed by the static or field used), plus the progress
+  metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
+  `sig_contains_raw_ptr`. Closures are attributed to their enclosing named
+  function rather than listed separately.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field
   `"type"`.
+- `unsafe_impls`: a map of `unsafe impl` blocks (e.g. `unsafe impl Send`).
+  These are surfaced for soundness review rather than counted.
 
 The harness that later executes the plan assigns work targets using exactly
 these function, type, and field names. Cite symbols in your report using these

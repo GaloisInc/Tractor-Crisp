@@ -17,9 +17,22 @@ use serde_json;
 use find_unsafe2::{self, Outputs, FunctionOutputs, TypeOutputs};
 
 
-/// Check whether the unsafe operations recorded in `new` are a subset of those recorded in `old`.
-/// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
-/// found any such things.
+/// How a detected increase is reported.  `Error` fails the check; `Warning` is printed for
+/// review but tolerated.
+#[derive(Clone, Copy)]
+enum Severity {
+    Error,
+    Warning,
+}
+
+/// Check `new` against the `old` baseline:
+/// - Functions with no unsafety in the baseline (including newly added functions, which get an
+///   all-zero baseline) must stay entirely safe.
+/// - Functions that already contained unsafety may move, convert, or grow it; such increases are
+///   tolerated with a warning, subject to the crate-wide `total_unsafe` not increasing.
+/// - The progress metrics (int-to-pointer casts, raw pointer signatures and fields, foreign fn
+///   and FFI entry point uses) and the export set remain per-function non-increasing.
+/// Prints a line per finding and returns `false` if any hard error was found.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     let Outputs { total_unsafe: _, ref fns, ref types, ref unsafe_impls } = *new;
     let mut ok = true;
@@ -107,6 +120,11 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         ok &= check_type_outputs(type_name, old_type, new_type);
     }
 
+    // Unsafety may move between existing unsafe functions, but the crate-wide total (which
+    // excludes FFI entry points) must not increase.
+    ok &= check_count(old.total_unsafe, new.total_unsafe, Severity::Error,
+        || String::from("total unsafe operations"));
+
     ok
 }
 
@@ -117,7 +135,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     }
 
     let FunctionOutputs {
-        // Don't check the total.  Each element that feeds into this total is checked individually.
+        // The per-function total only selects the severity below; the global total is checked in
+        // `check_outputs`.
         total_unsafe: _,
         filename: _,
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
@@ -129,30 +148,37 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     } = *new;
     let mut ok = true;
 
-    ok &= check_bad_flag(old.is_unsafe_fn, is_unsafe_fn,
+    // Unsafety metrics: hard errors on functions that were entirely safe (including new
+    // functions); tolerated with a warning on functions that already contained unsafety,
+    // subject to the global total check.
+    let unsafety = if old.total_unsafe == 0 { Severity::Error } else { Severity::Warning };
+
+    ok &= check_bad_flag(old.is_unsafe_fn, is_unsafe_fn, unsafety,
         || format!("{name}: `unsafe` qualifier"));
-    ok &= check_bad_flag(old.is_mut_static, is_mut_static,
+    ok &= check_bad_flag(old.is_mut_static, is_mut_static, unsafety,
         || format!("{name}: `mut` qualifier"));
 
-    ok &= check_count(old.derefs_raw_ptr, derefs_raw_ptr,
+    ok &= check_count(old.derefs_raw_ptr, derefs_raw_ptr, unsafety,
         || format!("{name}: raw pointer derefs"));
-    ok &= check_count(old.calls_unsafe, calls_unsafe,
+    ok &= check_count(old.calls_unsafe, calls_unsafe, unsafety,
         || format!("{name}: unsafe function calls"));
-    ok &= check_count(old.inline_asm, inline_asm,
+    ok &= check_count(old.inline_asm, inline_asm, unsafety,
         || format!("{name}: inline asm blocks"));
 
-    ok &= check_count_map(&old.uses_static_mut, uses_static_mut,
+    ok &= check_count_map(&old.uses_static_mut, uses_static_mut, unsafety,
         |k| format!("{name}: uses of static mut {k}"));
-    ok &= check_count_map(&old.uses_union_field, uses_union_field,
+    ok &= check_count_map(&old.uses_union_field, uses_union_field, unsafety,
         |k| format!("{name}: uses of union field {k}"));
-    ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
+
+    // Progress metrics stay per-function strict: they are the laundering surface.
+    ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn, Severity::Error,
         |k| format!("{name}: uses of foreign fn {k}"));
-    ok &= check_count_map(&old.uses_ffi_entry_point, uses_ffi_entry_point,
+    ok &= check_count_map(&old.uses_ffi_entry_point, uses_ffi_entry_point, Severity::Error,
         |k| format!("{name}: uses of FFI entry point {k}"));
 
-    ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr,
+    ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr, Severity::Error,
         || format!("{name}: int-to-pointer casts"));
-    ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr,
+    ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr, Severity::Error,
         || format!("{name}: raw pointer types in signature"));
 
     ok
@@ -172,7 +198,7 @@ fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool 
     } = *new;
     let mut ok = true;
 
-    ok &= check_count_map(&old.field_contains_raw_ptr, field_contains_raw_ptr,
+    ok &= check_count_map(&old.field_contains_raw_ptr, field_contains_raw_ptr, Severity::Error,
         |k| format!("{name}: field {k} raw pointer count"));
 
     ok
@@ -181,31 +207,49 @@ fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool 
 fn check_count_map<K: Hash + Eq>(
     old: &IndexMap<K, usize>,
     new: &IndexMap<K, usize>,
+    severity: Severity,
     mut desc: impl FnMut(&K) -> String,
 ) -> bool {
     let mut ok = true;
     for (k, &new_count) in new {
         let old_count = old.get(k).copied().unwrap_or(0);
-        ok &= check_count(old_count, new_count, || desc(k));
+        ok &= check_count(old_count, new_count, severity, || desc(k));
     }
     ok
 }
 
-/// Check a numeric "badness" count.  If the number increased, report an error.
-fn check_count(old: usize, new: usize, desc: impl FnOnce() -> String) -> bool {
+/// Check a numeric "badness" count.  If the number increased, report it at `severity`.
+fn check_count(old: usize, new: usize, severity: Severity, desc: impl FnOnce() -> String) -> bool {
     if new > old {
-        println!("{} increased: {old} -> {new}", desc());
-        false
+        match severity {
+            Severity::Error => {
+                println!("{} increased: {old} -> {new}", desc());
+                false
+            },
+            Severity::Warning => {
+                println!("warning: {} increased: {old} -> {new}", desc());
+                true
+            },
+        }
     } else {
         true
     }
 }
 
-/// Check the state of a "bad" flag.  If it changed from `false` to `true`, report an error.
-fn check_bad_flag(old: bool, new: bool, desc: impl FnOnce() -> String) -> bool {
+/// Check the state of a "bad" flag.  If it changed from `false` to `true`, report it at
+/// `severity`.
+fn check_bad_flag(old: bool, new: bool, severity: Severity, desc: impl FnOnce() -> String) -> bool {
     if !old && new {
-        println!("{} changed: false -> true", desc());
-        false
+        match severity {
+            Severity::Error => {
+                println!("{} changed: false -> true", desc());
+                false
+            },
+            Severity::Warning => {
+                println!("warning: {} changed: false -> true", desc());
+                true
+            },
+        }
     } else {
         true
     }

@@ -77,22 +77,38 @@ fn assert_accepted(name: &str) {
     assert_eq!(out.stdout, "", "{name}: expected no diagnostics");
 }
 
+fn assert_tolerated(name: &str) {
+    let out = run_scenario(name, true);
+    assert!(
+        out.passed,
+        "{name}: expected pass with warnings, got:\n{}",
+        out.stdout
+    );
+    insta::assert_snapshot!(name.to_owned(), out.stdout);
+}
+
 // A new laundering helper is rejected even though the global count drops.
 #[test]
 fn as_ref_helper() {
     assert_rejected("as_ref_helper");
 }
 
-// Growing an already-unsafe fn is rejected even with a global net decrease.
+// Growing an already-unsafe fn is tolerated with warnings: the global total decreased.
 #[test]
 fn hub_conversion() {
-    assert_rejected("hub_conversion");
+    assert_tolerated("hub_conversion");
 }
 
-// Trading many derefs for one unsafe call in the same fn is rejected.
+// Trading many derefs for one unsafe call in the same fn is tolerated with a warning.
 #[test]
 fn count_compression() {
-    assert_rejected("count_compression");
+    assert_tolerated("count_compression");
+}
+
+// Growing an unsafe fn with no offsetting decrease fails the global total rule.
+#[test]
+fn global_net_increase() {
+    assert_rejected("global_net_increase");
 }
 
 // A binding closure created inside an FFI entry point inherits its exemption.

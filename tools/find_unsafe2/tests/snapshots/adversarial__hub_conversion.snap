@@ -2,6 +2,6 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_hub_conversion::hub: raw pointer derefs increased: 1 -> 2
-adv_hub_conversion::caller1: unsafe function calls increased: 0 -> 1
-adv_hub_conversion::caller2: unsafe function calls increased: 0 -> 1
+warning: adv_hub_conversion::hub: raw pointer derefs increased: 1 -> 2
+warning: adv_hub_conversion::caller1: unsafe function calls increased: 0 -> 1
+warning: adv_hub_conversion::caller2: unsafe function calls increased: 0 -> 1

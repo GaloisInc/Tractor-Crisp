@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+warning: adv_global_net_increase::read2: raw pointer derefs increased: 1 -> 2
+total unsafe operations increased: 1 -> 2

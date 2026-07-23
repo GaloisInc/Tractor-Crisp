@@ -3,7 +3,7 @@
 //! hardening commits are expected to flip.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use insta;
 
@@ -13,11 +13,18 @@ struct Outcome {
 }
 
 fn run_scenario(name: &str, with_baseline: bool) -> Outcome {
+    run_scenario_in(name, with_baseline, None)
+}
+
+/// Like `run_scenario`, but with `SRC_DIR` pointed somewhere other than the fixture, so the
+/// scenario compiles as a crate outside the project.
+fn run_scenario_in(name: &str, with_baseline: bool, src_dir: Option<&Path>) -> Outcome {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     fs::create_dir_all(&tmp).unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/adversarial")
         .join(name);
+    let src_dir = src_dir.unwrap_or(&fixture);
     let crate_name = format!("adv_{name}");
 
     if with_baseline {
@@ -29,7 +36,7 @@ fn run_scenario(name: &str, with_baseline: bool) -> Outcome {
             .args(["--crate-name", &crate_name])
             .arg("--out-dir")
             .arg(&tmp)
-            .env("FIND_UNSAFE2_SRC_DIR", &fixture)
+            .env("FIND_UNSAFE2_SRC_DIR", src_dir)
             .env("FIND_UNSAFE2_JSON_DIR", &tmp)
             .status()
             .unwrap();
@@ -44,6 +51,7 @@ fn run_scenario(name: &str, with_baseline: bool) -> Outcome {
         .args(["--crate-name", &crate_name])
         .arg("--out-dir")
         .arg(&tmp)
+        .env("FIND_UNSAFE2_SRC_DIR", src_dir)
         .env("FIND_UNSAFE2_JSON_DIR", &tmp)
         .output()
         .unwrap();
@@ -202,10 +210,37 @@ fn asm_uncharged() {
     assert_accepted("asm_uncharged");
 }
 
-// HOLE: a crate with no baseline JSON is skipped entirely.
+// A project crate with no baseline inventory must not add new unsafety.
 #[test]
 fn unknown_crate_skip() {
     let out = run_scenario("unknown_crate_skip", false);
-    assert!(out.passed, "unknown_crate_skip: expected (current-behavior) pass");
-    assert_eq!(out.stdout, "");
+    assert!(!out.passed, "unknown_crate_skip: expected rejection, got pass");
+    insta::assert_snapshot!("unknown_crate_skip", out.stdout);
+}
+
+// A project crate with no baseline inventory is accepted if it adds no unsafety.
+#[test]
+fn new_crate_safe() {
+    let out = run_scenario("new_crate_safe", false);
+    assert!(out.passed, "new_crate_safe: expected pass, got:\n{}", out.stdout);
+    assert_eq!(out.stdout, "", "new_crate_safe: expected no diagnostics");
+}
+
+// A new crate holding only type definitions is still a project crate.
+#[test]
+fn type_only_crate() {
+    let out = run_scenario("type_only_crate", false);
+    assert!(!out.passed, "type_only_crate: expected rejection, got pass");
+    insta::assert_snapshot!("type_only_crate", out.stdout);
+}
+
+// A crate compiled from outside `SRC_DIR` is a dependency, not a project crate, so its unsafety
+// is not held against an empty baseline.
+#[test]
+fn dependency_crate_skipped() {
+    let src_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("dependency_crate_skipped_src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let out = run_scenario_in("dependency_crate_skipped", false, Some(&src_dir));
+    assert!(out.passed, "dependency_crate_skipped: expected pass, got:\n{}", out.stdout);
+    assert_eq!(out.stdout, "", "dependency_crate_skipped: expected no diagnostics");
 }

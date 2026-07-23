@@ -156,18 +156,33 @@ fn main() {
     assert!(json_dir.is_absolute(),
         "expected $FIND_UNSAFE2_JSON_DIR to be an absolute path, but got {:?}", json_dir);
 
+    let src_dir = env::var("FIND_UNSAFE2_SRC_DIR").unwrap();
+    let src_dir = Path::new(&src_dir);
+    assert!(src_dir.is_absolute(),
+        "expected $FIND_UNSAFE2_SRC_DIR to be an absolute path, but got {:?}", src_dir);
+
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
         let crate_name = rustc_public::local_crate().name;
 
-        let json_path = json_dir.join(format!("{crate_name}.json"));
-        if !fs::exists(&json_path).unwrap() {
+        if crate_name == "build_script_build" {
+            // Build scripts are skipped, matching `find_unsafe2`.
             return ControlFlow::<(), ()>::Continue(());
         }
 
-        let old_out: Outputs = serde_json::from_reader(
-            File::open(&json_path).unwrap(),
-        ).unwrap();
+        let json_path = json_dir.join(format!("{crate_name}.json"));
+        let old_out = if fs::exists(&json_path).unwrap() {
+            serde_json::from_reader(
+                File::open(&json_path).unwrap(),
+            ).unwrap()
+        } else if find_unsafe2::any_local_item_under(tcx, src_dir) {
+            // Treat crate missing in baseline as fully safe so
+            // putting unsafe code in new crate is detected.
+            Outputs::default()
+        } else {
+            // Skip dependencies
+            return ControlFlow::<(), ()>::Continue(());
+        };
 
         let new_out = find_unsafe2::process(tcx);
 

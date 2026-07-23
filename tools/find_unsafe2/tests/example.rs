@@ -20,6 +20,7 @@ fn run_example() {
         .args(["--crate-type", "rlib"])
         .args(["--edition", "2024"])
         .args(["--out-dir", env!("CARGO_TARGET_TMPDIR")])
+        .env("FIND_UNSAFE2_SRC_DIR", env!("CARGO_MANIFEST_DIR"))
         .env("FIND_UNSAFE2_JSON_DIR", env!("CARGO_TARGET_TMPDIR"))
         .stderr(Stdio::inherit())
         .output().unwrap();

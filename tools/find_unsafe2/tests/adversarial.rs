@@ -121,6 +121,7 @@ tests_assert_rejected! {
     // Calls an exported FFI function from implementation code.
     entry_point_call_from_impl,
     inline_asm,
+    unsafe_impl_send,
 
     // Calling `safe fn` FFI imports still counts toward the `uses_foreign_fn` progress metric, but
     // doesn't count toward `calls_unsafe`.  Probably we should instead count every `safe fn` as an
@@ -146,9 +147,6 @@ tests_assert_accepted! {
 
     // Tests various methods of converting `usize` to a pointer beyond `x as *mut T`.
     int_to_ptr_laundering,
-
-    // Adding `unsafe impl`s should count as adding unsafety.
-    unsafe_impl_send,
 }
 
 /// A crate with no baseline JSON should be handled as if it had a baseline with zero unsafe.

@@ -22,7 +22,7 @@ use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
 use rustc_public::rustc_internal;
 use rustc_public::ty::{
-    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder,
+    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder, TraitDef,
 };
 use serde::{Serialize, Deserialize};
 use crate::mir_visitor::Visitor;
@@ -181,7 +181,12 @@ pub struct Outputs {
     pub fns: IndexMap<String, FunctionOutputs>,
     pub types: IndexMap<String, TypeOutputs>,
 
-    // TODO: Unsafety: crate implements `unsafe trait`s.
+    /// Unsafety: the crate contains unsafe impls.
+    ///
+    /// These are indexed by parent module so `check_unsafe2` can give more specific errors when
+    /// new unsafe impls are added.
+    pub unsafe_impls: IndexMap<String, usize>,
+
     // TODO: Unsafety: crate contains `unsafe extern` imports.
 }
 
@@ -513,6 +518,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
         types: IndexMap::new(),
+        unsafe_impls: IndexMap::new(),
     };
 
     for item in items {
@@ -565,6 +571,17 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         out.total_unsafe += value.total_unsafe();
         let old = out.types.insert(key, value);
         assert!(old.is_none(), "duplicate types entry for {:?}", td.name());
+    }
+
+    for id in rustc_public::local_crate().trait_impls() {
+        let it = id.trait_impl();
+        let td = it.value.def_id;
+        let decl = TraitDef::declaration(&td);
+        if matches!(decl.safety, Safety::Unsafe) {
+            let impl_parent = id.0.parent().unwrap().name();
+            *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
+            out.total_unsafe += 1;
+        }
     }
 
     out

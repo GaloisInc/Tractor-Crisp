@@ -22,7 +22,7 @@ use find_unsafe2::{self, Outputs, FunctionOutputs, TypeOutputs};
 /// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
 /// found any such things.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
-    let Outputs { total_unsafe: _, ref fns, ref types } = *new;
+    let Outputs { total_unsafe: _, ref fns, ref types, ref unsafe_impls } = *new;
     let mut ok = true;
 
     // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
@@ -79,6 +79,9 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         let old_type = old.types.get(type_name).unwrap_or(&empty_type);
         ok &= check_type_outputs(type_name, old_type, new_type);
     }
+
+    ok &= check_count_map(&old.unsafe_impls, unsafe_impls,
+        |mod_path| format!("{mod_path}: unsafe impls increased"));
 
     ok
 }

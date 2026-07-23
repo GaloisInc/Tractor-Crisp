@@ -523,35 +523,24 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     match consecutive_failures:
                         case 0 | 1:
                             suffix = None
-                        case 2 | 3:
+                        case _:
                             # Previous steps failed to make progress on
-                            # `unsafe`.  We've seen the agent sometimes just do
-                            # refactoring or other general cleanup that doesn't
-                            # directly reduce unsafe.  This is actually
-                            # desirable, but if it goes on too long, we add a
-                            # reminder to focus on reducing unsafety.
+                            # `unsafe`.  Remind the agent of the goal, and of
+                            # the legitimate way out of a genuine dead end.
+                            # (An earlier, harder "or this run will be
+                            # terminated" escalation measurably increased FFI
+                            # rule violations and was retired.)
                             suffix = (
                                 'Remember, your primary goal is to reduce '
                                 'the amount of unsafe code. '
                                 'Try to remove at least one unsafe operation '
                                 'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code.'
-                            )
-                        case n:
-                            # Last-ditch attempt to get the agent to make
-                            # progress.  This may be too strongly worded, to
-                            # the point of encouraging cheating (such as moving
-                            # unsafe operations into FFI wrappers).
-                            suffix = (
-                                'Remember, your primary goal is to reduce '
-                                'the amount of unsafe code. '
-                                f'Your past {n} attempts failed to remove '
-                                'any unsafe operations. '
-                                'You MUST remove at least one unsafe operation '
-                                'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code '
-                                '(NOT from FFI entry points), '
-                                'or this run will be terminated.'
+                                'from the core implementation code. '
+                                'If direct removal is impossible, land a '
+                                'net-neutral preparatory step that enables '
+                                'a later removal instead. '
+                                'Reserve a final `BLOCKED: <reason>` line for '
+                                'when neither is possible.'
                             )
 
                     if ffi_suffix is not None:
@@ -587,9 +576,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
+                # A blocked step returns the input tree; only landed code
+                # retires the pending rejection report.
+                if n_new_code.node_id() != n_code.node_id():
+                    ffi_feedback = None
                 n_code = n_new_code
                 n_plans = n_new_plans
-                ffi_feedback = None
             elif ffi_report is not None:
                 ffi_feedback = ffi_report
                 ffi_seen_findings = merge_ffi_finding_titles(

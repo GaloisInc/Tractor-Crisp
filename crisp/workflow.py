@@ -162,7 +162,7 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
 
 AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report. Every dead-end note must cite the specific gate that rejected the attempt (the exact checker diagnostic, review finding, or failing test); rules change between runs, and dead ends that don't name their gate can't be retired when they go stale and should not be trusted.
 
 {target_goal}
 
@@ -174,9 +174,11 @@ cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 The rules it enforces:
 - Functions that are currently free of unsafe code must stay that way.
-- Within functions that already contain unsafe code, unsafe operations may move or change kind, as long as the crate-wide total does not increase. The same applies to relocating existing unsafe operations into a new named implementation function (for example an ownership facade or constructor), provided its signature and fields stay free of raw pointers. Such moves are tolerated with a warning and will be reviewed; only make them when they genuinely enable later removal.
+- Within functions that already contain unsafe code, unsafe operations may move or change kind, as long as the crate-wide total does not increase. The same applies to relocating existing unsafe operations into a new named implementation function (for example an ownership facade or constructor), provided its signature and fields stay free of raw pointers. Such moves are tolerated with a warning and will be reviewed; use them when they enable a later removal.
 - It is always an error to add "unsafe-adjacent" code: int-to-pointer casts, raw pointer types in signatures or fields, new uses of foreign functions, or uses of FFI entry points from implementation code.
 - FFI entry points are excluded from the unsafety count entirely. Removing `unsafe` qualifiers from exported entry points gains nothing and violates the FFI entry point rules; leave their signatures exactly as they are.
+
+If you conclude that no legal reduction is possible this iteration, record the dead end in `SAFETY_PLAN.md` and end your final message with a single last line `BLOCKED: <one-line reason>` instead of making cosmetic changes; your code edits will be discarded.
 '''
 
 # Warning lines printed by `check-unsafe2` for tolerated changes.  Anchored on
@@ -243,6 +245,15 @@ def parse_waiver_verdicts(report: str) -> dict[str, tuple[str, str]]:
     for m in WAIVER_VERDICT_RE.finditer(report):
         out[m.group(2)] = (m.group(1), m.group(3))
     return out
+
+def is_blocked_message(final_message: str) -> bool:
+    """
+    Whether the rewriter's final message declares the attempt blocked.  The
+    verdict must be the last non-empty line, so prose that merely mentions
+    the keyword doesn't count.
+    """
+    lines = [l.strip() for l in final_message.splitlines() if l.strip()]
+    return bool(lines) and lines[-1].startswith('BLOCKED:')
 
 def unsafety_vector(fn_record: dict) -> dict:
     """
@@ -1471,7 +1482,7 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1618,7 +1629,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
 
 
@@ -1702,7 +1713,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1745,9 +1756,16 @@ class Workflow:
     ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
         self.fuel.use()
 
-        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
+        n_new_code, n_plans, final_message = self.agent_safety(
+            n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal)
+        if is_blocked_message(final_message):
+            # The agent judged that no legal reduction is possible right now.
+            # Keep its plan updates (dead-end notes) but discard any code
+            # edits; the accepted code is unchanged, so validation is moot.
+            print(f'agent declared blocked: {final_message.strip()}')
+            return n_code, n_plans, None
         # The change must pass tests, must not regress the unsafe counts, must
         # pass review of any tolerated unsafety moves, and must not break the
         # FFI entry point rules.  The cheap unsafe comparison runs first so a
@@ -1783,7 +1801,11 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_new_code, n_plans, final_message = self.agent_safety_no_tests(
+            n_code, n_plans)
+        if is_blocked_message(final_message):
+            print(f'agent declared blocked: {final_message.strip()}')
+            return n_code, n_plans
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):

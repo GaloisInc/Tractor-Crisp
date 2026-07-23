@@ -201,8 +201,13 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
-) -> tuple[TreeNode, TreeNode]:
+) -> tuple[TreeNode, TreeNode, str]:
+    """
+    Run a codex rewrite over `input_code` and return the edited code, the
+    planning files, and the agent's final message (empty when unavailable).
+    """
     extra_code, env = _normalize_run_args(extra_code, env)
+    final_message = ''
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
@@ -240,10 +245,12 @@ def run_rewrite(
 
             codex_dir = _setup_codex_home(sb, env, codex_login)
             mkdir_codex = ['mkdir', '-p', codex_dir]
+            last_message_path = sb.join('.codex/last_message.txt')
 
             codex_cmd = _codex_command(cfg, 'exec', [
                 '--dangerously-bypass-approvals-and-sandbox',
                 '--skip-git-repo-check',
+                '--output-last-message', last_message_path,
                 prompt,
             ], codex_login=codex_login, model=model)
             print(codex_cmd)
@@ -261,6 +268,12 @@ def run_rewrite(
                 # TODO: ensure API key doesn't get included in the AgentOpNode
                 if exit_code != 0:
                     break
+
+            if exit_code == 0:
+                cat_exit_code, msg_bytes = sb.run(
+                    ['cat', last_message_path], cwd=cwd, env=env)
+                if cat_exit_code == 0:
+                    final_message = msg_bytes.decode('utf-8', errors='replace')
 
         ignore_lines = [
             '.git/',
@@ -325,7 +338,7 @@ def run_rewrite(
         raise CrispError(
             f'agent invocation failed: exit code {exit_code}', n_op)
 
-    return (output_code, output_plans)
+    return (output_code, output_plans, final_message)
 
 
 def _json_events_ran_commands(logs: bytes) -> bool:

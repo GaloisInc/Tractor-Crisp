@@ -4,6 +4,7 @@ from crisp.workflow import (
     FFI_SEEN_FINDINGS_CAP, merge_ffi_finding_titles,
     extract_checker_warnings,
     parse_waiver_verdicts, unsafety_vector,
+    is_blocked_message,
 )
 
 
@@ -97,6 +98,21 @@ class ParseWaiverVerdictsTest(unittest.TestCase):
                   'REMOVABLE f — changed my mind\n')
         self.assertEqual(parse_waiver_verdicts(report)['f'],
             ('REMOVABLE', 'changed my mind'))
+
+
+class IsBlockedMessageTest(unittest.TestCase):
+    def test_last_line_verdict(self):
+        self.assertTrue(is_blocked_message(
+            'I recorded the dead end in SAFETY_PLAN.md.\n\n'
+            'BLOCKED: inflateBack callback binding cannot lose its last deref\n'))
+
+    def test_prose_mention_is_not_blocked(self):
+        self.assertFalse(is_blocked_message(
+            'I did not need to answer BLOCKED: the refactor succeeded.\n'
+            'All tests pass.'))
+
+    def test_empty_message(self):
+        self.assertFalse(is_blocked_message(''))
 
 
 class UnsafetyVectorTest(unittest.TestCase):

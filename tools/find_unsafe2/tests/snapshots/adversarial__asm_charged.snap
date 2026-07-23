@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_asm_charged::spin: inline asm blocks increased: 0 -> 1

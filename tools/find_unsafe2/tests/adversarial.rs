@@ -210,10 +210,10 @@ fn unsafe_impl_send() {
     assert_accepted("unsafe_impl_send");
 }
 
-// HOLE: inline asm carries no charge, even in a new function.
+// Inline asm is charged, even in a new function.
 #[test]
-fn asm_uncharged() {
-    assert_accepted("asm_uncharged");
+fn asm_charged() {
+    assert_rejected("asm_charged");
 }
 
 // A project crate with no baseline inventory must not add new unsafety.

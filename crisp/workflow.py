@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import functools
 import inspect
+import json
 import os
 from pathlib import Path
 import re
@@ -23,7 +24,7 @@ from .mvir import (
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, WaiverOpNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -212,6 +213,52 @@ Earlier attempts in this run were rejected by review (see `SAFETY_PLAN.md`). The
 
 Do not repeat these mistakes.
 '''.strip()
+
+AGENT_ADJUDICATE_PROMPT = '''
+The Rust project in `{cargo_dir_path}` has been iteratively refactored toward safety.  The unsafe operations below remain, and repeated attempts to remove them have failed:
+
+{inventory}
+
+For each listed function, adjudicate whether its remaining unsafe operations can still be removed, or are inherent to the FFI boundary given these constraints: exported FFI entry point signatures cannot change; entry points must stay thin (no program logic); implementation code cannot call entry points; new functions must be entirely safe.
+
+Waive a function ONLY if all of the following hold — the bar is soundness and minimality, not difficulty:
+- its unsafe operations are sound as written (identify the invariants they rely on);
+- they are minimal (no part could move into an FFI entry point or be replaced by safe code);
+- each plausible legal alternative concretely fails (name the alternative and why).
+
+Read the code as needed to judge.  End your final message with exactly one verdict line per listed function, and no other text after them:
+WAIVE <function> — <one-line justification>
+REMOVABLE <function> — <one-line suggested approach>
+'''
+
+WAIVER_VERDICT_RE = re.compile(
+    r'^\s*(WAIVE|REMOVABLE)\s+(\S+)\s*(?:—|--)\s*(.+?)\s*$', re.MULTILINE)
+
+def parse_waiver_verdicts(report: str) -> dict[str, tuple[str, str]]:
+    """
+    Map function name -> (verdict, note) from adjudicator verdict lines.
+    Later lines win, matching "the last verdict stated is the verdict".
+    """
+    out = {}
+    for m in WAIVER_VERDICT_RE.finditer(report):
+        out[m.group(2)] = (m.group(1), m.group(3))
+    return out
+
+def unsafety_vector(fn_record: dict) -> dict:
+    """
+    The unsafety-relevant fields of a `find-unsafe2` fn record.  A waiver
+    stays valid only while its function's vector is unchanged.
+    """
+    return {
+        'total_unsafe': fn_record.get('total_unsafe', 0),
+        'is_unsafe_fn': fn_record.get('is_unsafe_fn', False),
+        'is_mut_static': fn_record.get('is_mut_static', False),
+        'derefs_raw_ptr': fn_record.get('derefs_raw_ptr', 0),
+        'calls_unsafe': fn_record.get('calls_unsafe', 0),
+        'inline_asm': fn_record.get('inline_asm', 0),
+        'uses_static_mut': dict(fn_record.get('uses_static_mut', {})),
+        'uses_union_field': dict(fn_record.get('uses_union_field', {})),
+    }
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this script:
@@ -1029,6 +1076,107 @@ class Workflow:
         n_find_op = self.find_unsafe2_op(n_old_code)
         n_unsafe_json = self.mvir.node(n_find_op.unsafe_json)
         return self.check_unsafe2_op(n_new_code, n_unsafe_json)
+
+    def fn_records(self, n_code: TreeNode) -> dict:
+        """Merged `fns` records across all crates' unsafety inventories."""
+        out = {}
+        for n_file in self.find_unsafe2_json_files(n_code):
+            out.update(n_file.body_json().get('fns', {}))
+        return out
+
+    def valid_waivers(self, n_code: TreeNode) -> dict[str, dict]:
+        """
+        Function name -> unsafety vector for waivers still valid against
+        `n_code`.  A waiver is valid only while its function's unsafety
+        vector matches the one recorded at adjudication; any change sends
+        the function back to the normal loop.
+        """
+        mvir = self.mvir
+        if not mvir.has_tag('waivers'):
+            return {}
+        latest = {}
+        for entry in mvir.tag_reflog('waivers'):
+            n_waiver = mvir.node(entry.node_id)
+            latest[n_waiver.fn_name] = n_waiver
+        records = self.fn_records(n_code)
+        out = {}
+        for fn_name, n_waiver in latest.items():
+            record = records.get(fn_name)
+            if record is None:
+                continue
+            vector = unsafety_vector(record)
+            if vector != json.loads(n_waiver.metrics_json):
+                continue
+            out[fn_name] = vector
+        return out
+
+    def waived_unsafe_count(self, n_code: TreeNode) -> int:
+        """Total unsafety of `n_code` covered by still-valid waivers."""
+        return sum(vector['total_unsafe']
+            for vector in self.valid_waivers(n_code).values())
+
+    @step
+    def do_adjudicate_waivers(self, n_code: TreeNode, max_new: int) -> int:
+        """
+        Ask a strong model to adjudicate the remaining unsafe operations.
+        Grants at most `max_new` waivers for functions it judges sound and
+        minimal, and returns the number granted.  Fail-closed: no usable
+        report means no waivers.
+        """
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        # Functions covered by a still-valid waiver are settled: re-listing
+        # them invites duplicate grants that burn the run's waiver budget.
+        already_waived = self.valid_waivers(n_code)
+        remaining = {
+            name: record for name, record in self.fn_records(n_code).items()
+            if record.get('total_unsafe', 0) > 0
+                and not record.get('is_ffi_entry_point')
+                and name not in already_waived
+        }
+        if not remaining:
+            return 0
+
+        inventory = '\n'.join(
+            f'- {name} ({record.get("filename", "?")}): ' + ', '.join(
+                f'{k}={v}' for k, v in unsafety_vector(record).items() if v)
+            for name, record in remaining.items())
+        prompt = AGENT_ADJUDICATE_PROMPT.format(
+            cargo_dir_path = cargo_dir, inventory = inventory)
+
+        report, logs, ran_commands = agent.run_analysis(cfg, mvir, prompt,
+            cfg.models.agent_plan, n_code, codex_login = self.codex_login)
+        print(report)
+        if report.strip() == '' or not ran_commands:
+            print('warning: adjudication returned no usable report; '
+                'no waivers granted')
+            return 0
+
+        n_report = FileNode.new(mvir, report)
+        granted = 0
+        for fn_name, (verdict, note) in parse_waiver_verdicts(report).items():
+            if verdict != 'WAIVE':
+                continue
+            record = remaining.get(fn_name)
+            if record is None:
+                # Not a function we asked about; ignore.
+                continue
+            if granted >= max_new:
+                break
+            n_waiver = WaiverOpNode.new(mvir,
+                code = n_code.node_id(),
+                fn_name = fn_name,
+                metrics_json = json.dumps(unsafety_vector(record)),
+                justification = note,
+                report = n_report.node_id(),
+                body = logs,
+            )
+            mvir.set_tag('waivers', n_waiver.node_id(), n_waiver.kind)
+            mvir.set_tag('op_history', n_waiver.node_id(), n_waiver.kind)
+            print(f'waived: {fn_name} — {note}')
+            granted += 1
+        return granted
 
     @step
     def llm_safety(

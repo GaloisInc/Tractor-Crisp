@@ -328,6 +328,25 @@ def run_rewrite(
     return (output_code, output_plans)
 
 
+def _json_events_ran_commands(logs: bytes) -> bool:
+    """True iff the codex `--json` event stream in `logs` shows at least one
+       successfully executed command."""
+    for line in logs.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        item = ev.get('item')
+        if (ev.get('type') == 'item.completed'
+                and isinstance(item, dict)
+                and item.get('type') == 'command_execution'
+                and item.get('exit_code') == 0):
+            return True
+    return False
+
+
 def run_review(
     cfg: Config,
     mvir: MVIR,
@@ -359,24 +378,6 @@ def run_review(
     `--uncommitted` when custom review instructions are given, so `prompt`
     itself must direct the reviewer at the uncommitted changes.
     """
-    def _review_ran_commands(logs: bytes) -> bool:
-        """True iff the codex `--json` event stream in `logs` shows at
-           least one successfully executed command."""
-        for line in logs.splitlines():
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(ev, dict):
-                continue
-            item = ev.get('item')
-            if (ev.get('type') == 'item.completed'
-                    and isinstance(item, dict)
-                    and item.get('type') == 'command_execution'
-                    and item.get('exit_code') == 0):
-                return True
-        return False
-
     extra_code, env = _normalize_run_args(extra_code, env)
 
     with run_sandbox(cfg, mvir) as sb:
@@ -423,6 +424,63 @@ def run_review(
             print(f'warning: failed to read reviewer message: {report_bytes!r}')
             report_bytes = b''
 
-    ran_commands = _review_ran_commands(logs)
+    ran_commands = _json_events_ran_commands(logs)
+    return report_bytes.decode('utf-8', errors='replace'), logs, ran_commands
+
+
+def run_analysis(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    model: str,
+    code: TreeNode,
+    extra_code: TreeNode | list[TreeNode] = [],
+    cwd: str = '.',
+    codex_login: bool = False,
+    env: dict | None = None,
+) -> tuple[str, bytes, bool]:
+    """
+    Run a prompt-driven `codex exec` analysis over `code` and return the
+    agent's final message, the full log output, and whether it successfully
+    ran at least one command.  Nothing is committed back to MVIR; any edits
+    the agent makes are discarded with the sandbox.
+    """
+    extra_code, env = _normalize_run_args(extra_code, env)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(code)
+        for n in extra_code:
+            sb.checkout(n)
+
+        codex_dir = _setup_codex_home(sb, env, codex_login)
+        last_message_path = sb.join('.codex/last_message.txt')
+
+        exit_code, logs = sb.run(['mkdir', '-p', codex_dir], cwd=cwd, env=env)
+        if exit_code != 0:
+            raise CrispError(f'mkdir failed: exit code {exit_code}: {logs!r}')
+
+        codex_cmd = _codex_command(cfg, 'exec', [
+            # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
+            # sandbox; the CRISP sandbox is the containment layer.
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--skip-git-repo-check',
+            # Structured events let us verify the agent ran commands.
+            '--json',
+            '--output-last-message', last_message_path,
+            prompt,
+        ], codex_login=codex_login, model=model)
+        print(codex_cmd)
+
+        exit_code, logs2 = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)
+        logs += logs2
+        if exit_code != 0:
+            raise CrispError(f'codex-cli failed: exit code {exit_code}')
+
+        cat_exit_code, report_bytes = sb.run(['cat', last_message_path], cwd=cwd, env=env)
+        if cat_exit_code != 0:
+            print(f'warning: failed to read agent message: {report_bytes!r}')
+            report_bytes = b''
+
+    ran_commands = _json_events_ran_commands(logs2)
     return report_bytes.decode('utf-8', errors='replace'), logs, ran_commands
 

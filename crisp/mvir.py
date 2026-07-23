@@ -726,6 +726,27 @@ class CodexReviewOpNode(Node):
     report = property(lambda self: self._metadata['report'])
     verdict = property(lambda self: self._metadata['verdict'])
 
+class WaiverOpNode(Node):
+    KIND = 'unsafe_waiver_op'
+    # Code version that was adjudicated.
+    code: Metadata[NodeId]
+    # Function whose remaining unsafety is waived.
+    fn_name: Metadata[str]
+    # JSON-encoded unsafety metric vector of the function at adjudication.
+    # The waiver is valid only while the function still matches it exactly.
+    metrics_json: Metadata[str]
+    # One-line justification from the adjudicator's verdict.
+    justification: Metadata[str]
+    # The adjudicator's full report.
+    report: Metadata[NodeId]
+    # `body` stores the log output
+
+    code = property(lambda self: self._metadata['code'])
+    fn_name = property(lambda self: self._metadata['fn_name'])
+    metrics_json = property(lambda self: self._metadata['metrics_json'])
+    justification = property(lambda self: self._metadata['justification'])
+    report = property(lambda self: self._metadata['report'])
+
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -948,6 +969,7 @@ NODE_CLASSES = [
     LlmOpNode,
     CodexAgentOpNode,
     CodexReviewOpNode,
+    WaiverOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,

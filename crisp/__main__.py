@@ -347,6 +347,16 @@ class FuelLimits:
     # new file.
     safety_tries_per_file: int
 
+    # After this many consecutive failures, with the remaining count at or
+    # below `waiver_count_threshold`, adjudicate the remaining unsafe
+    # operations: a strong model may waive ops it judges sound, minimal, and
+    # inherent to the FFI boundary.  "All remaining ops waived" ends the run
+    # as `completed with residual unsafe` rather than a failure.
+    adjudicate_after: int
+    waiver_count_threshold: int
+    # Grant at most this many waivers per run.
+    max_waivers: int
+
 def total_code_size(mvir, n_code):
     total = 0
     for name, file in n_code.files.items():
@@ -367,6 +377,9 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 3,
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
+            adjudicate_after = 2,
+            waiver_count_threshold = 10,
+            max_waivers = 5,
         )
     elif size < 20000:
         # P01
@@ -375,6 +388,9 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 5,
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
+            adjudicate_after = 4,
+            waiver_count_threshold = 25,
+            max_waivers = 10,
         )
     else:
         # P02 - run forever
@@ -383,6 +399,9 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
+            adjudicate_after = 5,
+            waiver_count_threshold = 25,
+            max_waivers = 10,
         )
     print(f'code size = {size}')
     print(f'default limits = {defaults!r}')
@@ -400,6 +419,15 @@ def get_fuel_limits(mvir, n_code):
         safety_tries_per_file = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_FILE',
                 defaults.safety_tries_per_file)),
+        adjudicate_after = int(
+            os.environ.get('LLM_SAFETY_ADJUDICATE_AFTER',
+                defaults.adjudicate_after)),
+        waiver_count_threshold = int(
+            os.environ.get('LLM_SAFETY_WAIVER_COUNT_THRESHOLD',
+                defaults.waiver_count_threshold)),
+        max_waivers = int(
+            os.environ.get('LLM_SAFETY_MAX_WAIVERS',
+                defaults.max_waivers)),
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
@@ -410,6 +438,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
+    waivers_granted = 0
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -433,6 +462,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
             break
+        waived = w.waived_unsafe_count(n_code)
+        if waived and unsafe_count - waived <= 0:
+            print(f'completed with residual unsafe: {unsafe_count} ops waived')
+            break
 
         # Update consecutive failure count
         if best_unsafe_count is None or unsafe_count < best_unsafe_count:
@@ -444,6 +477,27 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             # improve the unsafe count, we still consider that to be a failed
             # iteration.)
             consecutive_failures += 1
+            if (consecutive_failures == limits.adjudicate_after
+                    and unsafe_count <= limits.waiver_count_threshold
+                    and waivers_granted < limits.max_waivers):
+                try:
+                    # Deep stall near the end: adjudicate whether the
+                    # remaining ops are inherent to the FFI boundary.
+                    granted = w.do_adjudicate_waivers(
+                        n_code, limits.max_waivers - waivers_granted)
+                    waivers_granted += granted
+                    if granted:
+                        waived = w.waived_unsafe_count(n_code)
+                        if unsafe_count - waived <= 0:
+                            print(f'completed with residual unsafe: '
+                                f'{unsafe_count} ops waived')
+                            break
+                except CrispError as e:
+                    print(f'stall rescue attempt failed: {e}')
+                    traceback.print_exc()
+                except OutOfFuelError as e:
+                    print(f'exiting due to lack of fuel: {e}')
+                    break
             if consecutive_failures >= limits.max_consecutive_failures:
                 print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
@@ -555,6 +609,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     n_op_test = w.test_op(n_code, n_c_code)
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
+    waived = w.waived_unsafe_count(n_code)
+    if waived:
+        print('final waived unsafe count = %d' % waived)
     print('final test exit code = %d' % n_op_test.exit_code)
 
 

@@ -118,6 +118,8 @@ tests_assert_rejected! {
     entry_point_demotion,
     entry_point_promotion,
     export_name_value_changed,
+    // Calls an exported FFI function from implementation code.
+    entry_point_call_from_impl,
 
     // Calling `safe fn` FFI imports still counts toward the `uses_foreign_fn` progress metric, but
     // doesn't count toward `calls_unsafe`.  Probably we should instead count every `safe fn` as an
@@ -143,9 +145,6 @@ tests_assert_accepted! {
 
     // Tests various methods of converting `usize` to a pointer beyond `x as *mut T`.
     int_to_ptr_laundering,
-
-    // Calls an exported FFI function from implementation code.
-    entry_point_call_from_impl,
 
     // Adding `unsafe impl`s should count as adding unsafety.
     unsafe_impl_send,

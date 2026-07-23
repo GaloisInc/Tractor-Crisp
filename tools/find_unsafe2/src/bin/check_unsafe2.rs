@@ -38,6 +38,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         uses_static_mut: IndexMap::new(),
         uses_union_field: IndexMap::new(),
         uses_foreign_fn: IndexMap::new(),
+        uses_ffi_entry_point: IndexMap::new(),
         casts_int_to_ptr: 0,
         sig_contains_raw_ptr: 0,
         ffi_symbol: None,
@@ -92,7 +93,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         total_unsafe: _,
         filename: _,
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
-        ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
+        ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn, ref uses_ffi_entry_point,
         casts_int_to_ptr, sig_contains_raw_ptr,
         ffi_symbol: _,
     } = *new;
@@ -114,6 +115,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         |k| format!("{name}: uses of union field {k}"));
     ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
         |k| format!("{name}: uses of foreign fn {k}"));
+    ok &= check_count_map(&old.uses_ffi_entry_point, uses_ffi_entry_point,
+        |k| format!("{name}: uses of FFI entry point {k}"));
 
     ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr,
         || format!("{name}: int-to-pointer casts"));

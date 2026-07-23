@@ -213,6 +213,12 @@ pub struct FunctionOutputs {
 
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
+    /// Progress: function mentions local FFI entry points.
+    ///
+    /// The FFI rules forbid implementation code from calling or referencing exported entry
+    /// points, and entry points are exempt from the unsafety checks, so routing work through
+    /// them would hide unsafe code.
+    pub uses_ffi_entry_point: IndexMap<String, usize>,
     /// Progress: function casts `usize` to a raw pointer.
     ///
     /// This was added after seeing the agent bypass restrictions on raw pointers in data
@@ -251,6 +257,7 @@ impl FunctionOutputs {
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
+            uses_ffi_entry_point: _,
             uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
             // Other
             ffi_symbol: _,
@@ -432,6 +439,25 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         }
     };
 
+    let mut is_fn_ffi_entry_point = {
+        let mut storage = HashMap::new();
+        move |fd: FnDef| -> bool {
+            if let Some(&x) = storage.get(&fd) {
+                return x;
+            }
+            let x = if CrateItem(fd.0).is_foreign_item() {
+                false
+            } else {
+                let internal_def_id = rustc_internal::internal::<DefId>(tcx, fd.0);
+                let attrs = tcx.codegen_fn_attrs(internal_def_id);
+                attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
+                    || attrs.symbol_name.is_some()
+            };
+            storage.insert(fd, x);
+            x
+        }
+    };
+
     let is_unsafe_fn = move |item: CrateItem| {
         if item.kind() != ItemKind::Fn {
             return false;
@@ -499,6 +525,9 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
                 uses_foreign_fn: v.uses_fns.iter().filter_map(|(&fd, &count)| {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
+                }).collect(),
+                uses_ffi_entry_point: v.uses_fns.iter().filter_map(|(&fd, &count)| {
+                    is_fn_ffi_entry_point(fd).then(|| (fd.name(), count))
                 }).collect(),
                 casts_int_to_ptr: v.casts_int_to_ptr,
                 sig_contains_raw_ptr: sig_contains_raw_ptr(item),

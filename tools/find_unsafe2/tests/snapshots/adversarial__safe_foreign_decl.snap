@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_safe_foreign_decl::call_it: uses of foreign fn adv_safe_foreign_decl::adv_ext_get increased: 0 -> 1

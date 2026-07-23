@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_hub_conversion::hub: raw pointer derefs increased: 1 -> 2

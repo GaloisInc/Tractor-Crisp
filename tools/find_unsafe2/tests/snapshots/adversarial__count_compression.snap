@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_count_compression::sum4: unsafe function calls increased: 0 -> 1

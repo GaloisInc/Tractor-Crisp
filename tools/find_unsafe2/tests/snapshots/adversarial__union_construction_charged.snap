@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_union_construction_charged::keep: uses of union field adv_union_construction_charged::Bits.0 increased: 0 -> 1

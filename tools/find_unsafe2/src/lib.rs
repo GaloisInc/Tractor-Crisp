@@ -53,6 +53,8 @@ struct FunctionVisitor<'a> {
     derefs_raw_ptr: usize,
     /// Number of int-to-pointer casts within the current function.
     casts_int_to_ptr: usize,
+    /// Number of inline assembly blocks within the current function.
+    inline_asm: usize,
 }
 
 impl<'a> FunctionVisitor<'a> {
@@ -65,6 +67,7 @@ impl<'a> FunctionVisitor<'a> {
             calls_unsafe: 0,
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
+            inline_asm: 0,
         }
     }
 }
@@ -143,18 +146,24 @@ impl Visitor<'_> for FunctionVisitor<'_> {
     }
 
     fn visit_terminator(&mut self, x: &Terminator) {
-        if let TerminatorKind::Call { ref func, .. } = x.kind {
-            let ty = func.ty(self.body.locals()).unwrap();
-            if let Some(sig) = ty.kind().fn_sig() {
-                if sig.value.safety == Safety::Unsafe {
-                    let filename = x.span.get_filename();
-                    let is_allowed_unsafe = filename.ends_with("/std/src/macros.rs")
-                        || filename.ends_with("/core/src/macros/mod.rs");
-                    if !is_allowed_unsafe {
-                        self.calls_unsafe += 1;
+        match x.kind {
+            TerminatorKind::Call { ref func, .. } => {
+                let ty = func.ty(self.body.locals()).unwrap();
+                if let Some(sig) = ty.kind().fn_sig() {
+                    if sig.value.safety == Safety::Unsafe {
+                        let filename = x.span.get_filename();
+                        let is_allowed_unsafe = filename.ends_with("/std/src/macros.rs")
+                            || filename.ends_with("/core/src/macros/mod.rs");
+                        if !is_allowed_unsafe {
+                            self.calls_unsafe += 1;
+                        }
                     }
                 }
-            }
+            },
+            TerminatorKind::InlineAsm { .. } => {
+                self.inline_asm += 1;
+            },
+            _ => {},
         }
 
         mir_visitor::walk_terminator(self, x);
@@ -195,6 +204,8 @@ pub struct FunctionOutputs {
     pub derefs_raw_ptr: usize,
     /// Unsafety: function calls `unsafe fn`s.
     pub calls_unsafe: usize,
+    /// Unsafety: function contains inline assembly, which can access arbitrary memory.
+    pub inline_asm: usize,
     /// Unsafety: function mentions `static mut`s.
     ///
     /// This is overapproximated: we count any mention of a static `S` as an access, even though
@@ -254,7 +265,7 @@ impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
             ref mut total_unsafe, filename: _,
-            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             uses_ffi_entry_point: _,
@@ -267,6 +278,7 @@ impl FunctionOutputs {
             + is_mut_static as usize
             + derefs_raw_ptr
             + calls_unsafe
+            + inline_asm
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
     }
@@ -516,6 +528,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
+                inline_asm: v.inline_asm,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {
                     is_static_mut(sd).then(|| (sd.name(), count))
                 }).collect(),

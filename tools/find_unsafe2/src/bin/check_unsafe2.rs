@@ -21,8 +21,19 @@ use find_unsafe2::{self, Outputs, FunctionOutputs, TypeOutputs};
 /// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
 /// found any such things.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
-    let Outputs { total_unsafe: _, ref fns, ref types } = *new;
+    let Outputs { total_unsafe: _, ref fns, ref types, ref unsafe_impls } = *new;
     let mut ok = true;
+
+    // A new `unsafe impl` asserts a soundness property no metric can verify.  Legitimate uses
+    // exist (e.g. `Send` on an owned-state registry), so this is a candidate for review-gated
+    // relaxation once a reviewer exists; until then it is an error.
+    for (k, &new_count) in unsafe_impls {
+        let old_count = old.unsafe_impls.get(k).copied().unwrap_or(0);
+        if new_count > old_count {
+            println!("new `unsafe impl` {k} added");
+            ok = false;
+        }
+    }
 
     // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
     // but not in `old`.  All unsafety and progress metrics are set to zero, so if the agent adds a

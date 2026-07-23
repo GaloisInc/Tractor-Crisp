@@ -4,6 +4,8 @@ struct Handle {
     p: *const i32,
 }
 
-// Unsafe trait impls carry no charge.
+fn touch() {}
+
+// Unsafe trait impls warn for review but are not rejected.
 unsafe impl Send for Handle {}
 unsafe impl Sync for Handle {}

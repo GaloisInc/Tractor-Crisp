@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+new `unsafe impl` <Handle as std::marker::Send> added
+new `unsafe impl` <Handle as std::marker::Sync> added

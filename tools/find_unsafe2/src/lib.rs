@@ -178,7 +178,12 @@ pub struct Outputs {
     pub fns: IndexMap<String, FunctionOutputs>,
     pub types: IndexMap<String, TypeOutputs>,
 
-    // TODO: Unsafety: crate implements `unsafe trait`s.
+    /// `unsafe impl` blocks (e.g. `unsafe impl Send`), keyed by impl path.  These are zero-code
+    /// soundness assertions with legitimate uses (c2rust never emits them, so any occurrence was
+    /// added by refactoring); they are surfaced for review rather than counted or rejected.
+    #[serde(default)]
+    pub unsafe_impls: IndexMap<String, usize>,
+
     // TODO: Unsafety: crate contains `unsafe extern` imports.
 }
 
@@ -519,7 +524,22 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
         types: IndexMap::new(),
+        unsafe_impls: IndexMap::new(),
     };
+
+    {
+        use rustc_hir::def::DefKind;
+        for item_id in tcx.hir_free_items() {
+            let did = item_id.owner_id.to_def_id();
+            if !matches!(tcx.def_kind(did), DefKind::Impl { of_trait: true }) {
+                continue;
+            }
+            let header = tcx.impl_trait_header(did);
+            if matches!(header.safety, rustc_hir::Safety::Unsafe) {
+                *out.unsafe_impls.entry(tcx.def_path_str(did)).or_default() += 1;
+            }
+        }
+    }
 
     for item in items {
         if let Some(body) = item.body() {

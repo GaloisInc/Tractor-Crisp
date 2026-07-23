@@ -204,10 +204,10 @@ fn ptr_as_isize_arith() {
     assert_accepted("ptr_as_isize_arith");
 }
 
-// HOLE: `unsafe impl Send` is uncounted.
+// A new `unsafe impl Send`/`Sync` asserts what no metric can verify: an error.
 #[test]
 fn unsafe_impl_send() {
-    assert_accepted("unsafe_impl_send");
+    assert_rejected("unsafe_impl_send");
 }
 
 // Inline asm is charged, even in a new function.

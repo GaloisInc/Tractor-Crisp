@@ -186,10 +186,10 @@ fn closure_ptr_param() {
     assert_rejected("closure_ptr_param");
 }
 
-// HOLE: impl code may call an exempt entry point without any charge.
+// Impl code routing a call through an exempt entry point is charged.
 #[test]
 fn entry_point_call_from_impl() {
-    assert_accepted("entry_point_call_from_impl");
+    assert_rejected("entry_point_call_from_impl");
 }
 
 // HOLE: making a foreign decl safe strips its contract and lowers the count.

@@ -9,7 +9,7 @@ unsafe fn read_impl(p: *const i32) -> i32 {
     unsafe { *p }
 }
 
-// Now routes through the exempt entry point; no metric changes.
+// Routing through the exempt entry point is charged as a new metric.
 fn use_it(p: *const i32) -> i32 {
     unsafe { exported_read(p) }
 }

@@ -179,7 +179,7 @@ Review the uncommitted changes to the Rust project in `{cargo_dir_path}` ONLY fo
 
 Focus on the FFI entry points touched by the diff.  Read the surrounding code as needed for context; in particular, follow the definition of any macro invoked from an entry point to check for logic hidden in macro expansions.
 
-''' + FFI_ENTRY_POINT_RULES + '''
+{ffi_entry_point_rules}
 
 Report only genuine rule violations present in the changed code; if there are none, report no findings.  For each violation, cite the entry point, the rule violated, and the offending code.
 '''
@@ -1392,7 +1392,9 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(cargo_dir_path = cargo_dir)
+        prompt = AGENT_FFI_REVIEW_PROMPT.format(
+            cargo_dir_path = cargo_dir,
+            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
             cfg.models.agent_loop, n_old_code, n_new_code,
             codex_login = self.codex_login)

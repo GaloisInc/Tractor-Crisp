@@ -1,7 +1,8 @@
 ---
 source: find_unsafe2/tests/adversarial.rs
-assertion_line: 211
+assertion_line: 250
 expression: out.stdout
 ---
-adv_unknown_crate_skip::evil: raw pointer derefs increased: 0 -> 1
+warning: adv_unknown_crate_skip::evil: raw pointer derefs increased: 0 -> 1
 adv_unknown_crate_skip::evil: raw pointer types in signature increased: 0 -> 1
+total unsafe operations increased: 0 -> 1

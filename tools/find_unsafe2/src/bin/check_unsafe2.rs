@@ -49,8 +49,8 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     }
 
     // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
-    // but not in `old`.  All unsafety and progress metrics are set to zero, so if the agent adds a
-    // new unsafe function that wasn't present before, we detect that as a regression.
+    // but not in `old`.  All metrics are zero, so anything a new function carries is an increase:
+    // the strict metrics reject it outright, and the unsafety metrics surface it for review.
     let empty_fn = FunctionOutputs {
         total_unsafe: 0,
         filename: String::new(),
@@ -68,7 +68,6 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         is_ffi_entry_point: false,
         ffi_symbol: None,
     };
-
     // The symbol set is the ABI: every old symbol must survive, no matter which Rust item
     // carries it, and export status gates the unsafety exemption, so a symbol may not move
     // onto an item the baseline already counted.
@@ -94,7 +93,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
                         fmt_symbol(&old_fn.ffi_symbol), fmt_symbol(&new_fn.ffi_symbol));
                     ok = false;
                 }
-                ok &= check_function_outputs(fn_name, old_fn, new_fn);
+                ok &= check_function_outputs(fn_name, old_fn, new_fn, false);
             },
             None => {
                 if let Some(sym) = &new_fn.ffi_symbol {
@@ -106,7 +105,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
                     println!("{fn_name}: new exported symbol {sym}");
                     ok = false;
                 }
-                ok &= check_function_outputs(fn_name, &empty_fn, new_fn);
+                ok &= check_function_outputs(fn_name, &empty_fn, new_fn, true);
             },
         }
     }
@@ -128,7 +127,9 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     ok
 }
 
-fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutputs) -> bool {
+fn check_function_outputs(
+    name: &str, old: &FunctionOutputs, new: &FunctionOutputs, is_new: bool,
+) -> bool {
     if old.is_ffi_entry_point {
         // Allow increasing unsafe within FFI entry points.
         return true;
@@ -148,10 +149,17 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     } = *new;
     let mut ok = true;
 
-    // Unsafety metrics: hard errors on functions that were entirely safe (including new
-    // functions); tolerated with a warning on functions that already contained unsafety,
-    // subject to the global total check.
-    let unsafety = if old.total_unsafe == 0 { Severity::Error } else { Severity::Warning };
+    // Unsafety metrics: hard errors on existing functions that were entirely safe; tolerated
+    // with a warning on functions that already contained unsafety, and on new functions — so
+    // unsafe operations can relocate into named façade/constructor functions — subject to the
+    // global total check and reviewer approval.  The strict metrics below still apply to new
+    // functions, which keeps classic laundering helpers (raw-pointer parameters or fields)
+    // hard-blocked.
+    let unsafety = if old.total_unsafe > 0 || is_new {
+        Severity::Warning
+    } else {
+        Severity::Error
+    };
 
     ok &= check_bad_flag(old.is_unsafe_fn, is_unsafe_fn, unsafety,
         || format!("{name}: `unsafe` qualifier"));

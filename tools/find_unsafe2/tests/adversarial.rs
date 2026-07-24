@@ -87,10 +87,18 @@ fn assert_tolerated(name: &str) {
     insta::assert_snapshot!(name.to_owned(), out.stdout);
 }
 
-// A new laundering helper is rejected even though the global count drops.
+// A new laundering helper stays rejected — its raw-pointer signature trips
+// the strict metrics — even though its deref is now merely a warning.
 #[test]
 fn as_ref_helper() {
     assert_rejected("as_ref_helper");
+}
+
+// A reference-taking helper whose local struct carries a raw pointer is rejected
+// by the strict signature metric, even when the global total decreases.
+#[test]
+fn facade_relocation() {
+    assert_rejected("facade_relocation");
 }
 
 // Growing an already-unsafe fn is tolerated with warnings: the global total decreased.
@@ -117,7 +125,9 @@ fn entry_point_closure_exempt() {
     assert_accepted("entry_point_closure_exempt");
 }
 
-// Renaming an unsafe fn reads as a new function: spurious reject.
+// A renamed unsafe fn reads as new; its derefs now only warn, but its
+// raw-pointer signature still rejects.  Renames of raw-signature fns remain
+// blocked; reference-taking fns can now be renamed under review.
 #[test]
 fn rename_unsafe_fn() {
     assert_rejected("rename_unsafe_fn");
@@ -226,7 +236,7 @@ fn unsafe_impl_send() {
     assert_rejected("unsafe_impl_send");
 }
 
-// Inline asm is charged, even in a new function.
+// Inline asm in a new function warns, but the global total still rejects it.
 #[test]
 fn asm_charged() {
     assert_rejected("asm_charged");

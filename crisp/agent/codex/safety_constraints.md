@@ -44,7 +44,10 @@ not recommend new unsafe or unsafe-adjacent implementation code, including raw
 pointer fields or arguments, int-to-pointer casts, or calls to unsafe FFI APIs.
 Moving or converting unsafe operations between functions that already contain
 unsafe code is acceptable when it enables later removal (the crate-wide total
-must still shrink over time); introducing new unsafe helper functions is not.
+must still shrink over time), and so is relocating them into a new named
+implementation function (e.g. an ownership facade or constructor) whose
+signature and fields stay free of raw pointers. New helpers with raw-pointer
+parameters or fields remain forbidden.
 
 Dependency policy: a Rust crate may be recommended as a replacement for a
 dependency of the original C project (for example, a zlib crate where the C

@@ -2,5 +2,5 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_rename_unsafe_fn::frob2: raw pointer derefs increased: 0 -> 1
+warning: adv_rename_unsafe_fn::frob2: raw pointer derefs increased: 0 -> 1
 adv_rename_unsafe_fn::frob2: raw pointer types in signature increased: 0 -> 1

@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+warning: adv_facade_relocation::bind_state: raw pointer derefs increased: 0 -> 1
+adv_facade_relocation::bind_state: raw pointer types in signature increased: 0 -> 1

@@ -172,8 +172,8 @@ Your changes must not introduce new unsafe code within implementation functions.
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 The rules it enforces:
-- New functions and closures must be entirely safe, and functions that are currently free of unsafe code must stay that way.
-- Within functions that already contain unsafe code, unsafe operations may move or change kind, as long as the crate-wide total does not increase. Such moves are tolerated with a warning and will be reviewed; only make them when they genuinely enable later removal.
+- Functions that are currently free of unsafe code must stay that way.
+- Within functions that already contain unsafe code, unsafe operations may move or change kind, as long as the crate-wide total does not increase. The same applies to relocating existing unsafe operations into a new named implementation function (for example an ownership facade or constructor), provided its signature and fields stay free of raw pointers. Such moves are tolerated with a warning and will be reviewed; only make them when they genuinely enable later removal.
 - It is always an error to add "unsafe-adjacent" code: int-to-pointer casts, raw pointer types in signatures or fields, new uses of foreign functions, or uses of FFI entry points from implementation code.
 - FFI entry points are excluded from the unsafety count entirely. Removing `unsafe` qualifiers from exported entry points gains nothing and violates the FFI entry point rules; leave their signatures exactly as they are.
 '''

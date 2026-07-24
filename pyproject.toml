@@ -25,6 +25,7 @@ crisp = "crisp.__main__:main"
 include = ["crisp*"]
 
 [tool.setuptools.package-data]
+"crisp" = ["prompts/*.md"]
 "crisp.agent" = ["codex/*.md", "codex/*.toml"]
 
 [tool.uv]

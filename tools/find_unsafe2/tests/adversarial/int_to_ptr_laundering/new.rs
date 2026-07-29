@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-// Pointers materialized from integers via safe std calls; no cast is charged.
+// Pointers materialized from integers via safe std calls, with no syntactic cast.
 fn via_expose(addr: usize) -> i32 {
     unsafe { *std::ptr::with_exposed_provenance::<i32>(addr) }
 }

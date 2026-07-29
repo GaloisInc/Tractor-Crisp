@@ -161,10 +161,28 @@ impl Visitor<'_> for FunctionVisitor<'_> {
                     }
                 }
             }
+            if let Some(&RigidTy::FnDef(fd, _)) = ty.kind().rigid() {
+                if is_int_to_ptr_call(&fd.name()) {
+                    self.casts_int_to_ptr += 1;
+                }
+            }
         }
 
         mir_visitor::walk_terminator(self, x);
     }
+}
+
+/// Calls that materialize a raw pointer from an integer address without a syntactic cast.
+/// `casts_int_to_ptr` exists to stop usize round-tripping, and these std APIs are the
+/// sanctioned spelling of the same move.
+fn is_int_to_ptr_call(name: &str) -> bool {
+    const INT_TO_PTR_FNS: &[&str] = &[
+        "::with_exposed_provenance", "::with_exposed_provenance_mut",
+        "::without_provenance", "::without_provenance_mut",
+        "::from_exposed_addr", "::from_exposed_addr_mut",
+        "::with_addr", "::map_addr",
+    ];
+    name.contains("ptr") && INT_TO_PTR_FNS.iter().any(|s| name.ends_with(s))
 }
 
 

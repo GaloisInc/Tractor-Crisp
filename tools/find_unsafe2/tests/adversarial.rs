@@ -167,10 +167,10 @@ fn export_symbol_moved() {
     assert_accepted("export_symbol_moved");
 }
 
-// HOLE: pointers materialized from integers via safe std calls are uncharged.
+// Pointers materialized from integers via safe std calls are charged as casts.
 #[test]
 fn int_to_ptr_laundering() {
-    assert_accepted("int_to_ptr_laundering");
+    assert_rejected("int_to_ptr_laundering");
 }
 
 // A lifetime-forging helper is rejected only via its deref; its signature

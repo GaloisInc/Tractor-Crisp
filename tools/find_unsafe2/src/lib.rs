@@ -159,6 +159,11 @@ impl MirVisitor for FunctionVisitor<'_> {
                         }
                     }
                 }
+                if let Some(&RigidTy::FnDef(fd, _)) = ty.kind().rigid() {
+                    if is_int_to_ptr_call(&fd.name()) {
+                        self.casts_int_to_ptr += 1;
+                    }
+                }
             },
             TerminatorKind::InlineAsm { .. } => {
                 self.inline_asm += 1;
@@ -168,6 +173,18 @@ impl MirVisitor for FunctionVisitor<'_> {
 
         self.super_terminator(x, loc);
     }
+}
+
+/// Calls that convert `usize` to a raw pointer without an `as` cast.  These count toward
+/// `casts_int_to_ptr` just like `as` casts do.
+fn is_int_to_ptr_call(name: &str) -> bool {
+    const INT_TO_PTR_FNS: &[&str] = &[
+        "::with_exposed_provenance", "::with_exposed_provenance_mut",
+        "::without_provenance", "::without_provenance_mut",
+        "::from_exposed_addr", "::from_exposed_addr_mut",
+        "::with_addr", "::map_addr",
+    ];
+    name.contains("::ptr::") && INT_TO_PTR_FNS.iter().any(|s| name.ends_with(s))
 }
 
 

@@ -225,9 +225,10 @@ pub struct FunctionOutputs {
     pub sig_contains_raw_ptr: usize,
     // TODO: Progress: function signature type contains raw pointers.
 
-    /// Whether this function is an FFI entry point.  Specifically, this is set when the function
-    /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
-    pub is_ffi_entry_point: bool,
+    /// The symbol name of this function, if it's an FFI entry point.  For functions that aren't
+    /// FFI entry points (which have neither `#[no_mangle]` nor `#[export_name = "..."]`
+    /// attributes), this will be `None`.
+    pub ffi_symbol: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -252,7 +253,7 @@ impl FunctionOutputs {
             // Progress, not safety
             uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
             // Other
-            is_ffi_entry_point: _,
+            ffi_symbol: _,
         } = *self;
 
         *total_unsafe = is_unsafe_fn as usize
@@ -445,10 +446,10 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         tcx.is_mutable_static(internal_def_id)
     };
 
-    let is_ffi_entry_point = move |item: CrateItem| {
+    let ffi_symbol = move |item: CrateItem| -> Option<String> {
         if item.is_foreign_item() {
             // FFI imports are not entry points.
-            return false;
+            return None;
         }
         if !matches!(item.kind(), ItemKind::Fn /* | ItemKind::Static*/) {
             // Only `fn`s and `static`s can be exported.
@@ -458,12 +459,16 @@ pub fn process(tcx: TyCtxt) -> Outputs {
             // allows internal unsafe code.
             //
             // TODO: do set the flag on statics (for accuracy) but filter them out elsewhere
-            return false;
+            return None;
         }
         let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
         let attrs = tcx.codegen_fn_attrs(internal_def_id);
-        attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
-            || attrs.symbol_name.is_some()
+        if !attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE) && attrs.symbol_name.is_none() {
+            return None;
+        }
+        let inst = rustc_middle::ty::Instance::mono(tcx, internal_def_id);
+        let sym_name = tcx.symbol_name(inst);
+        Some(sym_name.name.to_string())
     };
 
     let mut out = Outputs {
@@ -498,10 +503,10 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 casts_int_to_ptr: v.casts_int_to_ptr,
                 sig_contains_raw_ptr: sig_contains_raw_ptr(item),
 
-                is_ffi_entry_point: is_ffi_entry_point(item),
+                ffi_symbol: ffi_symbol(item),
             };
             value.calc_total_unsafe();
-            if !value.is_ffi_entry_point {
+            if value.ffi_symbol.is_none() {
                 out.total_unsafe += value.total_unsafe;
             }
             let old = out.fns.insert(key, value);

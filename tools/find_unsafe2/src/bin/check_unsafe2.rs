@@ -6,6 +6,7 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_middle;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
 use std::hash::Hash;
@@ -39,8 +40,30 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         uses_foreign_fn: IndexMap::new(),
         casts_int_to_ptr: 0,
         sig_contains_raw_ptr: 0,
-        is_ffi_entry_point: false,
+        ffi_symbol: None,
     };
+
+    let old_ffi_symbols = old.fns.iter()
+        .filter_map(|(name, f)| Some((f.ffi_symbol.as_ref()?, name)))
+        .collect::<HashMap<_, _>>();
+    let new_ffi_symbols = fns.iter()
+        .filter_map(|(name, f)| Some((f.ffi_symbol.as_ref()?, name)))
+        .collect::<HashMap<_, _>>();
+    if old_ffi_symbols != new_ffi_symbols {
+        for (sym, name) in &old_ffi_symbols {
+            if !new_ffi_symbols.contains_key(sym) {
+                println!("{name}: exported symbol {sym} was removed");
+                ok = false;
+            }
+        }
+        for (sym, name) in &new_ffi_symbols {
+            if !old_ffi_symbols.contains_key(sym) {
+                println!("{name}: exported symbol {sym} was added");
+                ok = false;
+            }
+        }
+    }
+
     for (fn_name, new_fn) in fns {
         let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
         ok &= check_function_outputs(fn_name, old_fn, new_fn);
@@ -59,7 +82,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
 }
 
 fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutputs) -> bool {
-    if old.is_ffi_entry_point {
+    if old.ffi_symbol.is_some() {
         // Allow increasing unsafe within FFI entry points.
         return true;
     }
@@ -71,7 +94,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
         casts_int_to_ptr, sig_contains_raw_ptr,
-        is_ffi_entry_point,
+        ffi_symbol: _,
     } = *new;
     let mut ok = true;
 
@@ -96,9 +119,6 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         || format!("{name}: int-to-pointer casts"));
     ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr,
         || format!("{name}: raw pointer types in signature"));
-
-    ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
-        || format!("{name}: FFI export flag"));
 
     ok
 }

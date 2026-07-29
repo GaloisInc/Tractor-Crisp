@@ -111,11 +111,13 @@ tests_assert_rejected! {
     // Renaming an exported function (without changing its symbol) is rejected, just like renaming
     // a non-exported one.
     export_symbol_moved,
-    // Forbid creating a new FFI entry point.
-    entry_point_promotion,
     new_ptr_field,
     // Moves unsafe code into a closure, which counts as a separate function.
     closure_ptr_param,
+    // Changing the set of exported symbols (adding or removing) is not allowed.
+    entry_point_demotion,
+    entry_point_promotion,
+    export_name_value_changed,
 
     // Calling `safe fn` FFI imports still counts toward the `uses_foreign_fn` progress metric, but
     // doesn't count toward `calls_unsafe`.  Probably we should instead count every `safe fn` as an
@@ -133,14 +135,8 @@ tests_assert_rejected! {
 tests_assert_accepted! {
     exported_static_removed,
     exported_static_demoted,
-    // Symbol name was changed, without adding or removing the export flag.
-    export_name_value_changed,
 
     // Incorrectly accepted:
-
-    // The old state marked the function as an FFI entry point, so all checks are disabled on that
-    // function in the new state.
-    entry_point_demotion,
 
     // Dropping `mut` from an exported static may introduce unsoundness if C code writes to it.
     exported_static_mut_demoted,

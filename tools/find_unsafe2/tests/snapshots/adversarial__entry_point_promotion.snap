@@ -2,4 +2,4 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_entry_point_promotion::adv_promote: FFI export flag changed: false -> true
+adv_entry_point_promotion::adv_promote: exported symbol adv_promote was added

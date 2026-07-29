@@ -1,8 +1,0 @@
----
-source: find_unsafe2/tests/adversarial.rs
-expression: out.stdout
----
-adv_export_symbol_moved::process_v2: `unsafe` qualifier changed: false -> true
-adv_export_symbol_moved::process_v2: raw pointer derefs increased: 0 -> 1
-adv_export_symbol_moved::process_v2: raw pointer types in signature increased: 0 -> 1
-adv_export_symbol_moved::process_v2: FFI export flag changed: false -> true

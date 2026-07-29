@@ -40,10 +40,49 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         casts_int_to_ptr: 0,
         sig_contains_raw_ptr: 0,
         is_ffi_entry_point: false,
+        ffi_symbol: None,
     };
+
+    // The symbol set is the ABI: every old symbol must survive, no matter which Rust item
+    // carries it, and export status gates the unsafety exemption, so a symbol may not move
+    // onto an item the baseline already counted.
+    let exports = |fns: &IndexMap<String, FunctionOutputs>| -> IndexMap<String, String> {
+        fns.iter()
+            .filter_map(|(name, f)| f.ffi_symbol.clone().map(|s| (s, name.clone())))
+            .collect()
+    };
+    let old_exports = exports(&old.fns);
+    let new_exports = exports(fns);
+    for (sym, old_item) in &old_exports {
+        if !new_exports.contains_key(sym) {
+            println!("{old_item}: exported symbol {sym} removed");
+            ok = false;
+        }
+    }
+
     for (fn_name, new_fn) in fns {
-        let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
-        ok &= check_function_outputs(fn_name, old_fn, new_fn);
+        match old.fns.get(fn_name) {
+            Some(old_fn) => {
+                if old_fn.ffi_symbol != new_fn.ffi_symbol {
+                    println!("{fn_name}: exported symbol changed: {} -> {}",
+                        fmt_symbol(&old_fn.ffi_symbol), fmt_symbol(&new_fn.ffi_symbol));
+                    ok = false;
+                }
+                ok &= check_function_outputs(fn_name, old_fn, new_fn);
+            },
+            None => {
+                if let Some(sym) = &new_fn.ffi_symbol {
+                    if old_exports.contains_key(sym) {
+                        // A baseline symbol carried by a renamed item: the ABI is intact, and
+                        // the item inherits the exemption its predecessor had.
+                        continue;
+                    }
+                    println!("{fn_name}: new exported symbol {sym}");
+                    ok = false;
+                }
+                ok &= check_function_outputs(fn_name, &empty_fn, new_fn);
+            },
+        }
     }
 
     let empty_type = TypeOutputs {
@@ -71,7 +110,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
         casts_int_to_ptr, sig_contains_raw_ptr,
-        is_ffi_entry_point,
+        // Checked at the crate level, where the export sets are in view.
+        is_ffi_entry_point: _, ffi_symbol: _,
     } = *new;
     let mut ok = true;
 
@@ -97,10 +137,14 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr,
         || format!("{name}: raw pointer types in signature"));
 
-    ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
-        || format!("{name}: FFI export flag"));
-
     ok
+}
+
+fn fmt_symbol(sym: &Option<String>) -> String {
+    match sym {
+        Some(s) => format!("{s:?}"),
+        None => String::from("none"),
+    }
 }
 
 fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool {

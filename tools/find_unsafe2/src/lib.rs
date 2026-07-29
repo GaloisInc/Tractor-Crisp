@@ -228,6 +228,9 @@ pub struct FunctionOutputs {
     /// Whether this function is an FFI entry point.  Specifically, this is set when the function
     /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
     pub is_ffi_entry_point: bool,
+    /// The exported symbol: the `#[export_name]` value, or the item's own name under
+    /// `#[no_mangle]`.  Set for exported `fn`s and `static`s; the symbol set is the ABI.
+    pub ffi_symbol: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -252,7 +255,7 @@ impl FunctionOutputs {
             // Progress, not safety
             uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
             // Other
-            is_ffi_entry_point: _,
+            is_ffi_entry_point: _, ffi_symbol: _,
         } = *self;
 
         *total_unsafe = is_unsafe_fn as usize
@@ -449,25 +452,32 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         tcx.is_mutable_static(internal_def_id)
     };
 
-    let is_ffi_entry_point = move |item: CrateItem| {
+    let ffi_symbol = move |item: CrateItem| -> Option<String> {
         if item.is_foreign_item() {
-            // FFI imports are not entry points.
-            return false;
+            // FFI imports are not exports.
+            return None;
         }
-        if !matches!(item.kind(), ItemKind::Fn /* | ItemKind::Static*/) {
+        if !matches!(item.kind(), ItemKind::Fn | ItemKind::Static) {
             // Only `fn`s and `static`s can be exported.
-            //
-            // However, since statics have no inputs (only outputs), we expect they should almost
-            // never need unsafe code internally.  So we don't apply the entry-point flag, which
-            // allows internal unsafe code.
-            //
-            // TODO: do set the flag on statics (for accuracy) but filter them out elsewhere
-            return false;
+            return None;
         }
         let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
         let attrs = tcx.codegen_fn_attrs(internal_def_id);
-        attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
-            || attrs.symbol_name.is_some()
+        if let Some(sym) = attrs.symbol_name {
+            return Some(sym.to_string());
+        }
+        if attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE) {
+            // Under `#[no_mangle]` the symbol is the item's own name.
+            let name = item.name();
+            return Some(name.rsplit("::").next().unwrap_or(&name).to_string());
+        }
+        None
+    };
+
+    // The entry-point flag exempts a function's internal unsafety; exported statics carry a
+    // symbol (above) for ABI checks, but no exemption for their initializers.
+    let is_ffi_entry_point = move |item: CrateItem, ffi_symbol: &Option<String>| {
+        item.kind() == ItemKind::Fn && ffi_symbol.is_some()
     };
 
     let mut out = Outputs {
@@ -482,6 +492,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
             v.visit_body(&body);
 
             let key: String = item.name();
+            let item_ffi_symbol = ffi_symbol(item);
             let mut value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
@@ -502,7 +513,8 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 casts_int_to_ptr: v.casts_int_to_ptr,
                 sig_contains_raw_ptr: sig_contains_raw_ptr(item),
 
-                is_ffi_entry_point: is_ffi_entry_point(item),
+                is_ffi_entry_point: is_ffi_entry_point(item, &item_ffi_symbol),
+                ffi_symbol: item_ffi_symbol,
             };
             value.calc_total_unsafe();
             if !value.is_ffi_entry_point {

@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_exported_static_demoted::ADV_STATE: exported symbol ADV_STATE removed
+adv_exported_static_demoted::ADV_STATE: exported symbol changed: "ADV_STATE" -> none

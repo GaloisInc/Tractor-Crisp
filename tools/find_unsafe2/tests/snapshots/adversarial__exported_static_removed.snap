@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_exported_static_removed::ADV_TABLE: exported symbol ADV_TABLE removed

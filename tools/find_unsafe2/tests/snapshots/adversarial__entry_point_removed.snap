@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_entry_point_removed::adv_removed: exported symbol adv_removed removed

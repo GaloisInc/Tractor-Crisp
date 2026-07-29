@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-// Deleting an exported static breaks the ABI and frees a unit of headroom.
+// Deleting an exported static breaks the ABI.
 fn keep() -> i32 {
     0
 }

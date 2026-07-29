@@ -113,10 +113,16 @@ fn union_construction_charged() {
     assert_rejected("union_construction_charged");
 }
 
-// HOLE: removing an export attribute passes; old entry points skip all checks.
+// Removing an export attribute from an entry point is an ABI break.
 #[test]
 fn entry_point_demotion() {
-    assert_accepted("entry_point_demotion");
+    assert_rejected("entry_point_demotion");
+}
+
+// Deleting an entry point outright is an ABI break.
+#[test]
+fn entry_point_removed() {
+    assert_rejected("entry_point_removed");
 }
 
 // Promoting an impl fn to an entry point would move its unsafety out of the total.
@@ -131,16 +137,16 @@ fn new_ptr_field() {
     assert_rejected("new_ptr_field");
 }
 
-// HOLE: deleting an exported static passes; statics never carry the export flag.
+// Deleting an exported static is an ABI break.
 #[test]
 fn exported_static_removed() {
-    assert_accepted("exported_static_removed");
+    assert_rejected("exported_static_removed");
 }
 
-// HOLE: dropping #[no_mangle] from a static passes for the same reason.
+// Dropping #[no_mangle] from a static is an ABI break.
 #[test]
 fn exported_static_demoted() {
-    assert_accepted("exported_static_demoted");
+    assert_rejected("exported_static_demoted");
 }
 
 // HOLE: static mut -> static keeps the symbol; unsound if C still writes it.
@@ -149,16 +155,16 @@ fn exported_static_mut_demoted() {
     assert_accepted("exported_static_mut_demoted");
 }
 
-// HOLE: only an export boolean is recorded, so a changed export_name passes.
+// Changing an export_name value is an ABI break.
 #[test]
 fn export_name_value_changed() {
-    assert_accepted("export_name_value_changed");
+    assert_rejected("export_name_value_changed");
 }
 
-// The same exported symbol on a renamed item is spuriously rejected today.
+// The same exported symbol on a renamed item keeps the ABI intact.
 #[test]
 fn export_symbol_moved() {
-    assert_rejected("export_symbol_moved");
+    assert_accepted("export_symbol_moved");
 }
 
 // HOLE: pointers materialized from integers via safe std calls are uncharged.

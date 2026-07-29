@@ -461,6 +461,8 @@ fn ty_contains_raw_ptr(ty: Ty) -> usize {
     use rustc_public::visitor::{Visitor, Visitable};
     struct CountRawPtrsVisitor {
         count: usize,
+        /// Local Adts already descended into; guards cycles like `struct Node { next: *mut Node }`.
+        visited_adts: HashSet<AdtDef>,
     }
     impl Visitor for CountRawPtrsVisitor {
         type Break = ();
@@ -472,6 +474,18 @@ fn ty_contains_raw_ptr(ty: Ty) -> usize {
                 Some(&RigidTy::Adt(adt, _)) => {
                     if matches!(&*adt.name(), "core::ptr::NonNull" | "std::ptr::NonNull") {
                         self.count += 1;
+                    } else if adt.krate().is_local && self.visited_adts.insert(adt) {
+                        // A pointer carried inside a local struct is still a pointer in the
+                        // signature.  Only local Adts are descended: std types reach `NonNull`
+                        // by field descent (`String` -> ... -> `NonNull`), and their pointer
+                        // fields are not the function's own unsafety surface.  Field types are
+                        // taken unsubstituted; concrete generic args are walked by
+                        // `super_visit` below, so substituting here would double-count.
+                        for variant in adt.variants_iter() {
+                            for field in variant.fields() {
+                                let _ = field.ty().visit(self);
+                            }
+                        }
                     }
                 },
                 _ => {},
@@ -480,7 +494,7 @@ fn ty_contains_raw_ptr(ty: Ty) -> usize {
         }
     }
 
-    let mut v = CountRawPtrsVisitor { count: 0 };
+    let mut v = CountRawPtrsVisitor { count: 0, visited_adts: HashSet::new() };
     let _ = ty.visit(&mut v);
     v.count
 }

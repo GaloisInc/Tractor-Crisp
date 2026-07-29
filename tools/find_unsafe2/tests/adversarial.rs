@@ -173,8 +173,8 @@ fn int_to_ptr_laundering() {
     assert_rejected("int_to_ptr_laundering");
 }
 
-// A lifetime-forging helper is rejected only via its deref; its signature
-// hides the pointer inside a struct.
+// A lifetime-forging helper's struct-carried pointer charges its signature,
+// which stays a hard error even where derefs are later relaxed.
 #[test]
 fn struct_carried_ptr_sig() {
     assert_rejected("struct_carried_ptr_sig");

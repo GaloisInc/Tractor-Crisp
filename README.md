@@ -208,51 +208,91 @@ uv run scripts/test_eval.py /path/to/Test-Corpus/foo/bar -- --llm-mode agent_ran
 
 
 # GEPA prompt optimization
-GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.org/abs/2507.19457)). GEPA can be used to optimize the system prompt on any dataset to achieve better performance of converting unsafe Rust to safe Rust via LLMs.
+GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.org/abs/2507.19457)). GEPA can be used to optimize the system prompt on any dataset to achieve better performance of converting unsafe Rust to safe Rust via LLMs. See `gepa_artifacts/` for prompts found via GEPA, and the results of running them on various datasets.
 
-See `gepa_artifacts/` for prompts found via GEPA, and the results of running them on various datasets.
+Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run:
+```shell
+./gepa_setup_initial.sh <dataset_dir>
+```
+from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
 
-To run GEPA:
-1. Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run `./gepa_setup_initial.sh <dataset_dir>` from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
-2. Then, run GEPA prompt optimization as follows. For an example, see `scripts/run_gepa.py`.
-    ```python
-    do_gepa(
+Note: The GEPA optimization process may crash with `OSError: Too many open files`. To prevent this, run the following in the terminal first, then run GEPA optimization.
+```shell
+ulimit -Sn $(ulimit -Hn)
+```
 
-        # dataset_path is the dataset folder on which GEPA will run its optimization
-        dataset_path = <full/path/to/dataset/>,
+## Running GEPA for individual prompt optimization of LLMs
+Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_llm()`.
+```python
+from crisp.gepa_po import do_gepa
 
-        # seed_prompt is used to start the optimization
-        # for best results, provide the entire prompt without any {...} blocks to be filled in
-        seed_prompt_path = <full/path/to/seed_prompt.txt>,
+do_gepa(
 
-        # task_lm is the LLM inside the loop which runs the prompts on the task
-        # (in this case, unsafe Rust to safe Rust conversion)
-        task_lm = <LLM name>,
+    # dataset_path is the dataset folder on which GEPA will run its optimization
+    dataset_path = <full/path/to/dataset/>,
 
-        # reflection_lm is the LLM outside the loop which reflects on feedback
-        # from the task_lm's performance and suggests better prompts
-        reflection_lm = <LLM name>
+    # seed_prompt is used to start the optimization
+    # for best results, provide the entire prompt without any {...} blocks to be filled in
+    seed_prompt_path = <full/path/to/seed_prompt.txt>,
 
-    )
-    ```
-    Note: The GEPA optimization process may crash with `OSError: Too many open files`. To prevent this, run the following in the terminal first, then run GEPA optimization.
-    ```shell
-    ulimit -Sn $(ulimit -Hn)
-    ```
+    # task_lm is the LLM inside the loop which runs the prompts on the task
+    # (in this case, unsafe Rust to safe Rust conversion)
+    task_lm = <LLM name>,
 
-3. The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py`.
-    ```python
-    run_gepa_eval_on_prompt(
+    # reflection_lm is the LLM outside the loop which reflects on feedback
+    # from the task_lm's performance and suggests better prompts
+    reflection_lm = <LLM name>
 
-        # dataset_path is the dataset folder on which the prompt will be evaluated
-        dataset_path = <full/path/to/dataset/>,
+)
+```
 
-        # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
-        # which contains `prompt.txt` containing the actual prompt to be evaluated
-        optimized_prompt_folder = <full/path/to/prompt_folder/>,
+The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py::evaluate_gepa_llm()`.
+```python
+from crisp.gepa_po import run_gepa_eval_on_prompt
 
-        # model is the LLM which will run the prompt on the dataset
-        model = <LLM name>
+run_gepa_eval_on_prompt(
 
-    )
-    ```
+    # dataset_path is the dataset folder on which the prompt will be evaluated
+    dataset_path = <full/path/to/dataset/>,
+
+    # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
+    # which contains `prompt.txt` containing the actual prompt to be evaluated
+    optimized_prompt_folder = <full/path/to/prompt_folder/>,
+
+    # model is the LLM which will run the prompt on the dataset
+    model = <LLM name>
+
+)
+```
+
+## Running GEPA for joint prompt optimization of agents
+Currently, the following prompts can be optimized. All the calls are referenced w.r.t the `crisp/gepa_agent.py::run_task()::workflow` variable.
+| Prompt type | Used for | Called in | Seed / unoptimized prompt |
+| -- | -- | -- | -- |
+| `agent_plan_prompt` | Generating the agent's `SAFETY_PLAN.md` | `workflow.do_safety_plan_agent()` | `crisp/prompts/agent_plan.md` |
+| `agent_safety_prompt` | Telling the agent to execute `SAFETY_PLAN.md` | `workflow.do_safety_step_agent()` (which calls `self.agent_safety()`) | `crisp/workflow.py::AGENT_SAFETY_PROMPT` |
+| `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
+| `ffi_entry_point_rules` | Part of `SAFETY_PLAN.md` and FFI review instructions | `workflow.do_safety_plan_agent()`, and `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_entry_point_rules.md` |
+
+Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
+```python
+from crisp.gepa_agents import do_gepa as do_gepa_agents
+
+do_gepa_agents(
+
+    # dataset_path is the dataset folder on which GEPA will run its optimization
+    dataset_path = <full/path/to/dataset/>,
+
+    # seed_prompts are used to start the optimization
+    # for best results, provide the entire prompt without any {...} blocks to be filled in
+    seed_prompt_paths = {
+        <prompt_type> : <full/path/to/seed_prompt_of_that_prompt_type.txt>
+        # see <prompt_type>s from table above
+    },
+
+    # reflection_lm is the LLM outside the loop which reflects on feedback
+    # from the agents' performance and suggests better prompts
+    reflection_lm = <LLM name>
+
+)
+```

@@ -70,6 +70,7 @@ def run_task(
         #TODO maybe incorporate a loop where the agent makes multiple attempts
         # (as is done in crisp.__main__.py::safety_loop_common()),
         # and more attempts are penalized via the evaluator
+        #NOTE this may be a bad idea because each iteration takes a very long time
 
         #TODO maybe incorporate FFI stuff
 
@@ -181,7 +182,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 workflow = task['workflow'],
                 n_code = n_input_code,
                 n_c_code = n_c_code,
-                prompts = candidate
+                prompts = candidate #TODO how do we ensure that candidate prompts always have the proper {} portions to be formatted (e.g. `agent_plan_prompt` should always have `{cargo_dir_path}`)? Maybe the solution is to eliminate all such blocks from the GEPA seed prompts.
             )
 
             outputs.append(TaskOutput(n_code = n_output_code))
@@ -195,7 +196,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             scores.append(eval_result.score)
 
             if capture_traces:
-                trajectories.append( #TODO capture more feedback for specific prompts
+                trajectories.append( #TODO capture more feedback for specific prompt types
                     TaskTrace(
                         task = task,
                         n_input_code = n_input_code,
@@ -234,7 +235,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
             for traj in (eval_batch.trajectories or []):
                 component_data.append(
-                    { #TODO get individual input-outputs or similar for specific prompts
+                    { #TODO get individual input-outputs or similar for specific prompt types
                         "Inputs": file_formatter.emit_files(
                             mvir = traj.task['workflow'].mvir,
                             n = traj.n_input_code,

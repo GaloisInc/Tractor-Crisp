@@ -1279,6 +1279,7 @@ class Workflow:
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            find_unsafe2_src_dir = cargo_dir,
         )
 
     @step
@@ -1462,6 +1463,7 @@ class Workflow:
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            find_unsafe2_src_dir = cargo_dir,
         )
 
     @step

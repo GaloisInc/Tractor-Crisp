@@ -199,6 +199,7 @@ def run_rewrite(
     codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
+    find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
 ) -> tuple[TreeNode, TreeNode]:
     extra_code, env = _normalize_run_args(extra_code, env)
@@ -250,6 +251,8 @@ def run_rewrite(
 
             if find_unsafe2_json_dir is not None:
                 env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
+            if find_unsafe2_src_dir is not None:
+                env['FIND_UNSAFE2_SRC_DIR'] = sb.join(find_unsafe2_src_dir)
 
             for cmd in all_cmds:
                 exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)

@@ -7,8 +7,9 @@ extern crate rustc_public;
 // required to be available in rlib format, but was not found in this form" when running tests.
 extern crate rustc_driver;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
+use std::path::Path;
 use indexmap::IndexMap;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
@@ -161,7 +162,7 @@ impl Visitor<'_> for FunctionVisitor<'_> {
 }
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Outputs {
     /// Sum of all unsafe counts from all functions and items, except for FFI entry points.
     ///
@@ -273,6 +274,31 @@ impl TypeOutputs {
 
         0
     }
+}
+
+
+/// Whether any item or type of the current crate has its source under `src_dir`.  Used by the
+/// drivers to restrict analysis to the project's own crates.  Types are checked too, so a crate
+/// holding only type definitions still counts as a project crate.
+pub fn any_local_item_under(tcx: TyCtxt, src_dir: &Path) -> bool {
+    let all_spans_iter = rustc_public::all_local_items().into_iter().map(|item| item.span())
+        .chain(crate_type_defs(tcx).into_iter().map(|td| td.span()));
+
+    // `canonicalize` possibly does a lot of filesystem operations, so check each distinct file
+    // path only once.
+    let mut files_seen = HashSet::new();
+    for span in all_spans_iter {
+        let file = span.get_filename();
+        if files_seen.insert(file.clone()) {
+            if let Ok(file_abs) = Path::new(&file).canonicalize() {
+                if file_abs.starts_with(&src_dir) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 

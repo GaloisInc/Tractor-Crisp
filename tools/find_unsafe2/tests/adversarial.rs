@@ -157,6 +157,13 @@ fn entry_point_promotion() {
     assert_rejected("entry_point_promotion");
 }
 
+// Unsafety migrating into a count-exempt entry point still passes, but is
+// surfaced with a warning for the agent and the FFI review.
+#[test]
+fn entry_point_stuffing() {
+    assert_tolerated("entry_point_stuffing");
+}
+
 // A new raw-pointer field is charged against the type.
 #[test]
 fn new_ptr_field() {

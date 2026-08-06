@@ -131,7 +131,14 @@ fn check_function_outputs(
     name: &str, old: &FunctionOutputs, new: &FunctionOutputs, is_new: bool,
 ) -> bool {
     if old.is_ffi_entry_point {
-        // Allow increasing unsafe within FFI entry points.
+        // Allow increasing unsafe within FFI entry points, but say so: ops
+        // migrating into the count-exempt zone is the wrapper-stuffing move
+        // the FFI review rejects, and the agent sees this output mid-turn.
+        if new.total_unsafe > old.total_unsafe {
+            println!("warning: {name}: {} unsafe operations now inside \
+                count-exempt FFI entry point (baseline {}); entry points \
+                must stay thin", new.total_unsafe, old.total_unsafe);
+        }
         return true;
     }
 

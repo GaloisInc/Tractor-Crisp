@@ -1,5 +1,6 @@
 ---
 source: find_unsafe2/tests/example.rs
+assertion_line: 29
 expression: stdout
 ---
 warning: lib::fake_safe_puts: unsafe function calls increased: 0 -> 1
@@ -8,6 +9,7 @@ lib::fake_safe_puts: raw pointer types in signature increased: 0 -> 1
 warning: lib::deref_ptr: raw pointer derefs increased: 0 -> 1
 lib::deref_ptr: raw pointer types in signature increased: 0 -> 1
 lib::f7a: int-to-pointer casts increased: 0 -> 1
+warning: lib::ffi1: 3 unsafe operations now inside count-exempt FFI entry point (baseline 2); entry points must stay thin
 lib::FFI2: raw pointer derefs increased: 0 -> 1
 lib::non_ffi3: exported symbol changed: none -> "non_ffi3"
 lib::S: field x raw pointer count increased: 0 -> 1

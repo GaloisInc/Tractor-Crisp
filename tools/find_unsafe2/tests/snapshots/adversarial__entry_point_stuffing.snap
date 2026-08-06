@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+warning: adv_entry_point_stuffing::adv_stuff: 4 unsafe operations now inside count-exempt FFI entry point (baseline 2); entry points must stay thin

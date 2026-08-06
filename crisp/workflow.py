@@ -137,6 +137,8 @@ AGENT_FFI_REVIEW_PROMPT = _prompt('ffi_review.md')
 
 AGENT_TOLERATED_REVIEW_PROMPT = _prompt('tolerated_review.md')
 
+AGENT_PLAN_HYGIENE_PROMPT = _prompt('plan_hygiene.md')
+
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
 # a clean review is prose with no such lines.
 AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
@@ -1709,6 +1711,28 @@ class Workflow:
             n_new_code = self.llm_safety(n_code)
 
         return self.do_validate_and_repair(n_code, n_new_code, n_test_code)
+
+    @step
+    def do_plan_hygiene(self, n_code: TreeNode, n_plans: TreeNode) -> TreeNode:
+        """
+        Rewrite a bloated or stall-implicated `SAFETY_PLAN.md` into a compact
+        guide: completed work summarized, duplicate dead ends merged with
+        their gate citations kept.  Only the plan output is kept; any code
+        edits are discarded.
+        """
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        prompt = AGENT_PLAN_HYGIENE_PROMPT.format(cargo_dir_path = cargo_dir)
+        _, n_new_plans, _ = agent.run_rewrite(cfg, mvir, prompt,
+            cfg.models.agent_review, n_code,
+            planning_files = n_plans,
+            codex_login = self.codex_login,
+            effort = cfg.models.agent_review_effort)
+        if not n_new_plans.files:
+            # The rewrite must not delete the plan outright.
+            print('warning: plan hygiene returned no plan; keeping prior plan')
+            return n_plans
+        return n_new_plans
 
     @step
     def do_safety_plan_agent(

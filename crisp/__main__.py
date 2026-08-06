@@ -326,6 +326,14 @@ def prior_review_findings(mvir) -> list[str]:
     return seen
 
 
+# Below this size the plan is not worth a hygiene rewrite at a stall.
+PLAN_HYGIENE_MIN_LINES = 300
+
+def plan_line_count(mvir, n_plans) -> int:
+    return sum(mvir.node(node_id).body_str().count('\n')
+        for node_id in n_plans.files.values())
+
+
 @dataclass(frozen = True)
 class FuelLimits:
     # Try at most this many times in total to make the code safe.
@@ -357,6 +365,11 @@ class FuelLimits:
     # Grant at most this many waivers per run.
     max_waivers: int
 
+    # Rewrite `SAFETY_PLAN.md` into a compact guide: once per failure streak
+    # of this length, and whenever the plan crosses this many lines.
+    plan_hygiene_after: int
+    plan_hygiene_lines: int
+
 def total_code_size(mvir, n_code):
     total = 0
     for name, file in n_code.files.items():
@@ -380,6 +393,8 @@ def get_fuel_limits(mvir, n_code):
             adjudicate_after = 2,
             waiver_count_threshold = 10,
             max_waivers = 5,
+            plan_hygiene_after = 2,
+            plan_hygiene_lines = 1500,
         )
     elif size < 20000:
         # P01
@@ -391,6 +406,8 @@ def get_fuel_limits(mvir, n_code):
             adjudicate_after = 4,
             waiver_count_threshold = 25,
             max_waivers = 10,
+            plan_hygiene_after = 3,
+            plan_hygiene_lines = 1500,
         )
     else:
         # P02 - run forever
@@ -402,6 +419,8 @@ def get_fuel_limits(mvir, n_code):
             adjudicate_after = 5,
             waiver_count_threshold = 25,
             max_waivers = 10,
+            plan_hygiene_after = 3,
+            plan_hygiene_lines = 1500,
         )
     print(f'code size = {size}')
     print(f'default limits = {defaults!r}')
@@ -428,6 +447,12 @@ def get_fuel_limits(mvir, n_code):
         max_waivers = int(
             os.environ.get('LLM_SAFETY_MAX_WAIVERS',
                 defaults.max_waivers)),
+        plan_hygiene_after = int(
+            os.environ.get('LLM_SAFETY_PLAN_HYGIENE_AFTER',
+                defaults.plan_hygiene_after)),
+        plan_hygiene_lines = int(
+            os.environ.get('LLM_SAFETY_PLAN_HYGIENE_LINES',
+                defaults.plan_hygiene_lines)),
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
@@ -439,6 +464,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     best_unsafe_count = None
     consecutive_failures = 0
     waivers_granted = 0
+    hygiene_size_armed = True
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -501,6 +527,29 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if consecutive_failures >= limits.max_consecutive_failures:
                 print(f'stopping due to {consecutive_failures} consecutive failures')
                 break
+
+        # A bloated or muddled plan taxes every remaining iteration; rewrite
+        # it into a compact guide once per failure streak and whenever it
+        # crosses the size limit.  `hygiene_size_armed` re-arms only after
+        # the plan shrinks back under the limit, so a plan that stays large
+        # gets one attempt per crossing (even a failed one) rather than one
+        # per iteration.
+        if 'agent' in args.llm_mode and n_plans is not None and n_plans.files:
+            plan_lines = plan_line_count(mvir, n_plans)
+            if plan_lines <= limits.plan_hygiene_lines:
+                hygiene_size_armed = True
+            # A stall with a small plan gains nothing from trimming.
+            if ((consecutive_failures == limits.plan_hygiene_after
+                        and plan_lines >= PLAN_HYGIENE_MIN_LINES)
+                    or (hygiene_size_armed
+                        and plan_lines > limits.plan_hygiene_lines)):
+                hygiene_size_armed = False
+                try:
+                    n_plans = w.do_plan_hygiene(n_code, n_plans)
+                    print(f'plan hygiene: {plan_lines} -> '
+                        f'{plan_line_count(mvir, n_plans)} lines')
+                except CrispError as e:
+                    print(f'plan hygiene failed; keeping prior plan: {e}')
 
         # Infinite loop detection
         cur_fuel = w.fuel.fuel

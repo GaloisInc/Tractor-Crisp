@@ -1157,7 +1157,8 @@ class Workflow:
             cargo_dir_path = cargo_dir, inventory = inventory)
 
         report, logs, ran_commands = agent.run_analysis(cfg, mvir, prompt,
-            cfg.models.agent_plan, n_code, codex_login = self.codex_login)
+            cfg.models.agent_plan, n_code, codex_login = self.codex_login,
+            effort = cfg.models.agent_plan_effort)
         print(report)
         if report.strip() == '' or not ran_commands:
             print('warning: adjudication returned no usable report; '
@@ -1525,8 +1526,9 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
 
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
-            cfg.models.agent_loop, n_old_code, n_new_code,
-            codex_login = self.codex_login)
+            cfg.models.agent_review, n_old_code, n_new_code,
+            codex_login = self.codex_login,
+            effort = cfg.models.agent_review_effort)
 
         if report.strip() == '':
             # Fail closed on a missing report.
@@ -1736,6 +1738,7 @@ class Workflow:
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             planning_files = None,
+            effort = cfg.models.agent_plan_effort,
             codex_login=self.codex_login,
             codex_agents=agent.PLANNING_CODEX_AGENTS,
             clean_cmds = [

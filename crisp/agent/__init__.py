@@ -76,7 +76,8 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, codex_login: bool = False) -> list[str]:
+                   model: str, codex_login: bool = False,
+                   effort: str = 'high') -> list[str]:
     cmd = ['codex', subcmd]
 
     if codex_login:
@@ -113,7 +114,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
     # [0]: https://developers.openai.com/codex/speed
     # [1]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/service_tier_resolution.rs#L18
     cmd += [
-        '-c', 'model_reasoning_effort="high"',
+        '-c', f'model_reasoning_effort="{effort}"',
         '-c', 'features.fast_mode=false',
     ]
 
@@ -201,6 +202,7 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
+    effort: str = 'high',
 ) -> tuple[TreeNode, TreeNode, str]:
     """
     Run a codex rewrite over `input_code` and return the edited code, the
@@ -252,7 +254,7 @@ def run_rewrite(
                 '--skip-git-repo-check',
                 '--output-last-message', last_message_path,
                 prompt,
-            ], codex_login=codex_login, model=model)
+            ], codex_login=codex_login, model=model, effort=effort)
             print(codex_cmd)
             all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
 
@@ -371,6 +373,7 @@ def run_review(
     cwd: str = '.',
     codex_login: bool = False,
     env: dict | None = None,
+    effort: str = 'high',
 ) -> tuple[str, bytes, bool]:
     """
     Run `codex exec review` over the change from `old_code` to `new_code` and
@@ -425,7 +428,7 @@ def run_review(
             '--json',
             '--output-last-message', last_message_path,
             prompt,
-        ], codex_login=codex_login, model=model)
+        ], codex_login=codex_login, model=model, effort=effort)
         print(codex_cmd)
 
         exit_code, logs = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)
@@ -451,6 +454,7 @@ def run_analysis(
     cwd: str = '.',
     codex_login: bool = False,
     env: dict | None = None,
+    effort: str = 'high',
 ) -> tuple[str, bytes, bool]:
     """
     Run a prompt-driven `codex exec` analysis over `code` and return the
@@ -481,7 +485,7 @@ def run_analysis(
             '--json',
             '--output-last-message', last_message_path,
             prompt,
-        ], codex_login=codex_login, model=model)
+        ], codex_login=codex_login, model=model, effort=effort)
         print(codex_cmd)
 
         exit_code, logs2 = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)

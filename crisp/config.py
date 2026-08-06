@@ -41,7 +41,14 @@ class ConfigBase:
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
     agent_plan: str = "gpt-5.6-sol"
+    # Planning and waiver adjudication are one-off, high-leverage calls;
+    # extra reasoning there is cheap relative to the loop it steers.
+    agent_plan_effort: str = "xhigh"
     agent_loop: str = "gpt-5.6-terra"
+    # Reviews are adversarial reads, not rewrites; luna at xhigh effort is
+    # comparable to the bigger tiers there at a fraction of the price.
+    agent_review: str = "gpt-5.6-luna"
+    agent_review_effort: str = "xhigh"
     postprocess: str = "gpt-5.6-luna"
     # `rewriter = None` means call `/v1/models` and pick the first from the list.
     rewriter: str | None = None

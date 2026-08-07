@@ -25,9 +25,7 @@ use rustc_public::ty::{
     Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder, TraitDef,
 };
 use serde::{Serialize, Deserialize};
-use crate::mir_visitor::Visitor;
-
-mod mir_visitor;
+use rustc_public::mir::visit::{MirVisitor, PlaceContext, Location};
 
 
 struct FunctionVisitor<'a> {
@@ -72,8 +70,8 @@ impl<'a> FunctionVisitor<'a> {
     }
 }
 
-impl Visitor<'_> for FunctionVisitor<'_> {
-    fn visit_place(&mut self, x: &Place) {
+impl MirVisitor for FunctionVisitor<'_> {
+    fn visit_place(&mut self, x: &Place, ptx: PlaceContext, loc: Location) {
         let mut ty = self.body.local_decl(x.local).unwrap().ty;
         for proj in &x.projection {
             if let ProjectionElem::Deref = *proj {
@@ -92,9 +90,10 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             }
             ty = proj.ty(ty).unwrap();
         }
+        self.super_place(x, ptx, loc);
     }
 
-    fn visit_operand(&mut self, op: &Operand) {
+    fn visit_operand(&mut self, op: &Operand, loc: Location) {
         if let Operand::Constant(ref co) = *op {
             if let ConstantKind::Allocated(ref a) = *co.const_.kind() {
                 for &(_, Prov(alloc_id)) in &a.provenance.ptrs {
@@ -112,10 +111,10 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             _ => {},
         }
 
-        mir_visitor::walk_operand(self, op);
+        self.super_operand(op, loc);
     }
 
-    fn visit_rvalue(&mut self, x: &Rvalue) {
+    fn visit_rvalue(&mut self, x: &Rvalue, loc: Location) {
         if let Rvalue::Aggregate(ref ag, _) = *x {
             if let AggregateKind::Adt(adt, variant_idx, _, _, union_field_idx) = *ag {
                 match adt.kind() {
@@ -142,10 +141,10 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             }
         }
 
-        mir_visitor::walk_rvalue(self, x);
+        self.super_rvalue(x, loc);
     }
 
-    fn visit_terminator(&mut self, x: &Terminator) {
+    fn visit_terminator(&mut self, x: &Terminator, loc: Location) {
         match x.kind {
             TerminatorKind::Call { ref func, .. } => {
                 let ty = func.ty(self.body.locals()).unwrap();
@@ -166,7 +165,7 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             _ => {},
         }
 
-        mir_visitor::walk_terminator(self, x);
+        self.super_terminator(x, loc);
     }
 }
 

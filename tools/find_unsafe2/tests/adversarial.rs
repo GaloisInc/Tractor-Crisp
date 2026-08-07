@@ -130,7 +130,6 @@ tests_assert_rejected! {
 
     // Spuriously rejected:
 
-    closure_reindex,
     // Union construction is counted as a field use, and union field uses are unsafe (known
     // limitation).
     union_construction_charged,
@@ -139,6 +138,8 @@ tests_assert_rejected! {
 tests_assert_accepted! {
     exported_static_removed,
     exported_static_demoted,
+    add_closure_ffi,
+    closure_reindex,
 
     // Incorrectly accepted:
 

@@ -8,6 +8,7 @@ extern crate rustc_public;
 extern crate rustc_driver;
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::ops::ControlFlow;
 use std::path::Path;
 use indexmap::IndexMap;
@@ -286,6 +287,36 @@ impl FunctionOutputs {
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
     }
+
+    fn add_from(&mut self, src: &Self) {
+        let FunctionOutputs {
+            total_unsafe: _, filename: _,
+            is_unsafe_fn, is_mut_static,
+            derefs_raw_ptr, calls_unsafe, inline_asm,
+            ref uses_static_mut, ref uses_union_field,
+            // Progress, not safety
+            ref uses_ffi_entry_point,
+            ref uses_foreign_fn, casts_int_to_ptr, sig_contains_raw_ptr,
+            // Other
+            ffi_symbol: _,
+        } = *src;
+        fn add_map<K: Eq + Hash + Clone>(dest: &mut IndexMap<K, usize>, src: &IndexMap<K, usize>) {
+            for (k, &v) in src {
+                *dest.entry(k.clone()).or_insert(0) += v;
+            }
+        }
+        self.is_unsafe_fn |= is_unsafe_fn;
+        self.is_mut_static |= is_mut_static;
+        self.derefs_raw_ptr += derefs_raw_ptr;
+        self.calls_unsafe += calls_unsafe;
+        self.inline_asm += inline_asm;
+        add_map(&mut self.uses_static_mut, uses_static_mut);
+        add_map(&mut self.uses_union_field, uses_union_field);
+        add_map(&mut self.uses_ffi_entry_point, uses_ffi_entry_point);
+        add_map(&mut self.uses_foreign_fn, uses_foreign_fn);
+        self.casts_int_to_ptr += casts_int_to_ptr;
+        self.sig_contains_raw_ptr += sig_contains_raw_ptr;
+    }
 }
 
 impl TypeOutputs {
@@ -513,6 +544,18 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         Some(sym_name.name.to_string())
     };
 
+    // If `item` is a closure, return the `FnDef` of its containing function.
+    let closure_parent = |item: CrateItem| -> Option<CrateItem> {
+        use rustc_hir::def::DefKind;
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
+        if !matches!(tcx.def_kind(internal_def_id), DefKind::Closure) {
+            return None;
+        }
+        // Every closure should have a parent, so no need for `tcx.opt_parent` here.
+        let parent_internal_def_id = tcx.parent(internal_def_id);
+        Some(CrateItem(rustc_internal::stable(parent_internal_def_id)))
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -520,13 +563,14 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         unsafe_impls: IndexMap::new(),
     };
 
+    let mut rollup_map = IndexMap::new();
     for item in items {
         if let Some(body) = item.body() {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
             let key: String = item.name();
-            let mut value = FunctionOutputs {
+            let value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
                 is_unsafe_fn: is_unsafe_fn(item),
@@ -552,12 +596,39 @@ pub fn process(tcx: TyCtxt) -> Outputs {
 
                 ffi_symbol: ffi_symbol(item),
             };
-            value.calc_total_unsafe();
-            if value.ffi_symbol.is_none() {
-                out.total_unsafe += value.total_unsafe;
+            // Record all closure->parent relationships here.  Additional filtering is applied
+            // below when doing the actual folding of closure metrics into parents.
+            if let Some(parent) = closure_parent(item) {
+                rollup_map.insert(key.clone(), parent.name());
             }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());
+        }
+    }
+
+    for (src, mut dest) in &rollup_map {
+        for i in 0.. {
+            assert!(i < rollup_map.len(),
+                "detected infinite cycle in closure parent graph, involving {dest:?}");
+            match rollup_map.get(dest) {
+                Some(x) => { dest = x; },
+                None => break,
+            }
+        }
+
+        // Only fold closures into parents if the parent is an FFI entry point.
+        let dest_is_ffi = out.fns[dest].ffi_symbol.is_some();
+        if dest_is_ffi {
+            let src_value = out.fns.swap_remove(src).unwrap();
+            let dest_value = out.fns.get_mut(dest).unwrap();
+            dest_value.add_from(&src_value);
+        }
+    }
+
+    for value in out.fns.values_mut() {
+        value.calc_total_unsafe();
+        if value.ffi_symbol.is_none() {
+            out.total_unsafe += value.total_unsafe;
         }
     }
 

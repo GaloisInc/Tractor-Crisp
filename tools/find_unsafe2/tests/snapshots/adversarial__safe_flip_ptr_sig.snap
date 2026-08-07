@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+assertion_line: 67
+expression: out.stdout
+---
+adv_safe_flip_ptr_sig::touch: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures

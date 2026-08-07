@@ -219,6 +219,20 @@ fn closure_ptr_param() {
     assert_accepted("closure_ptr_param");
 }
 
+// EXPERIMENTAL safe-endpoint rule: a new `unsafe fn` helper may carry the
+// pointer-laden struct; it self-counts, so its unsafety only warns.
+#[test]
+fn unsafe_helper_ptr_sig() {
+    assert_tolerated("unsafe_helper_ptr_sig");
+}
+
+// EXPERIMENTAL safe-endpoint rule: dropping `unsafe` while the signature
+// still carries pointers is the flip half of create-then-flip laundering.
+#[test]
+fn safe_flip_ptr_sig() {
+    assert_rejected("safe_flip_ptr_sig");
+}
+
 // Impl code routing a call through an exempt entry point is charged.
 #[test]
 fn entry_point_call_from_impl() {

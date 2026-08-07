@@ -32,6 +32,8 @@ enum Severity {
 ///   tolerated with a warning, subject to the crate-wide `total_unsafe` not increasing.
 /// - The progress metrics (int-to-pointer casts, raw pointer signatures and fields, foreign fn
 ///   and FFI entry point uses) and the export set remain per-function non-increasing.
+///   EXPERIMENTAL: the signature metric binds only at safe endpoints — see
+///   `check_function_outputs`.
 /// Prints a line per finding and returns `false` if any hard error was found.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     let Outputs { total_unsafe: _, ref fns, ref types, ref unsafe_impls } = *new;
@@ -160,8 +162,8 @@ fn check_function_outputs(
     // with a warning on functions that already contained unsafety, and on new functions — so
     // unsafe operations can relocate into named façade/constructor functions — subject to the
     // global total check and reviewer approval.  The strict metrics below still apply to new
-    // functions, which keeps classic laundering helpers (raw-pointer parameters or fields)
-    // hard-blocked.
+    // functions, which keeps classic laundering helpers (raw-pointer parameters on safe fns,
+    // or pointer fields) hard-blocked.
     let unsafety = if old.total_unsafe > 0 || is_new {
         Severity::Warning
     } else {
@@ -193,8 +195,23 @@ fn check_function_outputs(
 
     ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr, Severity::Error,
         || format!("{name}: int-to-pointer casts"));
-    ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr, Severity::Error,
-        || format!("{name}: raw pointer types in signature"));
+
+    // EXPERIMENTAL: the signature gate binds only at safe endpoints.  An `unsafe fn` may
+    // carry raw-pointer signatures while a conversion is in flight: it is honestly labeled
+    // and self-counts, so it cannot be a terminal hiding place.  A fn may be or become safe
+    // only with a pointer-free signature, which closes the create-unsafe-then-flip route.
+    if !is_unsafe_fn {
+        if is_new || old.is_unsafe_fn {
+            if sig_contains_raw_ptr > 0 {
+                println!("{name}: safe fn carries {sig_contains_raw_ptr} raw pointer types \
+                    in signature; new or newly-safe fns must have pointer-free signatures");
+                ok = false;
+            }
+        } else {
+            ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr, Severity::Error,
+                || format!("{name}: raw pointer types in signature"));
+        }
+    }
 
     ok
 }

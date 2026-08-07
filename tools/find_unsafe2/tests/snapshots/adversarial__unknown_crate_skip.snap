@@ -1,8 +1,8 @@
 ---
 source: find_unsafe2/tests/adversarial.rs
-assertion_line: 250
+assertion_line: 271
 expression: out.stdout
 ---
 warning: adv_unknown_crate_skip::evil: raw pointer derefs increased: 0 -> 1
-adv_unknown_crate_skip::evil: raw pointer types in signature increased: 0 -> 1
+adv_unknown_crate_skip::evil: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures
 total unsafe operations increased: 0 -> 1

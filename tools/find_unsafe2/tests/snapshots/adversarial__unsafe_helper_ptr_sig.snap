@@ -1,0 +1,7 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+assertion_line: 87
+expression: out.stdout
+---
+warning: adv_unsafe_helper_ptr_sig::view: `unsafe` qualifier changed: false -> true
+warning: adv_unsafe_helper_ptr_sig::view: unsafe function calls increased: 0 -> 1

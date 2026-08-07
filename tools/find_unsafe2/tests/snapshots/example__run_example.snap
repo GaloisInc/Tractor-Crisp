@@ -5,9 +5,10 @@ expression: stdout
 ---
 warning: lib::fake_safe_puts: unsafe function calls increased: 0 -> 1
 lib::fake_safe_puts: uses of foreign fn lib::puts increased: 0 -> 1
-lib::fake_safe_puts: raw pointer types in signature increased: 0 -> 1
+lib::fake_safe_puts: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures
 warning: lib::deref_ptr: raw pointer derefs increased: 0 -> 1
-lib::deref_ptr: raw pointer types in signature increased: 0 -> 1
+lib::deref_ptr: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures
+lib::f3: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures
 lib::f7a: int-to-pointer casts increased: 0 -> 1
 warning: lib::ffi1: 3 unsafe operations now inside count-exempt FFI entry point (baseline 2); entry points must stay thin
 lib::FFI2: raw pointer derefs increased: 0 -> 1

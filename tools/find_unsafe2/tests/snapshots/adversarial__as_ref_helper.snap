@@ -1,6 +1,7 @@
 ---
 source: find_unsafe2/tests/adversarial.rs
+assertion_line: 67
 expression: out.stdout
 ---
 warning: adv_as_ref_helper::promote: raw pointer derefs increased: 0 -> 1
-adv_as_ref_helper::promote: raw pointer types in signature increased: 0 -> 1
+adv_as_ref_helper::promote: safe fn carries 1 raw pointer types in signature; new or newly-safe fns must have pointer-free signatures

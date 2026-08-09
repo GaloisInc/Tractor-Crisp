@@ -30,7 +30,7 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
-    merge_ffi_finding_titles,
+    merge_ffi_finding_titles, stall_target,
 )
 
 
@@ -355,6 +355,11 @@ class FuelLimits:
     # new file.
     safety_tries_per_file: int
 
+    # After this many consecutive failures, aim the step at the
+    # implementation function carrying the most unsafe operations instead
+    # of letting the agent choose its own target from the plan.
+    retarget_after: int
+
     # After this many consecutive failures, with the remaining count at or
     # below `waiver_count_threshold`, adjudicate the remaining unsafe
     # operations: a strong model may waive ops it judges sound, minimal, and
@@ -390,6 +395,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 3,
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
+            retarget_after = 2,
             adjudicate_after = 2,
             waiver_count_threshold = 10,
             max_waivers = 5,
@@ -403,6 +409,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 5,
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
+            retarget_after = 3,
             adjudicate_after = 4,
             waiver_count_threshold = 25,
             max_waivers = 10,
@@ -416,6 +423,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
+            retarget_after = 3,
             adjudicate_after = 5,
             waiver_count_threshold = 25,
             max_waivers = 10,
@@ -438,6 +446,9 @@ def get_fuel_limits(mvir, n_code):
         safety_tries_per_file = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_FILE',
                 defaults.safety_tries_per_file)),
+        retarget_after = int(
+            os.environ.get('LLM_SAFETY_RETARGET_AFTER',
+                defaults.retarget_after)),
         adjudicate_after = int(
             os.environ.get('LLM_SAFETY_ADJUDICATE_AFTER',
                 defaults.adjudicate_after)),
@@ -596,9 +607,20 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         suffix = ffi_suffix if suffix is None \
                             else f'{suffix}\n\n{ffi_suffix}'
 
+                    # A stalled streak means plan-driven targeting is
+                    # failing; aim the step at the mass instead.
+                    target_goal = AgentTargetOther()
+                    if consecutive_failures >= limits.retarget_after:
+                        retarget = stall_target(w.fn_records(n_code),
+                            set(w.valid_waivers(n_code)))
+                        if retarget is not None:
+                            print(f'stall retarget: {retarget.func_name}')
+                            target_goal = retarget
+
                     n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = suffix)
+                        prompt_suffix = suffix,
+                        target_goal = target_goal)
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)

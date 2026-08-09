@@ -3,7 +3,7 @@ import unittest
 from crisp.workflow import (
     FFI_SEEN_FINDINGS_CAP, merge_ffi_finding_titles,
     extract_checker_warnings,
-    format_unsafe_inventory,
+    format_unsafe_inventory, stall_target,
     parse_waiver_verdicts, unsafety_vector,
     is_blocked_message,
 )
@@ -159,6 +159,31 @@ class FormatUnsafeInventoryTest(unittest.TestCase):
 
     def test_empty_inventory(self):
         self.assertEqual(format_unsafe_inventory({}), '(none remain)')
+
+
+class StallTargetTest(unittest.TestCase):
+    def test_picks_biggest_fn_of_biggest_file(self):
+        target = stall_target(INVENTORY_FNS, set())
+        self.assertEqual(target.func_name, 'zlib::src::inflate::inflate')
+
+    def test_fragmented_file_outweighs_single_giant_fn(self):
+        fns = {
+            'c::a::giant': {'filename': 'src/a.rs', 'total_unsafe': 500},
+            'c::b::f1': {'filename': 'src/b.rs', 'total_unsafe': 300},
+            'c::b::f2': {'filename': 'src/b.rs', 'total_unsafe': 290},
+        }
+        self.assertEqual(stall_target(fns, set()).func_name, 'c::b::f1')
+
+    def test_waived_fns_are_skipped(self):
+        target = stall_target(INVENTORY_FNS, {
+            'zlib::src::inflate::inflate', 'zlib::src::deflate::deflate'})
+        self.assertEqual(target.func_name, 'zlib::src::deflate::deflate_slow')
+
+    def test_none_when_nothing_qualifies(self):
+        self.assertIsNone(stall_target({
+            'f_ffi': {'total_unsafe': 3, 'is_ffi_entry_point': True},
+            'g': {'total_unsafe': 0},
+        }, set()))
 
 
 class UnsafetyVectorTest(unittest.TestCase):

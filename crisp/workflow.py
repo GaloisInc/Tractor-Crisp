@@ -365,6 +365,33 @@ class AgentTargetOther(AgentTarget):
     PROMPT_FMT = ""
 
 
+def stall_target(fns: dict, waived: set[str]) -> AgentTargetFunction | None:
+    """
+    Retarget for a stalled failure streak: the largest function in the
+    file carrying the most unsafe operations; `None` if none qualifies.
+    Ranking files before functions keeps a file whose unsafety is spread
+    across many mid-size functions from being shadowed indefinitely by
+    one giant function elsewhere.
+    """
+    counted = [
+        (record.get('filename', ''), record.get('total_unsafe', 0), name)
+        for name, record in fns.items()
+        if not record.get('is_ffi_entry_point')
+            and name not in waived
+            and record.get('total_unsafe', 0) > 0
+    ]
+    if not counted:
+        return None
+    by_file: dict[str, int] = {}
+    for filename, count, _ in counted:
+        by_file[filename] = by_file.get(filename, 0) + count
+    top_file = max(by_file, key = by_file.get)
+    _, _, name = max(
+        (entry for entry in counted if entry[0] == top_file),
+        key = lambda entry: entry[1])
+    return AgentTargetFunction(name)
+
+
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
 
 

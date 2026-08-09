@@ -360,6 +360,11 @@ class FuelLimits:
     # of letting the agent choose its own target from the plan.
     retarget_after: int
 
+    # Allow this many accepted-but-not-reducing steps per failure streak
+    # before the stall prompt stops inviting preparatory steps and demands
+    # a reduction or an explicit BLOCKED.
+    neutral_steps_per_streak: int
+
     # After this many consecutive failures, with the remaining count at or
     # below `waiver_count_threshold`, adjudicate the remaining unsafe
     # operations: a strong model may waive ops it judges sound, minimal, and
@@ -396,6 +401,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
             retarget_after = 2,
+            neutral_steps_per_streak = 2,
             adjudicate_after = 2,
             waiver_count_threshold = 10,
             max_waivers = 5,
@@ -410,6 +416,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
             retarget_after = 3,
+            neutral_steps_per_streak = 4,
             adjudicate_after = 4,
             waiver_count_threshold = 25,
             max_waivers = 10,
@@ -424,6 +431,7 @@ def get_fuel_limits(mvir, n_code):
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
             retarget_after = 3,
+            neutral_steps_per_streak = 6,
             adjudicate_after = 5,
             waiver_count_threshold = 25,
             max_waivers = 10,
@@ -449,6 +457,9 @@ def get_fuel_limits(mvir, n_code):
         retarget_after = int(
             os.environ.get('LLM_SAFETY_RETARGET_AFTER',
                 defaults.retarget_after)),
+        neutral_steps_per_streak = int(
+            os.environ.get('LLM_SAFETY_NEUTRAL_STEPS_PER_STREAK',
+                defaults.neutral_steps_per_streak)),
         adjudicate_after = int(
             os.environ.get('LLM_SAFETY_ADJUDICATE_AFTER',
                 defaults.adjudicate_after)),
@@ -474,6 +485,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     best_unsafe_count = None
     consecutive_failures = 0
+    # Accepted steps in the current failure streak that landed code without
+    # lowering the count.
+    neutral_steps = 0
+    landed_code = False
     waivers_granted = 0
     hygiene_size_armed = True
     # Report from the most recent FFI review rejection since the last accepted
@@ -508,12 +523,15 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         if best_unsafe_count is None or unsafe_count < best_unsafe_count:
             best_unsafe_count = unsafe_count
             consecutive_failures = 0
+            neutral_steps = 0
         else:
             # The previous iteration failed to make progress.  (Note the LLM
             # may have run normally and produced working code, but if it didn't
             # improve the unsafe count, we still consider that to be a failed
             # iteration.)
             consecutive_failures += 1
+            if landed_code:
+                neutral_steps += 1
             if (consecutive_failures == limits.adjudicate_after
                     and unsafe_count <= limits.waiver_count_threshold
                     and waivers_granted < limits.max_waivers):
@@ -568,6 +586,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         prev_fuel = cur_fuel
 
         try:
+            landed_code = False
             ffi_report = None
             ffi_parts = []
             if ffi_seen_findings:
@@ -583,7 +602,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     match consecutive_failures:
                         case 0 | 1:
                             suffix = None
-                        case _:
+                        case _ if neutral_steps < limits.neutral_steps_per_streak:
                             # Previous steps failed to make progress on
                             # `unsafe`.  Remind the agent of the goal, and of
                             # the legitimate way out of a genuine dead end.
@@ -601,6 +620,23 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                                 'a later removal instead. '
                                 'Reserve a final `BLOCKED: <reason>` line for '
                                 'when neither is possible.'
+                            )
+                        case _:
+                            # The streak's preparation allowance is spent.
+                            # Accepted-but-neutral steps tick the failure
+                            # counter, so leaving the invitation open lets a
+                            # run grind to the stop on green steps.
+                            suffix = (
+                                'Remember, your primary goal is to reduce '
+                                'the amount of unsafe code. '
+                                f'This failure streak already includes '
+                                f'{neutral_steps} accepted steps that did '
+                                'not reduce the unsafe count, so further '
+                                'preparation is not progress. '
+                                'Remove at least one unsafe operation '
+                                'or `unsafe fn`/`static mut` qualifier '
+                                'from the core implementation code, or end '
+                                'with a final `BLOCKED: <reason>` line.'
                             )
 
                     if ffi_suffix is not None:
@@ -651,6 +687,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 # retires the pending rejection report.
                 if n_new_code.node_id() != n_code.node_id():
                     ffi_feedback = None
+                    landed_code = True
                 n_code = n_new_code
                 n_plans = n_new_plans
             elif ffi_report is not None:

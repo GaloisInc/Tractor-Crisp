@@ -164,7 +164,7 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
 
 AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report. Every dead-end note must cite the specific gate that rejected the attempt (the exact checker diagnostic, review finding, or failing test); rules change between runs, and dead ends that don't name their gate can't be retired when they go stale and should not be trusted.
+**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report. Every dead-end note must cite the specific gate that rejected the attempt (the exact checker diagnostic, review finding, or failing test); rules change between runs, and dead ends that don't name their gate can't be retired when they go stale and should not be trusted. A dead end covers only the functions and types it names — do not generalize it to similar-looking code, and treat inherited notes that claim more than their citation as suspect.
 
 Where the remaining unsafe operations are (implementation code only; FFI entry points are exempt):
 
@@ -1790,7 +1790,10 @@ class Workflow:
         """
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = AGENT_PLAN_HYGIENE_PROMPT.format(cargo_dir_path = cargo_dir)
+        prompt = AGENT_PLAN_HYGIENE_PROMPT.format(
+            cargo_dir_path = cargo_dir,
+            unsafe_inventory = format_unsafe_inventory(self.fn_records(n_code)),
+        )
         _, n_new_plans, _ = agent.run_rewrite(cfg, mvir, prompt,
             cfg.models.agent_review, n_code,
             planning_files = n_plans,

@@ -166,6 +166,12 @@ AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
 **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report. Every dead-end note must cite the specific gate that rejected the attempt (the exact checker diagnostic, review finding, or failing test); rules change between runs, and dead ends that don't name their gate can't be retired when they go stale and should not be trusted.
 
+Where the remaining unsafe operations are (implementation code only; FFI entry points are exempt):
+
+{unsafe_inventory}
+
+Weigh these counts when choosing what to work on; prefer targets that carry many operations.
+
 {target_goal}
 
 {after_refactoring_instruction}
@@ -201,6 +207,38 @@ def extract_checker_warnings(logs: str) -> list[str]:
         line for line in logs.splitlines()
         if any(r.match(line) for r in CHECK_UNSAFE2_WARNING_RES)
     ]
+
+UNSAFE_INVENTORY_TOP_FNS = 10
+
+def format_unsafe_inventory(fns: dict) -> str:
+    """
+    Render merged `fns` inventory records as per-file totals plus the
+    largest functions, biggest first.  FFI entry points are exempt from
+    the unsafe count, so they are excluded here as well.
+    """
+    counted = {
+        name: record.get('total_unsafe', 0)
+        for name, record in fns.items()
+        if not record.get('is_ffi_entry_point')
+    }
+    counted = {name: n for name, n in counted.items() if n > 0}
+    if not counted:
+        return '(none remain)'
+
+    by_file: dict[str, int] = {}
+    for name, n in counted.items():
+        filename = fns[name].get('filename', '')
+        by_file[filename] = by_file.get(filename, 0) + n
+
+    lines = ['By file:']
+    for filename, n in sorted(by_file.items(), key = lambda kv: (-kv[1], kv[0])):
+        lines.append(f'- {filename}: {n}')
+    lines.append('')
+    lines.append('Largest functions:')
+    for name, n in sorted(counted.items(),
+            key = lambda kv: (-kv[1], kv[0]))[:UNSAFE_INVENTORY_TOP_FNS]:
+        lines.append(f'- {name}: {n}')
+    return '\n'.join(lines)
 
 AGENT_FFI_REJECTED_PROMPT = '''
 A previous attempt at this step was rejected by review (see `SAFETY_PLAN.md`). The reviewer reported:
@@ -1507,6 +1545,7 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            unsafe_inventory = format_unsafe_inventory(self.fn_records(n_code)),
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'

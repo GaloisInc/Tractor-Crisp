@@ -3,6 +3,7 @@ import unittest
 from crisp.workflow import (
     FFI_SEEN_FINDINGS_CAP, merge_ffi_finding_titles,
     extract_checker_warnings,
+    format_unsafe_inventory,
     parse_waiver_verdicts, unsafety_vector,
     is_blocked_message,
 )
@@ -113,6 +114,51 @@ class IsBlockedMessageTest(unittest.TestCase):
 
     def test_empty_message(self):
         self.assertFalse(is_blocked_message(''))
+
+
+# Trimmed `fns` inventory records in the shape of `unsafe_json/<crate>.json`.
+INVENTORY_FNS = {
+    'zlib::src::inflate::inflate': {
+        'filename': 'src/inflate.rs', 'total_unsafe': 503},
+    'zlib::src::deflate::deflate': {
+        'filename': 'src/deflate.rs', 'total_unsafe': 186},
+    'zlib::src::deflate::deflate_slow': {
+        'filename': 'src/deflate.rs', 'total_unsafe': 165},
+    'zlib::src::gzlib::gzbuffer_ffi': {
+        'filename': 'src/gzlib.rs', 'total_unsafe': 4,
+        'is_ffi_entry_point': True},
+    'zlib::src::adler32::adler32_impl': {
+        'filename': 'src/adler32.rs', 'total_unsafe': 0},
+}
+
+
+class FormatUnsafeInventoryTest(unittest.TestCase):
+    def test_files_and_functions_biggest_first(self):
+        self.assertEqual(format_unsafe_inventory(INVENTORY_FNS), '\n'.join([
+            'By file:',
+            '- src/inflate.rs: 503',
+            '- src/deflate.rs: 351',
+            '',
+            'Largest functions:',
+            '- zlib::src::inflate::inflate: 503',
+            '- zlib::src::deflate::deflate: 186',
+            '- zlib::src::deflate::deflate_slow: 165',
+        ]))
+
+    def test_entry_points_and_safe_fns_are_excluded(self):
+        rendered = format_unsafe_inventory(INVENTORY_FNS)
+        self.assertNotIn('gzbuffer_ffi', rendered)
+        self.assertNotIn('adler32', rendered)
+
+    def test_function_list_is_bounded(self):
+        fns = {f'crate::f{i:02}': {'filename': 'src/a.rs', 'total_unsafe': i + 1}
+            for i in range(20)}
+        rendered = format_unsafe_inventory(fns)
+        self.assertIn('- crate::f19: 20', rendered)
+        self.assertNotIn('- crate::f09: 10', rendered)
+
+    def test_empty_inventory(self):
+        self.assertEqual(format_unsafe_inventory({}), '(none remain)')
 
 
 class UnsafetyVectorTest(unittest.TestCase):

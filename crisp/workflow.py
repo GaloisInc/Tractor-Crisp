@@ -146,15 +146,42 @@ This will report an error for any unsafe code that was improperly added during y
 '''
 
 AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+Please refactor the Rust code in `{cargo_dir_path}` to be safe, without changing its behavior.  The goal is to make the code fully safe, including migrating to safe memory management (`Box`/`Vec`/`Rc`) and  safe pointer types (`&T`/`&[T]`) throughout.
 
 {target_goal}
 
+You are executing one iteration of a loop that will be re-invoked on the same codebase until the unsafe count reaches zero or progress stalls. To carry state between iterations, maintain a planning file at `SAFETY_PLAN.md`:
+
+- **First, check whether `SAFETY_PLAN.md` already exists.** If it does, read it in full. It is your own notes from prior iterations.
+- If the existing `SAFETY_PLAN.md` applies to your current target, Use it to pick up where the previous run left off rather than starting over.
+- If `SAFETY_PLAN.md` does not exist, or if it exists but applies to an unrelated target, make a new plan for addressing the current target. Examine the target along with any callers/callees, use sites, and other related logic to understand the functionality it provides. Think about how to implement the same functionality using only safe Rust constructs. Once you have an idea for a fix, look around for other places in the same module that might need the same fix; for example, if `f` and `g` both use `*mut c_char`, and you plan to migrate `f` to use `String` instead, it might be a good idea to migrate `g` to use `String` at the same time. Next, plan out step by step how to migrate from the unsafe version to the safe equivalent. This plan may be as small as a single step if the target is simple, or it may be many steps if the target is complex or has many interactions. Once you have a plan, write it to `SAFETY_PLAN.md`.
+- **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+- When rewriting the plan due to switching targets, pay close attention to any relevant pitfalls or dead ends recorded in the previous plan such that future iterations do not repeat the same mistakes. This is also a good time to trim and clean up the plan so it only contains the next steps and relevant notes.
+- If a planned unit turns out to be too complex or blocked by prerequisite work, update `SAFETY_PLAN.md` to record the blocker, split the work into smaller steps, and switch to the prerequisite or smaller step. Prefer steps that directly reduce the unsafe count, but preliminary safe refactors are acceptable when they are necessary to remove unsafe code in a later iteration.
+
+Then carry out the next step of the plan.
+
+The code contains two kinds of functions: implementation functions and FFI entry points. A function is an FFI entry point if it has the `#[no_mangle]` or `#[export_name]` attribute ("export attributes"). Note that just having `unsafe extern "C"` qualifiers without export attributes does NOT make a function an FFI entry point. All functions without export attributes are implementation functions.
+
+Implementation code may be freely refactored to improve safety. Here are some examples of useful changes to make:
+- Replace raw pointers with safe reference or smart pointer types, so that dereferences can be done safely.
+- Replace `static mut`s with non-`mut` and unions with enums so they can be accessed safely.
+- Eliminate calls to FFI imports and other unsafe functions. Try to replace these with suitable safe Rust operations, e.g. `printf` -> `println!`.
+- Remove the `unsafe` qualifier from functions that no longer need it, so that their callers can be made safe.
+
+For FFI entry points, the following rules apply:
+- You must not change the signature. FFI entry point signatures must remain exactly as-is to ensure ABI compatibility with the current version of the code. Don't remove `unsafe` or `extern "C"` qualifiers from FFI entry points.
+- For struct types that appear only behind a pointer, you may assume the struct is opaque to the user of the library (unless otherwise indicated within the code itself), as is considered best practice in C. This means the struct layout is not part of the ABI, so you may freely change the field types to improve safety.
+- Each FFI entry point should convert the inputs from unsafe types to safe ones (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function, and convert the results back to unsafe types if needed. Do not add extraneous unsafe code to FFI entry points.
+- Don't add calls to FFI entry points (`*_ffi` functions).  These entry points are only for use from C.  When changing a non-FFI function's signature, you should update all call sites to handle the new signature, rather than changing some call sites to call the FFI entry point that still has the old signature.  (And if you see existing calls from non-FFI code into FFI entry points, try to replace them with calls to non-FFI functions instead.)
+
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+Your changes must not introduce new unsafe code within implementation functions. You can check your work using this script:
 ```sh
+# Force a rebuild.  check-unsafe2 uses $RUSTC_WRAPPER + cargo build, which may no-op if the project was already built.
+cargo clean --manifest-path {cargo_dir_path}/Cargo.toml --workspace
+# Now run the actual unsafe check:
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
@@ -178,6 +205,10 @@ Your current target is the `{field_name}` field of `{struct_name}`, along with a
 
 AGENT_TARGET_GOAL_FUNCTION = '''
 Your current target is the `{func_name}` function, along with any similar or closely related functions.  Your goal is to change the function in question to use only safe types (such as `Box`, `Vec`, or `Rc`) internally and in its signature, and to replace any unsafe FFI calls (e.g. `libc::printf`) with safe equivalents.  You should aim to make callees of the target function safe if it's feasible to do so, that way the entire call tree is safe.
+'''.strip()
+
+AGENT_TARGET_GOAL_OTHER = '''
+You currently have no specific target.  Scan the codebase for any remaining unsafe types, operations, or definitions (excluding FFI entry points) and identify a single reasonably-scoped unit of code (such as a file/module, a data structure and its related functions, or even a set of related struct fields) that uses `unsafe` for you to work on.
 '''.strip()
 
 class AgentTarget:
@@ -206,10 +237,7 @@ class AgentTargetOther(AgentTarget):
     """
     Remove any leftover unsafe from the codebase.
     """
-    # The prompt asks the agent to continue the plan, so we
-    # expect it to make a reasonable choice for the next target
-    # based on that document.
-    PROMPT_FMT = ""
+    PROMPT_FMT = AGENT_TARGET_GOAL_OTHER
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))

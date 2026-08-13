@@ -70,8 +70,6 @@ class BranchState:
         # Fuel is not persisted in MVIR, so limits can be changed between runs.
         self.safety_tries_fuel = FuelCounter('safety_tries',
                 default_give = self._limits.safety_tries)
-        #self.consecutive_failure_fuel = FuelCounter('consecutive failures',
-        #        default_give = self._limits.max_consecutive_failures)
 
     def _reset(self, n: BranchStateNode):
         self._n = n
@@ -131,12 +129,30 @@ class BranchState:
         if self.plans is None:
             self.init_plans()
 
+        consecutive_failure_fuel = FuelCounter('consecutive failures',
+            default_give = self._limits.max_consecutive_failures)
+
         while not self.safety_tries_fuel.is_empty():
+            old_fuel = self.safety_tries_fuel.fuel
+            old_unsafe_count = self._w.count_unsafe2(self.code)
+
             try:
                 self.agent_safety()
+                consecutive_failure_fuel.give()
             except CrispError:
+                consecutive_failure_fuel.use()
                 # Keep trying as long as fuel remains.
                 pass
 
             self.accept()
+
+            new_unsafe_count = self._w.count_unsafe2(self.code)
+            if new_unsafe_count < old_unsafe_count:
+                # Success - refill `consecutive_failure_fuel`.
+                consecutive_failure_fuel.give()
+            else:
+                consecutive_failure_fuel.use()
+
+            assert self.safety_tries_fuel.fuel < old_fuel, \
+                'safety loop ran without consuming fuel (infinite loop)'
 

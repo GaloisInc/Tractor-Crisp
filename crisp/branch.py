@@ -78,7 +78,7 @@ class BranchState:
 
         self.c_code = self.mvir.node(n.c_code)
         self.code = self.mvir.node(n.code)
-        self.plans = self.mvir.node(n.plans)
+        self.plans = self.mvir.node(n.plans) if n.plans is not None else None
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
         assert n.node_id() == self._snapshot().node_id()
@@ -123,7 +123,14 @@ class BranchState:
             raise CrispError("new code increased unsafety", op_unsafe)
 
     @step
+    def init_plans(self):
+        _, self.plans = self._w.do_safety_plan_agent(n_code, n_c_code)
+
+    @step
     def safety_loop(self):
+        if self.plans is None:
+            self.init_plans()
+
         while not self.safety_tries_fuel.is_empty():
             try:
                 self.agent_safety()

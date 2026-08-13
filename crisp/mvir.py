@@ -949,6 +949,33 @@ class WorkflowStepNode(Node):
     output = property(lambda self: self._metadata['output'])
     timestamp = property(lambda self: self._metadata['timestamp'])
 
+class BranchStateNode(Node):
+    KIND = 'branch_state'
+    c_code: Metadata[NodeId]
+    code: Metadata[NodeId]
+    plans: Metadata[NodeId]
+
+    c_code = property(lambda self: self._metadata['c_code'])
+    code = property(lambda self: self._metadata['code'])
+    plans = property(lambda self: self._metadata['plans'])
+
+class BranchStepNode(Node):
+    KIND = 'branch_step'
+    name: Metadata[str]
+    old_state: Metadata[NodeId]
+    new_state: Metadata[Optional[NodeId]]
+    fail_msg: Metadata[Optional[str]]
+    children: Metadata[list[NodeId]]
+    start_time: Metadata[datetime]
+    end_time: Metadata[datetime]
+
+    name = property(lambda self: self._metadata['name'])
+    old_state = property(lambda self: self._metadata['old_state'])
+    new_state = property(lambda self: self._metadata['new_state'])
+    fail_msg = property(lambda self: self._metadata['fail_msg'])
+    children = property(lambda self: self._metadata['children'])
+    start_time = property(lambda self: self._metadata['start_time'])
+    end_time = property(lambda self: self._metadata['end_time'])
 
 NODE_CLASSES = [
     FileNode,
@@ -976,6 +1003,9 @@ NODE_CLASSES = [
 
     WorkflowStepInputsNode,
     WorkflowStepNode,
+
+    BranchStateNode,
+    BranchStepNode,
 ]
 
 def _build_node_kind_map(classes):

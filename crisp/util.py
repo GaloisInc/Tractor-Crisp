@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import sys
 import time
 
@@ -96,3 +97,26 @@ class ChunkPrinter:
 
     def flush(self):
         sys.stdout.flush()
+
+
+@dataclass(frozen = True)
+class FuelLimits:
+    # Try at most this many times in total to make the code safe.
+    safety_tries: int
+
+    # Bail out if the LLM fails to improve safety of the code for several
+    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
+    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
+    # progress for 3 iterations in a row, on the assumption that the LLM has
+    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
+    max_consecutive_failures: int
+
+    # Give the agent this many iterations to fix its current target before
+    # switching to a new target.  If it succeeds at fixing the current target,
+    # the outer loop will pick a new target immediately instead.
+    safety_tries_per_target: int
+
+    # Give the agent this many iterations within each file before swiching to a
+    # new file.
+    safety_tries_per_file: int
+

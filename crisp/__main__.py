@@ -749,7 +749,7 @@ def do_branch_main(args, cfg):
         mvir,
         c_code = n_c_code.node_id(),
         code = n_code.node_id(),
-        plans = TreeNode.new(mvir, files = {}).node_id(),
+        plans = None,
     )
     br = BranchState(w, n_branch, limits)
     br.accept()

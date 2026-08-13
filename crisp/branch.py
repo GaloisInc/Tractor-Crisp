@@ -4,6 +4,7 @@ import functools
 
 from .error import CrispError
 from .mvir import BranchStateNode, BranchStepNode
+from .rand_target import PickTarget
 from .util import FuelLimits
 from .workflow import Workflow, FuelCounter, AgentTargetOther
 
@@ -97,16 +98,16 @@ class BranchState:
 
 
     @step
-    def agent_safety_unchecked(self):
+    def agent_safety_unchecked(self, target):
         self.safety_tries_fuel.use()
         self.code, self.plans = self._w.agent_safety(self.code, self.c_code, self.plans,
-            target_goal = AgentTargetOther())
+            target_goal = target)
 
     @step
-    def agent_safety(self):
+    def agent_safety(self, target):
         old_code = self.code
 
-        self.agent_safety_unchecked()
+        self.agent_safety_unchecked(target)
 
         if self.code is None:
             raise CrispError("agent failed to produce any code")
@@ -129,6 +130,8 @@ class BranchState:
         if self.plans is None:
             self.init_plans()
 
+        pick_target = PickTarget(self._limits)
+
         consecutive_failure_fuel = FuelCounter('consecutive failures',
             default_give = self._limits.max_consecutive_failures)
 
@@ -136,8 +139,10 @@ class BranchState:
             old_fuel = self.safety_tries_fuel.fuel
             old_unsafe_count = self._w.count_unsafe2(self.code)
 
+            target = pick_target.current_target_goal(self._w, self.code)
+
             try:
-                self.agent_safety()
+                self.agent_safety(target)
                 consecutive_failure_fuel.give()
             except CrispError:
                 consecutive_failure_fuel.use()

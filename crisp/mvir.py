@@ -953,7 +953,7 @@ class BranchStateNode(Node):
     KIND = 'branch_state'
     c_code: Metadata[NodeId]
     code: Metadata[NodeId]
-    plans: Metadata[NodeId]
+    plans: Metadata[Optional[NodeId]]
 
     c_code = property(lambda self: self._metadata['c_code'])
     code = property(lambda self: self._metadata['code'])

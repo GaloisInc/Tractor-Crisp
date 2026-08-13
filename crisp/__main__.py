@@ -20,12 +20,16 @@ import traceback
 
 from . import analysis, inline_errors, llm, prompts, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
+from .branch import BranchState
 from .config import Config
 from .error import CrispError
-from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
-    CodexAgentOpNode
+from .mvir import (
+    MVIR, NodeId, FileNode, TreeNode, LlmOpNode, TestResultNode,
+    CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, CodexAgentOpNode,
+    BranchStateNode
+)
 from .sandbox import run_sandbox
+from .util import FuelLimits
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
@@ -88,6 +92,18 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
+
+    branch_main = sub.add_parser('branch-main')
+    branch_main.add_argument('node', nargs='?', default='c_code')
+    branch_main.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+            "requires --llm-mode=agent or similar")
+
+    branch_safety_loop = sub.add_parser('branch-safety-loop')
+    branch_safety_loop.add_argument('node', nargs='?', default='current_branch')
+    branch_safety_loop.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+            "requires --llm-mode=agent or similar")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -227,11 +243,8 @@ def parse_node_id(mvir, s):
     return node_id
 
 
-def do_main(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    c_code_node_id = parse_node_id_arg(mvir, args.node)
+def main_common(args, cfg, mvir, w, c_code_str):
+    c_code_node_id = parse_node_id_arg(mvir, c_code_str)
     n_c_code = mvir.node(c_code_node_id)
 
     paths = (Path(path) for path in n_c_code.files.keys())
@@ -252,16 +265,16 @@ def do_main(args, cfg):
     if n_code is None:
         n_code = w.transpile(n_c_code)
     if n_code is None:
-        return
+        return None, None
     w.accept(n_code, ('main', 'transpile'))
 
     n_code = w.split_ffi(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after split_ffi')
-        return
+        return None, None
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
-        return
+        return None, None
     w.accept(n_code, ('main', 'split_ffi'))
 
     # Auto-fix compiler warnings (e.g. unused imports) before the safety loop, so
@@ -269,11 +282,23 @@ def do_main(args, cfg):
     n_code = w.cargo_fix(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after cargo fix')
-        return
+        return None, None
     if not w.test(n_code, n_c_code):
         print('error: tests failed after cargo fix')
-        return
+        return None, None
     w.accept(n_code, ('main', 'cargo_fix'))
+
+    return n_c_code, n_code
+
+
+def do_main(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    n_c_code, n_code = main_common(args, cfg, mvir, w, args.node)
+
+    if n_code is None:
+        return
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
@@ -320,27 +345,6 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
                 + ', '.join(str(ie.node_id) for ie in matches)
             )
 
-
-@dataclass(frozen = True)
-class FuelLimits:
-    # Try at most this many times in total to make the code safe.
-    safety_tries: int
-
-    # Bail out if the LLM fails to improve safety of the code for several
-    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
-    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
-    # progress for 3 iterations in a row, on the assumption that the LLM has
-    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
-    max_consecutive_failures: int
-
-    # Give the agent this many iterations to fix its current target before
-    # switching to a new target.  If it succeeds at fixing the current target,
-    # the outer loop will pick a new target immediately instead.
-    safety_tries_per_target: int
-
-    # Give the agent this many iterations within each file before swiching to a
-    # new file.
-    safety_tries_per_file: int
 
 def total_code_size(mvir, n_code):
     total = 0
@@ -729,6 +733,42 @@ def do_safety_loop(args, cfg):
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 
+def do_branch_main(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    n_c_code, n_code = main_common(args, cfg, mvir, w, args.node)
+
+    if n_code is None:
+        return
+
+    limits = get_fuel_limits(mvir, n_code)
+    print(f'limits = {limits!r}')
+
+    n_branch = BranchStateNode.new(
+        mvir,
+        c_code = n_c_code.node_id(),
+        code = n_code.node_id(),
+        plans = TreeNode.new(mvir, files = {}).node_id(),
+    )
+    br = BranchState(w, n_branch, limits)
+    br.accept()
+    br.safety_loop()
+
+def do_branch_safety_loop(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    branch_node_id = parse_node_id_arg(mvir, args.node)
+    n_branch = mvir.node(branch_node_id)
+
+    limits = get_fuel_limits(mvir, mvir.node(n_branch.code))
+    print(f'limits = {limits!r}')
+
+    br = BranchState(w, n_branch, limits)
+    br.safety_loop()
+
+
 def repl_locals(args, cfg, mvir, w):
     dct = dict(
         cfg = cfg,
@@ -920,6 +960,10 @@ def main():
         do_main(args, cfg)
     elif args.cmd == 'safety-loop':
         do_safety_loop(args, cfg)
+    elif args.cmd == 'branch-main':
+        do_branch_main(args, cfg)
+    elif args.cmd == 'branch-safety-loop':
+        do_branch_safety_loop(args, cfg)
     elif args.cmd == 'repl':
         do_repl(args, cfg)
     elif args.cmd == 'eval':

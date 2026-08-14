@@ -219,7 +219,7 @@ class MVIR:
         self._nodes = WeakValueDictionary()
         self._stamp_mtime_cache = {}
 
-    def _node_path(self, node_id):
+    def _node_path(self, node_id: NodeId):
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()
         return os.path.join(self._path, 'nodes', first, rest)
 
@@ -275,7 +275,7 @@ class MVIR:
                 except ValueError as e:
                     print('warning: unknown file %r in nodes directory (%s)' % (file_path, e))
 
-    def node(self, node_id):
+    def node(self, node_id: NodeId):
         return Node._get(self, node_id)
 
     def _tag_path(self, name):

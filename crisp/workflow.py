@@ -343,6 +343,7 @@ class Workflow:
     @step
     def cc_custom(self, c_code: TreeNode, artifact: str | int | None = None) -> FileNode:
         n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
+        assert n_op_cc.compile_commands is not None
         compile_commands = self.mvir.node(n_op_cc.compile_commands)
         return compile_commands
 

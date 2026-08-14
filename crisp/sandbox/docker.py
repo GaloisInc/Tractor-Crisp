@@ -47,6 +47,7 @@ class WorkContainer:
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
+        assert self.container is not None
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
@@ -76,6 +77,7 @@ class WorkContainer:
         self._checkout_tar_file(tar_io.getvalue())
 
     def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+        assert self.container is not None
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -109,6 +111,7 @@ class WorkContainer:
         return TreeNode.new(self.mvir, files=files)
 
     def commit_file(self, rel_path):
+        assert self.container is not None
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -129,6 +132,7 @@ class WorkContainer:
         return os.path.join('/root/work', *args, **kwargs)
 
     def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
+        assert self.container is not None
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
@@ -191,7 +195,7 @@ def run_work_container(cfg, mvir):
     if not KEEP_WORK_CONTAINER:
         wc.stop()
     else:
-        print('keeping work container %r' % (wc.container.name,))
+        print('keeping work container %r' % (wc.container.name if wc.container else None,))
 
 def set_keep_work_container(keep):
     global KEEP_WORK_CONTAINER

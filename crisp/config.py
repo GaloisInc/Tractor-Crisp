@@ -123,7 +123,7 @@ class TranspileConfig(ConfigBase):
             for art in self.artifacts:
                 if art.name == key:
                     return art
-            raise KeyError(f'artifact {name!r} not found')
+            raise KeyError(f'artifact {key!r} not found')
 
 @dataclass(frozen = True)
 class TranspileArtifactConfig(ConfigBase):

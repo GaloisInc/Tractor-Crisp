@@ -102,6 +102,7 @@ class WorkContainer:
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
                 f = t.extractfile(info)
+                assert f is not None
                 dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
@@ -114,10 +115,12 @@ class WorkContainer:
         tar_io = io.BytesIO(tar_bytes)
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             info = t.next()
+            assert info is not None
             expect_name = os.path.basename(rel_path)
             assert info.name == expect_name, \
                     'expected tar file to contain %r, but got %r' % (expect_name, info.name)
             f = t.extractfile(info)
+            assert f is not None
             n = FileNode.new(self.mvir, f.read())
             assert t.next() is None, 'expected only one file in commit_file output'
             return n
@@ -173,6 +176,7 @@ class WorkContainer:
 
         logs = bytes(acc)
         exit_code = self.client.api.exec_inspect(exec_id).get('ExitCode')
+        assert exit_code is not None
 
         return exit_code, logs
 

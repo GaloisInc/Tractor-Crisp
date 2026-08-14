@@ -392,7 +392,7 @@ class MVIR:
                     with open(path, 'ab') as f:
                         cbor.dump(entry.to_cbor(), f)
 
-        self._touch_stamp('index', processed_nodes)
+        self._touch_stamp('index', bytes(processed_nodes))
 
     def _index_path(self, node_id):
         first, rest = node_id.raw[:1].hex(), node_id.raw[1:].hex()

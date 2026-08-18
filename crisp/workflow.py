@@ -339,16 +339,6 @@ class Workflow:
                     print(f'warning: on-accept hook cwd: {os.getcwd()}', file=sys.stderr)
 
     @step
-    def cc_cmake(self, c_code: TreeNode) -> FileNode:
-        n_op_cc = self.cc_cmake_op(c_code)
-        compile_commands = self.mvir.node(n_op_cc.compile_commands)
-        return compile_commands
-
-    @step
-    def cc_cmake_op(self, c_code: TreeNode) -> CompileCommandsOpNode:
-        return analysis.cc_cmake(self.cfg, self.mvir, c_code)
-
-    @step
     def cc_custom(self, c_code: TreeNode, artifact: str | int | None = None) -> FileNode:
         n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
         compile_commands = self.mvir.node(n_op_cc.compile_commands)

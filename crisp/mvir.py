@@ -171,6 +171,8 @@ def _dataclass_from_cbor(cls, raw):
     field_tys = typing.get_type_hints(cls)
     expect_ty = tuple[*field_tys.values()]
     values = from_cbor(expect_ty, raw)
+    assert values is not None
+    assert not isinstance(values, datetime)
     return cls(*values)
 
 

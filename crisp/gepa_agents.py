@@ -159,7 +159,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
     def __init__(
         self,
-        evaluator: Any = ResponseEvaluator()
+        evaluator: ResponseEvaluator
     ):
         self.evaluator = evaluator
 
@@ -300,7 +300,7 @@ def do_gepa(
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
     # Instantiate GEPA adapter
-    adapter = RustAdapter()
+    adapter = RustAdapter(evaluator = ResponseEvaluator())
 
     # Run GEPA optimization
     gepa_result = gepa.optimize(

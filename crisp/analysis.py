@@ -9,7 +9,7 @@ import toml
 import typing
 
 from . import inline_errors as inline_errors_module
-from .config import Config
+from .config import Config, TranspileArtifactConfig
 from .error import CrispError
 from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,

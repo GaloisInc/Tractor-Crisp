@@ -327,12 +327,12 @@ def cc_custom(
         cd_cmd = shlex.join(('cd', work_dir))
         cmds = []
 
-        for cmd in art.configure_cmds:
+        for cmd in art.configure_cmds or []:
             # `cmd` is a string set by the user; we assume it's already
             # properly quoted.
             cmds.append(['sh', '-c', f'{cd_cmd} && {cmd}'])
 
-        for cmd in art.build_cmds:
+        for cmd in art.build_cmds or []:
             # `cmd` is a string set by the user; we assume it's already
             # properly quoted.  We wrap the command in `sh -c` when passing it
             # to `bear` because `bear` may scrub `--` entries from the command

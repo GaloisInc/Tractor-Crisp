@@ -211,6 +211,8 @@ Your current target is the `{func_name}` function, along with any similar or clo
 '''.strip()
 
 class AgentTarget:
+    PROMPT_FMT: str
+    __dataclass_fields__: typing.ClassVar
     def prompt(self):
         return self.PROMPT_FMT.format(**dataclasses.asdict(self))
 

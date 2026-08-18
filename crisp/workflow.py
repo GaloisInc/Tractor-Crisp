@@ -417,7 +417,7 @@ class Workflow:
         src_loc_annotations: bool = False,
         refactor_transforms: tuple[str, ...] = (),
         hayroll: bool = False,
-    ) -> TreeNode:
+    ) -> TreeNode | None:
         cfg, mvir = self.cfg, self.mvir
 
         # Count the number of artifacts to transpile.  This excludes artifacts

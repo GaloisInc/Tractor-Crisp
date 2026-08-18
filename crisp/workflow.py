@@ -23,7 +23,7 @@ from .mvir import (
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, InlineErrorsOpNode
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -947,7 +947,7 @@ class Workflow:
         return self.mvir.node(n.new_code)
 
     @step
-    def inline_errors_op(self, code: TreeNode) -> CargoCheckJsonAnalysisNode:
+    def inline_errors_op(self, code: TreeNode) -> InlineErrorsOpNode:
         n_check_op = self.cargo_check_json_op(code)
         n_check_json = self.mvir.node(n_check_op.json)
         n = analysis.inline_errors(self.cfg, self.mvir, code, n_check_json)

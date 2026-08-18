@@ -28,16 +28,6 @@ from .mvir import (
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
-
-# Whether to cache the results of workflow steps.  This is more aggressive than
-# the built-in caching of the `analysis` module because it will even cache the
-# results of nondeterministic steps like LLM calls.  This is useful during
-# development, particularly when working on a step later in the pipeline,
-# because it allows skipping over all of the prior steps and going directly to
-# the step of interest.
-USE_WORKFLOW_CACHE = int(os.environ.get('CRISP_USE_WORKFLOW_CACHE') or 0) != 0
-
-
 LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
@@ -300,11 +290,6 @@ def _print_step_value(prefix: str, x: Any):
 def step(f):
     name = f.__name__
     sig = inspect.signature(f)
-    ann = typing.get_type_hints(f)
-    return_type = ann['return']
-    can_cache = isinstance(return_type, type) and issubclass(return_type, Node)
-    if not USE_WORKFLOW_CACHE:
-        can_cache = False
 
     @functools.wraps(f)
     def g(self, *args, **kwargs):
@@ -318,42 +303,11 @@ def step(f):
                 continue
             _print_step_value(arg_name, val)
 
-        mvir = self.mvir
-        n_step = None
-        if can_cache:
-            # Look for a cached node for this step.
-            inputs = [(k, v.node_id().to_cbor() if isinstance(v, Node) else v)
-                      for k, v in bound.arguments.items()
-                      if not isinstance(v, Workflow)]
-            n_inputs = WorkflowStepInputsNode.new(
-                    mvir, func_name = name, body = cbor.dumps(inputs))
-
-            for ie in mvir.index(n_inputs.node_id()):
-                if ie.kind == 'workflow_step' and ie.key == 'inputs':
-                    n = mvir.node(ie.node_id)
-                    if n_step is None or n.timestamp > n_step.timestamp:
-                        n_step = n
-
-        if n_step is not None:
-            print(f'use workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
-            result = mvir.node(n_step.output)
-        else:
-            self._step_depth += 1
-            try:
-                result = f(self, *args, **kwargs)
-            finally:
-                self._step_depth -= 1
-
-            if can_cache:
-                # Create a cached node for this step, for future use.
-                n_step = WorkflowStepNode.new(
-                    mvir,
-                    inputs = n_inputs.node_id(),
-                    output = result.node_id(),
-                    timestamp = datetime.now(),
-                )
-                mvir.set_tag('workflow_cache', n_step, name)
-                print(f'save workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
+        self._step_depth += 1
+        try:
+            result = f(self, *args, **kwargs)
+        finally:
+            self._step_depth -= 1
 
         if result is not None:
             _print_step_value(name + ' result', result)

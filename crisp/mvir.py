@@ -7,6 +7,7 @@ import os
 import stat
 import tempfile
 import typing
+from .error import CrispError
 from typing import Any, Callable, ClassVar, Optional, Annotated, TypeVar
 from types import NoneType
 from weakref import WeakValueDictionary
@@ -303,15 +304,20 @@ class MVIR:
         path = self._tag_path(name)
         return os.path.exists(path)
 
-    def tag_reflog(self, name):
+    def tag_reflog(self, name) -> list[ReflogEntry]:
         path = self._tag_path(name)
         reflog = []
-        size = os.stat(path).st_size
-        with open(path, 'rb') as f:
-            while f.tell() < size:
-                timestamp, reason = from_cbor(tuple[datetime, Any], cbor.load(f))
-                node_id = NodeId(f.read(NodeId.LENGTH))
-                reflog.append(ReflogEntry(node_id, timestamp, reason))
+        try:
+            with open(path, 'rb') as f:
+                while True:
+                    timestamp, reason = from_cbor(tuple[datetime, Any], cbor.load(f))
+                    data = f.read(NodeId.LENGTH)
+                    if len(data) == 0:
+                        break
+                    node_id = NodeId(data)
+                    reflog.append(ReflogEntry(node_id, timestamp, reason))
+        except FileNotFoundError:
+            raise CrispError(f"tag {name} does not exist")
         return reflog
 
     def _stamp_path(self, name):

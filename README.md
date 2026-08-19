@@ -266,15 +266,21 @@ run_gepa_eval_on_prompt(
 ```
 
 ## Running GEPA for joint prompt optimization of agents
-Currently, the following prompts can be optimized. All the calls are referenced w.r.t the `crisp/gepa_agent.py::run_task()::workflow` variable.
+In the following tables, all calls are referenced w.r.t the `crisp/gepa_agent.py::run_task()::workflow` variable.
+
+Currently, the following prompts can be optimized:
+| Prompt type | Used for | Called in | Seed / unoptimized prompt |
+| -- | -- | -- | -- |
+| `agent_safety_prompt` | Telling the agent to execute `SAFETY_PLAN.md` | `workflow.do_safety_step_agent()` (which calls `self.agent_safety()`) | `crisp/workflow.py::AGENT_SAFETY_PROMPT` |
+| `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
+
+In future, we may also optimize the following prompts. Currently, they are not required, and hence not supported.
 | Prompt type | Used for | Called in | Seed / unoptimized prompt |
 | -- | -- | -- | -- |
 | `agent_plan_prompt` | Generating the agent's `SAFETY_PLAN.md` | `workflow.do_safety_plan_agent()` | `crisp/prompts/agent_plan.md` |
-| `agent_safety_prompt` | Telling the agent to execute `SAFETY_PLAN.md` | `workflow.do_safety_step_agent()` (which calls `self.agent_safety()`) | `crisp/workflow.py::AGENT_SAFETY_PROMPT` |
-| `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
 | `ffi_entry_point_rules` | Part of `SAFETY_PLAN.md` and FFI review instructions | `workflow.do_safety_plan_agent()`, and `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_entry_point_rules.md` |
 
-Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
+Run optimization as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
 ```python
 from crisp.gepa_agents import do_gepa as do_gepa_agents
 

@@ -2,9 +2,11 @@
 Rewrite operations using AI agent tools, such as codex-cli
 """
 
+from dataclasses import dataclass
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Sequence
 
@@ -30,42 +32,41 @@ PLANNING_CODEX_AGENTS = (
     'strings_analyst',
 )
 
-_SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
-
 # Print the warning in red so it stands out
 WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
     "the sandbox and could theoretically be leaked " \
     "by commands run by the agent; please make sure " \
     "to set limits on its usage.\033[0m"
 
-# Turn the sandbox contents into the baseline commit of a small local repo
-GIT_BASELINE_CMD = (
-    'git init -q && git add --all && '
-    'git -c user.name=CRISP -c user.email=crisp@localhost '
-    'commit --quiet -m "CRISP sandbox baseline"')
+
+@dataclass(frozen = True)
+class Input:
+    """
+    An input to the agent run.  This may be a single file (represented as
+    `FileNode`, `bytes`, or `str`) or a complete `TreeNode`.
+    """
+    item: TreeNode | FileNode | bytes | str
+    # Where to put the input.  For single-file inputs, the file is created at
+    # this path; for `TreeNode` inputs, the tree is checked out under this
+    # directory.
+    path: str = '.'
+    # If set, add `path` to `.gitignore`.
+    git_ignore: bool = False
+    # If set, exclude this input from the `inputs` field of the `CodexAgentOpNode`.
+    exclude_from_mvir: bool = False
 
 
 def _normalize_run_args(
-    extra_code: TreeNode | list[TreeNode],
+    extra_code: TreeNode | dict[str, TreeNode],
     env: dict | None,
 ) -> tuple[list[TreeNode], dict]:
     """Shared argument normalization for the codex entry points below."""
-    if 'CRISP_API_KEY' in os.environ:
-        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
     if isinstance(extra_code, TreeNode):
-        extra_code = [extra_code]
+        extra_code = {'extra': extra_code}
     return extra_code, {} if env is None else env
 
 
-def _setup_codex_home(sb, env: dict, codex_login: bool) -> str:
-    """Point CODEX_HOME at the sandbox `.codex/` dir; inject auth if requested."""
-    if codex_login:
-        print(WARNING_TEMPLATE.format('codex\'s login session (`auth.json`)'))
-        _inject_codex_auth(sb)
-    codex_dir = sb.join('.codex')
-    env.setdefault('CODEX_HOME', codex_dir)
-    return codex_dir
-
+_SNAPSHOT_SUFFIX = re.compile(r"^(?P<alias>.+)-\d{4}-\d{2}-\d{2}$")
 
 def _snapshot_to_family_alias(model: str) -> str:
     """
@@ -120,12 +121,8 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
     cmd += args
     return cmd
 
-def _checkout_bytes(sb, mvir: MVIR, rel_path: str, body: bytes):
-    """Add an ephemeral file to any supported CRISP sandbox."""
-    sb.checkout_file(rel_path, FileNode.new(mvir, body))
 
-
-def _inject_codex_auth(sb):
+def _codex_auth_input() -> Input:
     """Copy the host's ``auth.json`` into the container's work
     directory so that codex-cli can authenticate using the host's
     ``codex login`` session.
@@ -148,14 +145,16 @@ def _inject_codex_auth(sb):
     with open(host_auth, 'rb') as f:
         auth_bytes = f.read()
 
-    # Do not create an MVIR FileNode for credentials: that would persist the
-    # secret in CRISP's content-addressed storage.
-    sb.checkout_file_untracked('.codex/auth.json', auth_bytes)
+    return Input(
+        auth_bytes,
+        path = '.codex/auth.json',
+        # Avoid persisting auth secrets in MVIR.
+        exclude_from_mvir = True,
+    )
 
 
-def _inject_codex_agents(
-    sb,
-    mvir: MVIR,
+def _add_codex_agent_inputs(
+    inputs: dict[str, Input],
     agent_names: Sequence[str],
 ):
     """Install selected agent profiles from `codex/` into the sandbox's
@@ -170,95 +169,142 @@ def _inject_codex_agents(
             f'unknown Codex agent profile(s): {", ".join(unknown)}')
 
     constraints = _CODEX_ASSET_DIR / _CODEX_SAFETY_CONSTRAINTS
-    _checkout_bytes(
-        sb,
-        mvir,
-        f'.codex/{_CODEX_SAFETY_CONSTRAINTS}',
+    inputs['agent_safety_constraints'] = Input(
         constraints.read_bytes(),
+        path = f'.codex/{_CODEX_SAFETY_CONSTRAINTS}',
     )
     for name in agent_names:
         profile = available[name]
-        _checkout_bytes(
-            sb,
-            mvir,
-            f'.codex/agents/{profile.name}',
+        inputs[f'agent_{profile.name}'] = Input(
             profile.read_bytes(),
+            path = f'.codex/agents/{profile.name}',
         )
 
 
-def run_rewrite(
+def run_agent(
     cfg: Config,
     mvir: MVIR,
-    prompt: str,
-    model: str,
-    input_code: TreeNode,
-    extra_code: TreeNode | list[TreeNode] = [],
-    planning_files: TreeNode | None = None,
+    inputs: dict[str, Input],
+    codex_cmd: list[str],
+    output_filters: dict[str, Callable[[str], bool]],
     cwd: str = '.',
+    init_git: bool = True,
+    setup_cmds: list[list[str]] = [],
     clean_cmds: list[list[str]] = [],
-    codex_login: bool = False,
     env: dict | None = None,
-    find_unsafe2_json_dir: str | None = None,
-    codex_agents: Sequence[str] = (),
-) -> tuple[TreeNode, TreeNode]:
-    extra_code, env = _normalize_run_args(extra_code, env)
+) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
+    """
+    Run the agent on some input files to produce some outputs.
+
+    For each `(path, item)` value in `inputs`, this checks out `item` at `path`
+    within the sandbox.  It then runs the agent with the provided `prompt` and
+    `model`.  Finally, for each `name: filter` pair in `output_filters`, it
+    returns a dict mapping `name` to a `TreeNode` of all the files matching the
+    corresponding `filter`.  For example, if `output_filters` consists of
+    `{'code': lambda path: path.endswith('.rs')}`, then the return value of
+    this function will be `{'code': tree}` where `tree` contains all the
+    outputs with the `.rs` extension.
+
+    The keys used for `inputs` are not significant; they're only present so
+    that the resulting MVIR node will include human-readable names.
+
+    Args:
+    - inputs: `Input` objects describing files to check out into the sandbox.
+      The `str` keys are recorded in the MVIR op node for debugging purposes
+      but are otherwise irrelevant.
+    - codex_cmd: The main command to run.
+    - output_filters: After extracting files from the sandbox, these filters
+      are used to gather files into meaningful outputs.  For each filter, the
+      `dict` returned by `run_agent` will have a `TreeNode` containing the
+      output files that match the filter.  If a file matches multiple filters,
+      it will appear in multiple outputs.  The `str` keys are recorded in the
+      MVIR op node for debugging purposes but are otherwise irrelevant.
+    - init_git: If `True`, set up a git repository before running `codex_cmd`.
+    - setup_cmds: Extra setup commands to run before `codex_cmd`.  These happen
+      after initializing git, if `init_git` is also set.
+    - clean_cmds: Extra cleanup commands to run after `codex_cmd` but before
+      extracting outputs.
+    - cwd: Working directory (relative to sandbox root) used for all commands.
+    """
+
+    if env is None:
+        env = {}
+    else:
+        env = env.copy()
+
+    if 'CRISP_API_KEY' in os.environ:
+        print(WARNING_TEMPLATE.format('CRISP_API_KEY'))
+        # Env var is set automatically inside `sandbox.run()` if present.
+        # TODO: Set it here instead.
 
     with run_sandbox(cfg, mvir) as sb:
-        sb.checkout(input_code)
-        for n in extra_code:
-            sb.checkout(n)
-        if planning_files is not None:
-            sb.checkout(planning_files)
-
-        # Each agent turn gets a fresh sandbox, so make the entire sandbox
-        # (including input_code, unsafety JSON, and planning_files) the baseline
-        # of a small local repository.  The repository is rooted at `.` even
-        # when Codex runs in a narrower `cwd`; Git will find the parent repo.
-        # This lets the agent use ordinary Git commands (especially `git diff`)
-        # to inspect its edits.  `git commit -a` alone does not include the
-        # initially untracked files, hence the explicit add before creating the
-        # baseline commit.
         gitignore_lines = [
             '# Cargo build output',
             'target/',
             '# Codex home; may contain auth.json',
             '.codex/',
         ]
-        if find_unsafe2_json_dir is not None:
-            gitignore_lines.extend([
-                '# CRISP unsafe-analysis results',
-                f'{find_unsafe2_json_dir.rstrip("/")}/',
-            ])
-        gitignore_file = FileNode.new(
-            mvir, '\n'.join(gitignore_lines) + '\n')
-        sb.checkout_file('.gitignore', gitignore_file)
-        exit_code, logs = sb.run(GIT_BASELINE_CMD, cwd='.', shell=True, stream=True)
 
-        if exit_code == 0:
-            _inject_codex_agents(sb, mvir, codex_agents)
+        for k,v in env.items():
+            if '%%SANDBOX_ROOT%%' in v:
+                env[k] = v.replace('%%SANDBOX_ROOT%%', sb.join('.'))
 
-            codex_dir = _setup_codex_home(sb, env, codex_login)
-            mkdir_codex = ['mkdir', '-p', codex_dir]
+        # Populate the sandbox with inputs.
+        print(inputs)
+        for name, i in inputs.items():
+            if isinstance(i.item, TreeNode):
+                sb.checkout(i.item, rel_path = i.path)
+            elif isinstance(i.item, FileNode):
+                sb.checkout_file(i.path, i.item)
+            elif isinstance(i.item, bytes):
+                sb.checkout_file_untracked(i.path, i.item)
+            elif isinstance(i.item, str):
+                sb.checkout_file_untracked(i.path, i.item.encode('utf-8'))
+            else:
+                raise TypeError('expected TreeNode | FileNode | bytes | str, '
+                    f'but got {type(i.item)} for {i.path!r}')
 
-            codex_cmd = _codex_command(cfg, 'exec', [
-                '--dangerously-bypass-approvals-and-sandbox',
-                '--skip-git-repo-check',
-                prompt,
-            ], codex_login=codex_login, model=model)
-            print(codex_cmd)
-            all_cmds = [mkdir_codex, codex_cmd] + clean_cmds
+            if i.git_ignore:
+                gitignore_lines.extend((
+                    f'# Input {name!r}',
+                    i.path,
+                ))
 
-            if find_unsafe2_json_dir is not None:
-                env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
+        # Initialize a git repo in `.`.  This lets the agent use `git diff` to
+        # examine its changes so far.
+        sb.checkout_file_untracked('.gitignore',
+            '\n'.join(gitignore_lines).encode('utf-8'))
 
-            for cmd in all_cmds:
-                exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
-                logs += logs2
+        # Run the agent.
+        codex_dir = sb.join('.codex')
+        env.setdefault('CODEX_HOME', codex_dir)
 
-                # TODO: ensure API key doesn't get included in the AgentOpNode
-                if exit_code != 0:
-                    break
+        all_cmds = []
+        if init_git:
+            all_cmds += [
+                ['git', 'init', '--quiet'],
+                ['git', 'config', 'set', 'user.name', 'CRISP'],
+                ['git', 'config', 'set', 'user.email', 'crisp@localhost'],
+                ['git', 'add', '--all'],
+                ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
+            ]
+        all_cmds += setup_cmds
+        all_cmds += [
+            ['mkdir', '-p', codex_dir],
+            codex_cmd,
+        ]
+        all_cmds += clean_cmds
+        all_cmds += [ ['echo', 'DONE WITH AGENT!!!'], ['sleep', '2000'], ]
 
+        logs = None
+        for cmd in all_cmds:
+            print(f'run: {shlex.join(cmd)}')
+            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
+            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
+            if exit_code != 0:
+                break
+
+        # Gather raw output files.
         ignore_lines = [
             '.git/',
             '__pycache__/',
@@ -272,28 +318,31 @@ def run_rewrite(
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
         raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
 
-    output_files = {}
-    json_session_files = []
-    output_plan_files = {}
-    for path, node_id in raw_output_files.files.items():
-        if any(path in n.files for n in extra_code):
-            # This file came from the C code used for testing.  Ignore it.
-            pass
-        elif path in input_code.files:
-            # This is a modified copy of an original input file.
-            output_files[path] = node_id
-        elif path.endswith('.rs'):
-            # In some cases the agent might create a new Rust file, such as
-            # when refactoring to create a new module.  Add these files to the
-            # main output.
-            output_files[path] = node_id
-        elif path.startswith('.codex/sessions/') and path.endswith('.jsonl'):
-            # This is a Codex session log file.
-            json_session_files.append(node_id)
-        elif Path(path).name in ['PLAN.md', 'SAFETY_PLAN.md']:
-            # if the agent created a SAFETY_PLAN.md file, carry it over to future steps but
-            # don't include it in the main output since it's not source code.
-            output_plan_files[path] = node_id
+    # Gather input `NodeId`s.
+    input_node_ids = {}
+    for name, i in inputs.items():
+        if i.exclude_from_mvir:
+            continue
+        if isinstance(i.item, (TreeNode, FileNode)):
+            input_node_ids[name] = i.item.node_id()
+        elif isinstance(i.item, (bytes, str)):
+            input_node_ids[name] = FileNode.new(mvir, i.item).node_id()
+        else:
+            assert False, f'bad input type {type(i.item)} (should have been caught above)'
+
+    # Group files into outputs according to `output_filters`.
+    outputs = {}
+    for key, filter_func in output_filters.items():
+        files = {}
+        for path, node_id in raw_output_files.files.items():
+            if filter_func(path):
+                files[path] = node_id
+        outputs[key] = TreeNode.new(mvir, files = files)
+
+    # Special handling for JSON session files.  We expect to find at most one
+    # log from the agent invocation.
+    json_session_files = [node_id for path, node_id in raw_output_files.files.items()
+        if path.startswith('.codex/sessions/') and path.endswith('.jsonl')]
 
     # Set the `json_session` metadata field to the session file only if it's
     # unique.  In case of ambiguity, we leave this blank, but any files that
@@ -303,24 +352,86 @@ def run_rewrite(
     else:
         json_session_node_id = FileNode.new(mvir, '').node_id()
 
-    output_code = TreeNode.new(mvir, files=output_files)
-    output_plans = TreeNode.new(mvir, files=output_plan_files)
     n_op = CodexAgentOpNode.new(mvir,
-        old_code = input_code.node_id(),
-        new_code = output_code.node_id(),
-        raw_prompt = FileNode.new(mvir, prompt).node_id(),
+        inputs = input_node_ids,
+        outputs = {k: v.node_id() for k,v in outputs.items()},
+        cmds = all_cmds,
         exit_code = exit_code,
         raw_output_files = raw_output_files.node_id(),
         json_session = json_session_node_id,
-        planning_files = output_plans.node_id(),
-        body = logs,
+        body = logs if logs is not None else b'',
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
-    if exit_code != 0:
+    if n_op.exit_code != 0:
         raise CrispError(
             f'agent invocation failed: exit code {exit_code}', n_op)
+
+    return n_op, outputs
+
+def run_rewrite(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    model: str,
+    input_code: TreeNode,
+    extra_code: TreeNode | dict[str, TreeNode] = {},
+    planning_files: TreeNode | None = None,
+    unsafe_json: TreeNode | None = None,
+    cwd: str = '.',
+    clean_cmds: list[list[str]] = [],
+    codex_login: bool = False,
+    env: dict | None = None,
+    find_unsafe2_json_dir: str | None = None,
+    codex_agents: Sequence[str] = (),
+) -> tuple[TreeNode, TreeNode]:
+    extra_code, env = _normalize_run_args(extra_code, env)
+
+    if find_unsafe2_json_dir is not None:
+        env['FIND_UNSAFE2_JSON_DIR'] = os.path.join('%%SANDBOX_ROOT%%', find_unsafe2_json_dir)
+
+    inputs = {
+        'code': Input(input_code),
+    }
+    if planning_files is not None:
+        inputs['plans'] = Input(planning_files)
+    if unsafe_json is not None:
+        inputs['unsafe_json'] = Input(unsafe_json, git_ignore=True)
+    if codex_login:
+        inputs['codex_auth'] = _codex_auth_input()
+    _add_codex_agent_inputs(inputs, codex_agents)
+    # Add `extra_code` last so we can report errors if there are any name
+    # conflicts.
+    extra_code_files = set()
+    for name, tree in extra_code.items():
+        assert name not in inputs, f'duplicate input name {name!r}'
+        inputs[name] = Input(tree)
+        extra_code_files.update(tree.files.keys())
+
+    codex_cmd = _codex_command(cfg, 'exec', [
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+        prompt,
+    ], codex_login=codex_login, model=model)
+
+    n_op, outputs = run_agent(
+        cfg, mvir,
+        inputs,
+        codex_cmd,
+        {
+            'code': lambda p: p not in extra_code_files
+                and (p in input_code.files or p.endswith('.rs')),
+            'plans': lambda p: p not in extra_code_files
+                and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+        },
+        cwd = cwd,
+        clean_cmds = clean_cmds,
+        env = env,
+    )
+
+    output_code = outputs['code']
+    output_plans = outputs['plans']
 
     return (output_code, output_plans)
 
@@ -332,7 +443,7 @@ def run_review(
     model: str,
     old_code: TreeNode,
     new_code: TreeNode,
-    extra_code: TreeNode | list[TreeNode] = [],
+    extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
     codex_login: bool = False,
     env: dict | None = None,
@@ -352,9 +463,9 @@ def run_review(
     fresh sandbox (the rewrite sandbox and its repo are gone by now, and
     `.git/` is never committed to MVIR), so the change is staged as
     uncommitted edits on a baseline commit in a throwaway repo built from
-    the MVIR nodes; nothing is committed back to MVIR.  Codex rejects 
-    `--uncommitted` when custom review instructions are given, so `prompt`
-    itself must direct the reviewer at the uncommitted changes.
+    the MVIR nodes.  Codex rejects `--uncommitted` when custom review
+    instructions are given, so `prompt` itself must direct the reviewer at the
+    uncommitted changes.
     """
     def _review_ran_commands(logs: bytes) -> bool:
         """True iff the codex `--json` event stream in `logs` shows at
@@ -376,50 +487,61 @@ def run_review(
 
     extra_code, env = _normalize_run_args(extra_code, env)
 
-    with run_sandbox(cfg, mvir) as sb:
-        sb.checkout(old_code)
-        for n in extra_code:
-            sb.checkout(n)
-        # Keep sandbox-only files out of the reviewed diff.
-        _checkout_bytes(sb, mvir, '.gitignore', b'.codex/\ntarget/\n')
+    inputs = {
+        'new_code': Input(new_code),
+        'old_code': Input(old_code, path = 'crisp_old_code/'),
+    }
+    if codex_login:
+        inputs['codex_auth'] = _codex_auth_input()
+    for name, tree in extra_code.items():
+        assert name not in inputs, f'duplicate input name {name!r}'
+        inputs[name] = Input(tree)
 
-        codex_dir = _setup_codex_home(sb, env, codex_login)
-        last_message_path = sb.join('.codex/last_message.txt')
+    setup_cmds = [
+        ['git', 'init', '--quiet'],
+        ['git', 'config', 'set', 'user.name', 'CRISP'],
+        ['git', 'config', 'set', 'user.email', 'crisp@localhost'],
+        # `.` contains the new files, and `crisp_old_code/` contains the old
+        # ones.  This use of `$GIT_WORK_TREE` adds the old files to the index
+        # unprefixed, so the contents of `crisp_old_code/foo/bar.txt` will be
+        # added to git under the name `foo/bar.txt`.  Later `git diff` without
+        # `$GIT_WORK_TREE` set will compare the committed state against `.`,
+        # thus comparing the old code to the new code.
+        ['env', 'GIT_WORK_TREE=crisp_old_code', 'git', 'add', '--all'],
+        ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
+        # Old files are no longer needed.
+        ['rm', '-rf', 'crisp_old_code'],
+    ]
 
-        setup_cmds: list[str | list[str]] = [
-            ['mkdir', '-p', codex_dir],
-            GIT_BASELINE_CMD,
-        ]
-        deleted_files = [path for path in old_code.files if path not in new_code.files]
-        if deleted_files:
-            setup_cmds.append(['rm', '-f'] + deleted_files)
-        for cmd in setup_cmds:
-            exit_code, logs = sb.run(cmd, cwd=cwd, shell=isinstance(cmd, str), env=env)
-            if exit_code != 0:
-                raise CrispError(f'{cmd!r} failed: exit code {exit_code}: {logs!r}')
-        sb.checkout(new_code)
+    last_message_path = '.codex/last_message.txt'
+    codex_cmd = _codex_command(cfg, 'exec', [
+        'review',
+        # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
+        # sandbox; the CRISP sandbox is the containment layer.
+        '--dangerously-bypass-approvals-and-sandbox',
+        # Structured events let us verify the reviewer ran commands.
+        '--json',
+        '--output-last-message', last_message_path,
+        prompt,
+    ], codex_login=codex_login, model=model)
 
-        codex_cmd = _codex_command(cfg, 'exec', [
-            'review',
-            # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
-            # sandbox; the CRISP sandbox is the containment layer.
-            '--dangerously-bypass-approvals-and-sandbox',
-            # Structured events let us verify the reviewer ran commands.
-            '--json',
-            '--output-last-message', last_message_path,
-            prompt,
-        ], codex_login=codex_login, model=model)
-        print(codex_cmd)
+    n_op, outputs = run_agent(
+        cfg, mvir,
+        inputs,
+        codex_cmd,
+        {
+            'last_message': lambda p: p == last_message_path,
+        },
+        # Run custom git setup instead of the default
+        init_git = False,
+        setup_cmds = setup_cmds,
+        cwd = cwd,
+        env = env,
+    )
 
-        exit_code, logs = sb.run(codex_cmd, cwd=cwd, stream=True, env=env)
-        if exit_code != 0:
-            raise CrispError(f'codex-cli failed: exit code {exit_code}')
-
-        cat_exit_code, report_bytes = sb.run(['cat', last_message_path], cwd=cwd, env=env)
-        if cat_exit_code != 0:
-            print(f'warning: failed to read reviewer message: {report_bytes!r}')
-            report_bytes = b''
-
+    n_last_message_tree = mvir.node(n_op.outputs['last_message'])
+    n_last_message = mvir.node(n_last_message_tree.sole_file)
+    report_bytes = n_last_message.body().decode('utf-8', errors='replace')
+    logs = n_op.body()
     ran_commands = _review_ran_commands(logs)
-    return report_bytes.decode('utf-8', errors='replace'), logs, ran_commands
-
+    return report_bytes, logs, ran_commands

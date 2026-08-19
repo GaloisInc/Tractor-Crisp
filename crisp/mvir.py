@@ -629,6 +629,11 @@ class TreeNode(Node):
 
     files = property(lambda self: self._metadata['files'])
 
+    @property
+    def sole_file(self):
+        assert len(self.files) == 1
+        return next(iter(self.files.values()))
+
 class CompileCommandsOpNode(Node):
     KIND = 'compile_commands_op_v2'
     c_code: Metadata[NodeId]
@@ -687,27 +692,27 @@ class LlmOpNode(Node):
     response = property(lambda self: self._metadata['response'])
 
 class CodexAgentOpNode(Node):
-    KIND = 'codex_agent_op_v2'
-    old_code: Metadata[NodeId]
-    new_code: Metadata[NodeId]
-    raw_prompt: Metadata[NodeId]
+    KIND = 'codex_agent_op_v3'
+    inputs: Metadata[dict[str, NodeId]]
+    outputs: Metadata[dict[str, NodeId]]
+    cmds: Metadata[list[list[str]]]
     exit_code: Metadata[int]
     # `TreeNode` of all potentially-interesting output files.  We save this in
     # case our logic for filtering the output misses something.
     raw_output_files: Metadata[NodeId]
     # JSON-formatted session log, e.g. `.codex/sessions/xxx/rollout-xxx.jsonl`
     json_session: Metadata[NodeId]
-    # `body` stores the log output
-    # Agent-managed plans which tracks state across multiple loop iterations
-    planning_files: Metadata[NodeId]
 
-    old_code = property(lambda self: self._metadata['old_code'])
-    new_code = property(lambda self: self._metadata['new_code'])
-    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
+    inputs = property(lambda self: self._metadata['inputs'])
+    outputs = property(lambda self: self._metadata['outputs'])
+    cmds = property(lambda self: self._metadata['cmds'])
     exit_code = property(lambda self: self._metadata['exit_code'])
     raw_output_files = property(lambda self: self._metadata['raw_output_files'])
     json_session = property(lambda self: self._metadata['json_session'])
-    planning_files = property(lambda self: self._metadata['planning_files'])
+
+    old_code = property(lambda self: self.inputs['code'])
+    new_code = property(lambda self: self.outputs['code'])
+    planning_files = property(lambda self: self.outputs['plans'])
 
 class CodexReviewOpNode(Node):
     KIND = 'codex_review_op'
@@ -1021,3 +1026,19 @@ def migrate_codex_agent_op(mvir: MVIR, metadata: dict[str, Any]):
     # already have the new field.
     if 'planning_files' not in metadata:
         metadata['planning_files'] = TreeNode.new(mvir, files = {}).node_id().raw
+
+@migration('codex_agent_op_v2')
+def migrate_codex_agent_op_v2(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'codex_agent_op_v3'
+    # At this point in metadata parsing, dicts are still represented as lists
+    # of pairs,
+    metadata['inputs'] = [
+        ('code', metadata.pop('old_code')),
+    ]
+    metadata['outputs'] = [
+        ('code', metadata.pop('new_code')),
+        ('plans', metadata.pop('planning_files')),
+    ]
+    metadata['cmds'] = [
+        ['codex', 'dummy-cmd', metadata.pop('prompt')],
+    ]

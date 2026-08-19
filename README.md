@@ -272,13 +272,13 @@ Currently, the following prompts can be optimized:
 | Prompt type | Used for | Called in | Seed / unoptimized prompt |
 | -- | -- | -- | -- |
 | `agent_safety_prompt` | Telling the agent to execute `SAFETY_PLAN.md` | `workflow.do_safety_step_agent()` (which calls `self.agent_safety()`) | `crisp/workflow.py::AGENT_SAFETY_PROMPT` |
-| `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
 
-In future, we may also optimize the following prompts. Currently, they are not required, and hence not supported.
+In future, we may also optimize the following prompts. Currently they are not supported.
 | Prompt type | Used for | Called in | Seed / unoptimized prompt |
 | -- | -- | -- | -- |
 | `agent_plan_prompt` | Generating the agent's `SAFETY_PLAN.md` | `workflow.do_safety_plan_agent()` | `crisp/prompts/agent_plan.md` |
 | `ffi_entry_point_rules` | Part of `SAFETY_PLAN.md` and FFI review instructions | `workflow.do_safety_plan_agent()`, and `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_entry_point_rules.md` |
+| `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
 
 Run optimization as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
 ```python

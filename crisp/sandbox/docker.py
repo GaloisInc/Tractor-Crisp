@@ -50,13 +50,17 @@ class WorkContainer:
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
-    def checkout(self, n_tree):
+    def checkout(self, n_tree, rel_path=None):
         assert isinstance(n_tree, TreeNode)
+        if rel_path is not None:
+            assert not os.path.isabs(rel_path)
         tar_io = io.BytesIO()
         with tarfile.open(fileobj=tar_io, mode='w') as t:
-            for rel_path, n_file_id in n_tree.files.items():
+            for file_path, n_file_id in n_tree.files.items():
+                if rel_path is not None:
+                    file_path = os.path.join(rel_path, file_path)
                 n_file = self.mvir.node(n_file_id)
-                info = tarfile.TarInfo(rel_path)
+                info = tarfile.TarInfo(file_path)
                 info.size = len(n_file.body())
                 t.addfile(info, io.BytesIO(n_file.body()))
         self._checkout_tar_file(tar_io.getvalue())
@@ -90,7 +94,9 @@ class WorkContainer:
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
                 if ignore_spec is not None and ignore_spec.match_file(info.name):
+                    print(f'got {info.name!r}: ignored')
                     continue
+                print(f'got {info.name!r}')
                 match info.type:
                     case tarfile.REGTYPE:
                         pass

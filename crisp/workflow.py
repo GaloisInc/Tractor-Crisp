@@ -1258,11 +1258,9 @@ class Workflow:
         else:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
 
-        extra_code = [
-            self.find_unsafe2_json(n_code),
-        ]
+        extra_code = {}
         if n_test_code is not None:
-            extra_code.append(n_test_code)
+            extra_code['tests'] = n_test_code
 
         prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
@@ -1274,6 +1272,7 @@ class Workflow:
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
+            unsafe_json = self.find_unsafe2_json(n_code),
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
@@ -1438,9 +1437,7 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        extra_code = [
-            self.find_unsafe2_json(n_code),
-        ]
+        extra_code = {}
         if n_test_code is not None:
             # In planning mode, we do provide the entire C code to the planner
             # since that might increase the quality of the plan. However, if
@@ -1449,13 +1446,14 @@ class Workflow:
             # might contain references to it. This might confuse the agent and
             # break the `agent_sim_no_tests` mode.
             # TODO: un-break that mode somehow (without hiding the C code).
-            extra_code.append(n_test_code)
+            extra_code['c_code'] = n_test_code
 
         prompt = AGENT_PLAN_PROMPT.format(
             cargo_dir_path = cargo_dir,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
+            unsafe_json = self.find_unsafe2_json(n_code),
             planning_files = None,
             codex_login=self.codex_login,
             codex_agents=agent.PLANNING_CODEX_AGENTS,

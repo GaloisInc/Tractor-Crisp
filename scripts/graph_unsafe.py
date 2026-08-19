@@ -99,7 +99,7 @@ def get_points_mvir(args, cfg, mvir, node_id_arg):
         toml.dump({'points': [{'t': t, 'u': u} for t,u in points]}, f)
     print(f'wrote points to {toml_path}')
 
-    return points
+    return node_id, is_tag, points
 
 def get_points_file(path):
     with open(path) as f:
@@ -126,12 +126,20 @@ def main():
 
         mvir = MVIR(cfg.mvir_storage_dir, '.')
 
+    legend_labels = []
     points_lists = []
     for inp in args.inputs:
         if input_is_path(inp):
+            name = os.path.splitext(os.path.basename(inp))[0]
+            legend_labels.append(name)
             points_lists.append(get_points_file(inp))
         else:
-            points_lists.append(get_points_mvir(args, cfg, mvir, inp))
+            node_id, is_tag, points = get_points_mvir(args, cfg, mvir, inp)
+            if is_tag:
+                legend_labels.append(f'tag:{inp}')
+            else:
+                legend_labels.append(f'node:{str(node_id)[:7]}')
+            points_lists.append(points)
 
 
     def format_func(x, pos):
@@ -144,7 +152,7 @@ def main():
     # Print summary stats
     for x in itertools.count(step = args.print_interval):
         print(f'\nat {format_func(x, None)}:')
-        for (name, points) in zip(args.inputs, points_lists):
+        for (name, points) in zip(legend_labels, points_lists):
             base_date = points[0][0]
             y = min(yy for xx, yy in points if (xx - base_date).total_seconds() <= x)
             print(f'  {y:7}  {name}')
@@ -156,7 +164,7 @@ def main():
 
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    for points in points_lists:
+    for (name, points) in zip(legend_labels, points_lists):
         # Use elapsed time (in seconds) rather than an absolute `datetime` for
         # the X axis, so we can compare results from different runs.
         base_date = points[0][0]
@@ -164,11 +172,14 @@ def main():
             [(x[0] - base_date).total_seconds() for x in points],
             [x[1] for x in points],
             linestyle='-',
+            label=name,
         )
-    ax.grid(True)
-    ax.set_ylabel("Unsafe operations")
 
+    ax.grid(True)
+    ax.set_xlabel("Elapsed time (HH:MM)")
     ax.xaxis.set_major_formatter(FuncFormatter(format_func))
+    ax.set_ylabel("Unsafe operations")
+    ax.legend()
 
     plt.savefig('graph.png')
 

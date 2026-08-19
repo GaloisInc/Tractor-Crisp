@@ -40,6 +40,7 @@ class TaskTrace:
 @dataclass
 class TaskOutput:
     n_code: TreeNode
+    run_details: dict[str, dict[str, Any]]
 
 @dataclass
 class EvaluationResult:
@@ -47,70 +48,19 @@ class EvaluationResult:
     feedback: str
 
 
-def run_task(
-    workflow: Workflow,
-    n_code: TreeNode,
-    n_c_code: TreeNode,
-    prompts: dict[str, str]
-):
-    workflow.fuel.give(1)
-
-    kwargs_for_do_safety_plan_agent = {}
-    for kwarg in ['agent_plan_prompt', 'ffi_entry_point_rules']:
-        if kwarg in prompts:
-            kwargs_for_do_safety_plan_agent[kwarg] = prompts[kwarg]
-    n_plans = workflow.do_safety_plan_agent(
-        n_code = n_code,
-        n_test_code = n_c_code,
-        **kwargs_for_do_safety_plan_agent
-    )[1]
-
-    try:
-        #TODO maybe incorporate a loop where the agent makes multiple attempts
-        # (as is done in crisp.__main__.py::safety_loop_common()),
-        # and more attempts are penalized via the evaluator
-        #NOTE this may be a bad idea because each iteration takes a very long time
-
-        #TODO maybe incorporate FFI stuff
-
-        kwargs_for_do_safety_step_agent = {}
-        for kwarg in ['agent_safety_prompt', 'agent_ffi_review_prompt', 'ffi_entry_point_rules']:
-            if kwarg in prompts:
-                kwargs_for_do_safety_step_agent[kwarg] = prompts[kwarg]
-        n_new_code, _, _ = workflow.do_safety_step_agent(
-            n_code = n_code,
-            n_test_code = n_c_code,
-            n_plans = n_plans,
-            **kwargs_for_do_safety_step_agent
-        )
-
-        if n_new_code is not None:
-            n_code = n_new_code
-
-    except CrispError as e:
-        print(f'Safety attempt failed: {e}')
-        traceback.print_exc()
-
-    return n_code
-
-
 class ResponseEvaluator:
 
     def __init__(
         self,
-        scores: dict[str, float] = {
-            'safe': 0.8,
-            'passtests': 0.2,
-            'failure': 0.0
-        },
-        score_penalty_per_attempt: float = 0.1
+        score_safe: float = 1.,
+        score_passtests: float = 1.,
+        score_penalty_per_output_token: float = 1e-5,
+        score_penalty_per_call_duration_sec: float = 1e-3,
     ):
-        assert math.isclose(sum(scores.values()), 1), "Values of `scores` dictionary doesn't sum to 1"
-        self.score_safe = scores['safe']
-        self.score_passtests = scores['passtests']
-        self.score_failure = scores['failure']
-        self.score_penalty_per_attempt = score_penalty_per_attempt
-        #TODO add scores and penalties for tokens used
+        self.score_safe = score_safe
+        self.score_passtests = score_passtests
+        self.score_penalty_per_output_token = score_penalty_per_output_token
+        self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
 
     def __call__(
         self,
@@ -118,7 +68,7 @@ class ResponseEvaluator:
         n_output_code: TreeNode,
         n_input_code: TreeNode,
         n_c_code: TreeNode,
-        attempts: int = 1
+        run_details: dict[str, Any]
     ) -> EvaluationResult:
         score = 0
         feedback = ""
@@ -126,31 +76,35 @@ class ResponseEvaluator:
         # Check if anything changed from input to output; if not, the agent failed
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
-                score = self.score_failure,
+                score = 0.,
                 feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
             )
 
         # Check for un-safety
-        unsafe_count = workflow.count_unsafe2(n_output_code)
+        unsafe_count = workflow.count_unsafe2(n_output_code) #TODO #3 integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
         if unsafe_count <= 0:
             score += self.score_safe
         else:
-            feedback += f"The refactored Rust code has {unsafe_count} entities that are unsafe. Please try again to produce Rust code that is safe, and is functionally correct."
+            feedback += f"\nThe refactored Rust code has {unsafe_count} entities that are unsafe. Please try again to produce Rust code that is safe, and is functionally correct."
 
         # Check for tests passing
         test_results = workflow.test_op(n_output_code, n_c_code)
         if test_results.exit_code == 0:
             score += self.score_passtests
         else:
-            feedback += f"The refactored Rust code does not achieve identical behavior as the input. It fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe."
+            feedback += f"\nThe refactored Rust code does not achieve identical behavior as the input. It fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe."
 
-        # Check attempts
-        score -= (self.score_penalty_per_attempt * (attempts-1)) # 1 attempt is fine, we penalize beyond that
-        if attempts > 1:
-            feedback += f"The refactored Rust code was arrived at after {attempts} attempts. Please try to produce safe and functionally correct Rust code in fewer attempts."
+        # Penalize for output tokens
+        total_output_tokens = sum(run_details[k].get('output_tokens', 0) for k in run_details)
+        score -= (self.score_penalty_per_output_token * total_output_tokens)
+        feedback += f"\nThe refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct."
+
+        # Penalize for call duration
+        total_call_duration_sec = sum(run_details[k].get('call_duration_sec', 0) for k in run_details)
+        score -= (self.score_penalty_per_call_duration_sec * total_call_duration_sec)
+        feedback += f"\nThe refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct."
 
         # Return final results
-        score = max(score, 0) # since score should be non-negative (I think)
         return EvaluationResult(score = score, feedback = feedback)
 
 
@@ -177,25 +131,53 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
 
-            n_output_code = run_task(
-                workflow = task['workflow'],
+            task['workflow'].fuel.give(1)
+            n_plans = task['workflow'].do_safety_plan_agent(
                 n_code = n_input_code,
-                n_c_code = n_c_code,
-                prompts = candidate #TODO how do we ensure that candidate prompts always have the proper {} portions to be formatted (e.g. `agent_plan_prompt` should always have `{cargo_dir_path}`)? Maybe the solution is to eliminate all such blocks from the GEPA seed prompts.
-            )
+                n_test_code = n_c_code
+            )[1]
 
-            outputs.append(TaskOutput(n_code = n_output_code))
+            try:
+                #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator
+                #NOTE this may be a bad idea because each iteration takes a very long time
+
+                n_output_code, _ = task['workflow'].agent_safety(
+                    n_code = n_input_code,
+                    n_test_code = n_c_code,
+                    n_plans = n_plans,
+                    agent_safety_prompt = candidate['agent_safety_prompt'] #TODO #1 how do we ensure that candidate prompts always have the proper {} portions to be formatted (e.g. `agent_plan_prompt` should always have `{cargo_dir_path}`)? Maybe the solution is to eliminate all such blocks from the GEPA seed prompts.
+                )
+
+                n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
+                run_details = {
+                    'agent_safety_prompt': {
+                        'call_duration_sec': n_codex.call_duration_sec,
+                        'output_tokens': n_codex.output_tokens
+                    }
+                }
+
+            except CrispError as e:
+                print(f'Safety attempt failed: {e}')
+                traceback.print_exc()
+
+            outputs.append(
+                TaskOutput(
+                    n_code = n_output_code,
+                    run_details = run_details
+                )
+            )
 
             eval_result = self.evaluator(
                 workflow = task['workflow'],
                 n_output_code = n_output_code,
                 n_input_code = n_input_code,
-                n_c_code = n_c_code
+                n_c_code = n_c_code,
+                run_details = run_details
             )
             scores.append(eval_result.score)
 
             if capture_traces:
-                trajectories.append( #TODO capture more feedback for specific prompt types
+                trajectories.append( #TODO #2a do we need to label feedback for individual prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
                     TaskTrace(
                         task = task,
                         n_input_code = n_input_code,
@@ -234,7 +216,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
             for traj in (eval_batch.trajectories or []):
                 component_data.append(
-                    { #TODO get individual input-outputs or similar for specific prompt types
+                    { #TODO #2b do we need to get individual input-outputs for specific prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
                         "Inputs": file_formatter.emit_files(
                             mvir = traj.task['workflow'].mvir,
                             n = traj.n_input_code,
@@ -318,5 +300,4 @@ def do_gepa(
 
 
 def run_gepa_eval_on_prompt():
-    #TODO
     ...

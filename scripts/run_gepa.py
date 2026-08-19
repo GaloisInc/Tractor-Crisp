@@ -49,10 +49,7 @@ def run_gepa_agents():
     do_gepa_agents(
         dataset_path = Path(__file__).resolve().parent.parent / 'Test-Corpus/Public-Tests/B01_organic',
         seed_prompt_paths = {
-            'agent_plan_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_plan_prompt.md',
-            # 'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt',
-            'agent_ffi_review_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_ffi_review_prompt.md',
-            'ffi_entry_point_rules': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/ffi_entry_point_rules.md',
+            'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
         },
         reflection_lm = 'gpt-5.6-sol'
     )

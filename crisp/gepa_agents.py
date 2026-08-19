@@ -11,7 +11,6 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 from dataclasses import dataclass
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
-import math
 import os
 from pathlib import Path
 import random

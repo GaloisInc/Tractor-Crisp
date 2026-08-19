@@ -343,7 +343,7 @@ class Workflow:
         n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
         if n_op_cc.exit_code != 0:
             raise CrispError(f"cc_custom_op failed with exit code {n_op_cc.exit_code}; "
-                "ensure all needed c_code files were committed. logs: " + n_op_cc.body_str())
+                "ensure all needed c_code files were committed", n_op_cc)
         assert n_op_cc.compile_commands is not None
         compile_commands = self.mvir.node(n_op_cc.compile_commands)
         return compile_commands

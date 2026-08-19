@@ -26,16 +26,6 @@ def get_repo(mvir: MVIR) -> pygit2.Repository:
                 | pygit2.GIT_REPOSITORY_INIT_NO_DOTGIT_DIR,
         )
 
-# For each MVIR node kind that represents a code transformation, this gives the
-# names of the fields containing the old and new `TreeNode`s.
-OP_NODE_KINDS = {
-    mvir_module.LlmOpNode.KIND: ('old_code', 'new_code'),
-    mvir_module.CodexAgentOpNode.KIND: ('old_code', 'new_code'),
-
-    # Backward compatibility with unmigrated `CodexAgentOp`s
-    'codex_agent_op': ('old_code', 'new_code'),
-}
-
 def render(mvir: MVIR, target: TreeNode) -> pygit2.Oid:
     """
     Generate git history representing the steps that produced `target`, and

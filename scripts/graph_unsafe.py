@@ -55,6 +55,11 @@ def get_points_mvir(args, cfg, mvir, node_id_arg):
     reflog_tag = args.reflog_tag or (node_id_arg if is_tag else 'current')
     print(f'reading reflog of {reflog_tag!r}')
     for re in mvir.tag_reflog(reflog_tag):
+        # If there are multiple reflog entries for the same node, take the
+        # newest.  The user is more likely to be graphing a recent run rather
+        # than an older one.  Plus, it should be obvious from the shape of the
+        # graph if the script grabbed a timestamp from a different run, so the
+        # user can notice and fix it manually.
         timestamp_map[re.node_id] = re.timestamp
 
     points = []
@@ -115,6 +120,9 @@ def input_is_path(inp):
 
 def main():
     args = parse_args()
+
+    if args.print_interval <= 0:
+        raise ValueError('--print-interval must be positive')
 
     needs_mvir = any(not input_is_path(inp) for inp in args.inputs)
 

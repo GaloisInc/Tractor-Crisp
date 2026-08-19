@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+import time
 from typing import Sequence
 
 from pathspec.pathspec import PathSpec
@@ -203,6 +204,9 @@ def run_rewrite(
 ) -> tuple[TreeNode, TreeNode]:
     extra_code, env = _normalize_run_args(extra_code, env)
 
+    codex_call_duration_sec = None
+    codex_output_tokens = None
+
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
         for n in extra_code:
@@ -243,6 +247,7 @@ def run_rewrite(
             codex_cmd = _codex_command(cfg, 'exec', [
                 '--dangerously-bypass-approvals-and-sandbox',
                 '--skip-git-repo-check',
+                '--json',
                 prompt,
             ], codex_login=codex_login, model=model)
             print(codex_cmd)
@@ -252,7 +257,21 @@ def run_rewrite(
                 env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
 
             for cmd in all_cmds:
-                exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
+                if cmd == codex_cmd:
+                    codex_start_time = time.perf_counter()
+                    exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
+                    codex_call_duration_sec = time.perf_counter() - codex_start_time
+                    for line in logs2.decode('utf-8').splitlines():
+                        try:
+                            event = json.loads(line)
+                            if event.get('type') == 'turn.completed':
+                                usage = event.get('usage', {})
+                                codex_output_tokens = usage.get('output_tokens', 0) + usage.get('reasoning_output_tokens', 0)
+                                break
+                        except json.decoder.JSONDecodeError:
+                            pass
+                else:
+                    exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
                 logs += logs2
 
                 # TODO: ensure API key doesn't get included in the AgentOpNode
@@ -314,6 +333,8 @@ def run_rewrite(
         json_session = json_session_node_id,
         planning_files = output_plans.node_id(),
         body = logs,
+        call_duration_sec = codex_call_duration_sec,
+        output_tokens = codex_output_tokens,
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

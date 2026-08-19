@@ -700,6 +700,8 @@ class CodexAgentOpNode(Node):
     # `body` stores the log output
     # Agent-managed plans which tracks state across multiple loop iterations
     planning_files: Metadata[NodeId]
+    call_duration_sec: Metadata[float | None]
+    output_tokens: Metadata[int | None]
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
@@ -708,6 +710,8 @@ class CodexAgentOpNode(Node):
     raw_output_files = property(lambda self: self._metadata['raw_output_files'])
     json_session = property(lambda self: self._metadata['json_session'])
     planning_files = property(lambda self: self._metadata['planning_files'])
+    call_duration_sec = property(lambda self: self._metadata['call_duration_sec'])
+    output_tokens = property(lambda self: self._metadata['output_tokens'])
 
 class CodexReviewOpNode(Node):
     KIND = 'codex_review_op'

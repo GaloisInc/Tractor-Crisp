@@ -57,11 +57,13 @@ class ResponseEvaluator:
         score_passtests: float = 1.,
         score_penalty_per_output_token: float = 1e-5,
         score_penalty_per_call_duration_sec: float = 1e-3,
+        min_score: float = 0.,
     ):
         self.score_safe = score_safe
         self.score_passtests = score_passtests
         self.score_penalty_per_output_token = score_penalty_per_output_token
         self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
+        self.min_score = min_score
 
     def __call__(
         self,
@@ -106,6 +108,7 @@ class ResponseEvaluator:
         feedback += f"\nThe refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct."
 
         # Return final results
+        score = max(score, self.min_score)
         return EvaluationResult(score = score, feedback = feedback)
 
 

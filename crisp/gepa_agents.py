@@ -181,6 +181,23 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 )[1]
                 task['workflow'].mvir.set_tag('plans', n_plans.node_id())
 
+            # ================== # ================== # ================== # ================== #
+            #NOTE: Alternative to the above try-except block is:
+            # ================== # ================== # ================== # ================== #
+            # from crisp.__main__ import prior_agent_plans
+            # n_plans = prior_agent_plans(task['workflow'].mvir, n_input_code)
+            # if not n_plans:
+            #     n_plans = task['workflow'].do_safety_plan_agent(
+            #         n_code = n_input_code,
+            #         n_test_code = n_c_code
+            #     )[1]
+            # ================== # ================== # ================== # ================== #
+            # If we do the above, the agent will basically generate the plan for an example whenever it's first run in this function.
+            # This is as opposed to generating the `plans` nodes for all examples via the `save_plans.py` script prior to starting a GEPA run.
+            # In terms of runtime, both approaches will be similar because the agent will eventually have to generate plans for all examples, one way or another.
+            # FWIW doing them using the separate script may be better because it ensures a single source of truth for all plans that is set in stone prior to starting a GEPA run. 
+            # ================== # ================== # ================== # ================== #
+
             try:
                 #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator
                 #NOTE this may be a bad idea because each iteration takes a very long time

@@ -47,14 +47,10 @@ def process_project(project_folder: Path, overwrite: bool):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group(required = True)
-    group.add_argument(
-        '-p', "--project",
-        help = "The project folder will be run"
-    )
-    group.add_argument(
-        '-d', "--dataset",
-        help = "The dataset folder inside which all projects will be run"
+    parser.add_argument(
+        "project_folder",
+        type = Path,
+        help = "The project folder to run on"
     )
     parser.add_argument(
         '-o', "--overwrite",
@@ -64,15 +60,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-    if args.project:
-        process_project(project_folder = Path(args.project), overwrite = args.overwrite)
-    else:
-        for path in Path(args.dataset).iterdir():
-            if path.is_dir():
-                process_project(project_folder = path, overwrite = args.overwrite)
-
-
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    process_project(project_folder = args.project_folder, overwrite = args.overwrite)

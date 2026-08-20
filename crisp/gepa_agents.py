@@ -213,33 +213,27 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         self,
         candidate: dict[str,str], # pylint: disable=unused-argument # required as per GEPA
         eval_batch: EvaluationBatch[TaskTrace, TaskOutput],
-        components_to_update: list[str]
+        components_to_update: list[str] # pylint: disable=unused-argument # required as per GEPA
     ) -> dict[str, list[dict[str, Any]]]:
-        dataset = {}
+        dataset = {'agent_safety_prompt': []}
         file_formatter = llm_format.get_file_formatter('xml')
-
-        for component_name in components_to_update:
-            component_data = []
-
-            for traj in (eval_batch.trajectories or []):
-                component_data.append(
-                    { #TODO #2b do we need to get individual input-outputs for specific prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
-                        "Inputs": file_formatter.emit_files(
-                            mvir = traj.task['workflow'].mvir,
-                            n = traj.n_input_code,
-                            glob_filter = traj.task['workflow'].cfg.src_globs
-                        )[0],
-                        "Generated Outputs": file_formatter.emit_files(
-                            mvir = traj.task['workflow'].mvir,
-                            n = traj.n_output_code,
-                            glob_filter = traj.task['workflow'].cfg.src_globs
-                        )[0],
-                        "Feedback": traj.feedback
-                    }
-                )
-
-            dataset[component_name] = component_data
-
+        for traj in (eval_batch.trajectories or []):
+            dataset['agent_safety_prompt'].append(
+                {
+                    "Inputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_input_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
+                    "Generated Outputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_output_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
+                    "Feedback": traj.feedback
+                }
+            )
+            #TODO #2b do we need to get individual input-outputs for specific prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
         return dataset
 
 

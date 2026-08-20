@@ -55,15 +55,16 @@ def is_project_gepaready(project_folder: Path) -> bool:
     """
     Given a project folder, check if it has the required files to run GEPA and return True / False accordingly.
     """
+    res = True
     for required_file in [
         project_folder / 'crisp.toml',
         project_folder / 'crisp-storage/tags/c_code',
         project_folder / 'crisp-storage/tags/current'
     ]:
         if not required_file.is_file():
-            print(f"Warning: Skipping '{project_folder.name}'. Required file(s) not found.")
-            return False
-    return True
+            print(f"WARNING: Required file '{required_file}' not found.")
+            res = False
+    return res
 
 
 class ResponseEvaluator:

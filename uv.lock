@@ -219,6 +219,8 @@ source = { editable = "." }
 dependencies = [
     { name = "cbor" },
     { name = "docker" },
+    { name = "fastapi" },
+    { name = "hypercorn" },
     { name = "pathspec" },
     { name = "pygit2" },
     { name = "requests" },
@@ -236,7 +238,9 @@ gepa = [
 requires-dist = [
     { name = "cbor", specifier = ">=1.0.0" },
     { name = "docker", specifier = ">=7.1.0" },
+    { name = "fastapi", specifier = ">=0.116.0" },
     { name = "gepa", marker = "extra == 'gepa'", specifier = ">=0.1.1" },
+    { name = "hypercorn", specifier = ">=0.17.3" },
     { name = "litellm", marker = "extra == 'gepa'", specifier = ">=1.83.14" },
     { name = "pandas", marker = "extra == 'gepa'", specifier = ">=3.0.2" },
     { name = "pathspec", specifier = ">=1.0.4" },
@@ -267,6 +271,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/91/9b/4a2ea29aeba62471211598dac5d96825bb49348fa07e906ea930394a83ce/docker-7.1.0.tar.gz", hash = "sha256:ad8c70e6e3f8926cb8a92619b832b4ea5299e2831c14284663184e200546fa6c", size = 117834, upload-time = "2024-05-23T11:13:57.216Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl", hash = "sha256:c96b93b7f0a746f9e77d325bcfb87422a3d8bd4f03136ae8a85b37f1898d5fc0", size = 147774, upload-time = "2024-05-23T11:13:55.01Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.141.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/02/91e3416a8fdd715abb903a952a6bec7cdd8d14eed55d415fc8595524c319/fastapi-0.141.1.tar.gz", hash = "sha256:e8822fc40db1e1858054d7a949a888695bc9bdce70139178e33bd2871a453ca1", size = 425799, upload-time = "2026-07-29T17:18:05.568Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/03/10388a42375ee7e4ac9b94eb2c5c569c8b5795e377e701c9ac3ad63de890/fastapi-0.141.1-py3-none-any.whl", hash = "sha256:bfb91aa2d334c61cb35ba9a116fc123b3d3df31640b801cf57a7a78ec3f603b3", size = 131954, upload-time = "2026-07-29T17:18:04.364Z" },
 ]
 
 [[package]]
@@ -366,6 +386,19 @@ wheels = [
 ]
 
 [[package]]
+name = "h2"
+version = "4.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "hpack" },
+    { name = "hyperframe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/85/7c366e69d84c17bb778fe41419e1fbcce3033d5b7ce29bbffff0a98b859f/h2-4.4.1.tar.gz", hash = "sha256:4e866ffb1a869ae14dd9b5e6beb5c24a13da0495ad72b65925ded182521c1516", size = 2157281, upload-time = "2026-08-03T11:45:09.509Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/22/e85faf23bd72a92d1921e37d674ca56eb298a3c8be31fdecef0ff2b3aaac/h2-4.4.1-py3-none-any.whl", hash = "sha256:0e25f1462b23c9cb82d9eb02e28bc706dac2a68cb457c6a0d74d63c8a2a5d0e6", size = 62636, upload-time = "2026-08-03T11:44:59.164Z" },
+]
+
+[[package]]
 name = "hf-xet"
 version = "1.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -387,6 +420,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/42/4b/53951592882d9c23080c7644542fda34a3813104e9e11fa1a7d82d419cb8/hf_xet-1.4.3-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7716d62015477a70ea272d2d68cd7cad140f61c52ee452e133e139abfe2c17ba", size = 4429392, upload-time = "2026-03-31T22:40:03.492Z" },
     { url = "https://files.pythonhosted.org/packages/8a/21/75a6c175b4e79662ad8e62f46a40ce341d8d6b206b06b4320d07d55b188c/hf_xet-1.4.3-cp37-abi3-win_amd64.whl", hash = "sha256:6b591fcad34e272a5b02607485e4f2a1334aebf1bc6d16ce8eb1eb8978ac2021", size = 3677359, upload-time = "2026-03-31T22:40:13.619Z" },
     { url = "https://files.pythonhosted.org/packages/8a/7c/44314ecd0e89f8b2b51c9d9e5e7a60a9c1c82024ac471d415860557d3cd8/hf_xet-1.4.3-cp37-abi3-win_arm64.whl", hash = "sha256:7c2c7e20bcfcc946dc67187c203463f5e932e395845d098cc2a93f5b67ca0b47", size = 3533664, upload-time = "2026-03-31T22:40:12.152Z" },
+]
+
+[[package]]
+name = "hpack"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/5b/fcabf6028144a8723726318b07a32c2f3314acdff6265743cf08a344b18e/hpack-4.2.0.tar.gz", hash = "sha256:0895cfa3b5531fc65fe439c05eb65144f123bf7a394fcaa56aa423548d8e45c0", size = 51300, upload-time = "2026-06-23T18:34:46.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/b4/4a9fcfb2aef6ba44d9073ecd301443aa00b3dac95de5619f2a7de7ec8a91/hpack-4.2.0-py3-none-any.whl", hash = "sha256:858ac0b02280fa582b5080d68db0899c62a80375e0e5413a74970c5e518b6986", size = 34246, upload-time = "2026-06-23T18:34:45.472Z" },
 ]
 
 [[package]]
@@ -435,6 +477,30 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/56/52/1b54cb569509c725a32c1315261ac9fd0e6b91bbbf74d86fca10d3376164/huggingface_hub-1.12.0.tar.gz", hash = "sha256:7c3fe85e24b652334e5d456d7a812cd9a071e75630fac4365d9165ab5e4a34b6", size = 763091, upload-time = "2026-04-24T13:32:08.674Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/2b/ef03ddb96bd1123503c2bd6932001020292deea649e9bf4caa2cb65a85bf/huggingface_hub-1.12.0-py3-none-any.whl", hash = "sha256:d74939969585ee35748bd66de09baf84099d461bda7287cd9043bfb99b0e424d", size = 646806, upload-time = "2026-04-24T13:32:06.717Z" },
+]
+
+[[package]]
+name = "hypercorn"
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h11" },
+    { name = "h2" },
+    { name = "priority" },
+    { name = "wsproto" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/01/39f41a014b83dd5c795217362f2ca9071cf243e6a75bdcd6cd5b944658cc/hypercorn-0.18.0.tar.gz", hash = "sha256:d63267548939c46b0247dc8e5b45a9947590e35e64ee73a23c074aa3cf88e9da", size = 68420, upload-time = "2025-11-08T13:54:04.78Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/35/850277d1b17b206bd10874c8a9a3f52e059452fb49bb0d22cbb908f6038b/hypercorn-0.18.0-py3-none-any.whl", hash = "sha256:225e268f2c1c2f28f6d8f6db8f40cb8c992963610c5725e13ccfcddccb24b1cd", size = 61640, upload-time = "2025-11-08T13:54:03.202Z" },
+]
+
+[[package]]
+name = "hyperframe"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/e7/94f8232d4a74cc99514c13a9f995811485a6903d48e5d952771ef6322e30/hyperframe-6.1.0.tar.gz", hash = "sha256:f630908a00854a7adeabd6382b43923a4c4cd4b821fcb527e6ab9e15382a3b08", size = 26566, upload-time = "2025-01-22T21:41:49.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/30/47d0bf6072f7252e6521f3447ccfa40b421b6824517f82854703d0f5a98b/hyperframe-6.1.0-py3-none-any.whl", hash = "sha256:b03380493a519fce58ea5af42e4a42317bf9bd425596f7a0835ffce80f1a42e5", size = 13007, upload-time = "2025-01-22T21:41:47.295Z" },
 ]
 
 [[package]]
@@ -744,6 +810,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fa/36/e27608899f9b8d4dff0617b2d9ab17ca5608956ca44461ac14ac48b44015/pathspec-1.0.4.tar.gz", hash = "sha256:0210e2ae8a21a9137c0d470578cb0e595af87edaa6ebf12ff176f14a02e0e645", size = 131200, upload-time = "2026-01-27T03:59:46.938Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/3c/2c197d226f9ea224a9ab8d197933f9da0ae0aac5b6e0f884e2b8d9c8e9f7/pathspec-1.0.4-py3-none-any.whl", hash = "sha256:fb6ae2fd4e7c921a165808a552060e722767cfa526f99ca5156ed2ce45a5c723", size = 55206, upload-time = "2026-01-27T03:59:45.137Z" },
+]
+
+[[package]]
+name = "priority"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/3c/eb7c35f4dcede96fca1842dac5f4f5d15511aa4b52f3a961219e68ae9204/priority-2.0.0.tar.gz", hash = "sha256:c965d54f1b8d0d0b19479db3924c7c36cf672dbf2aec92d43fbdaf4492ba18c0", size = 24792, upload-time = "2021-06-27T10:15:05.487Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/5f/82c8074f7e84978129347c2c6ec8b6c59f3584ff1a20bc3c940a3e061790/priority-2.0.0-py3-none-any.whl", hash = "sha256:6f8eefce5f3ad59baf2c080a664037bb4725cd0a790d53d59ab4059288faf6aa", size = 8946, upload-time = "2021-06-27T10:15:03.856Z" },
 ]
 
 [[package]]
@@ -1089,6 +1164,18 @@ wheels = [
 ]
 
 [[package]]
+name = "starlette"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b5/b4/205b0d5241d934e8add0c38aa924c4f9fb7330834ff11e5444db964ec3f9/starlette-1.6.0.tar.gz", hash = "sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b", size = 2716969, upload-time = "2026-08-08T18:27:57.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/cb/6a6a47d5b464bd08695d254f3da6e7986cc70c9fa5d778eda57538edfe56/starlette-1.6.0-py3-none-any.whl", hash = "sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c", size = 75969, upload-time = "2026-08-08T18:27:56.196Z" },
+]
+
+[[package]]
 name = "tiktoken"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1213,6 +1300,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+]
+
+[[package]]
+name = "wsproto"
+version = "1.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz", hash = "sha256:b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294", size = 50116, upload-time = "2025-11-20T18:18:01.871Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl", hash = "sha256:61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584", size = 24405, upload-time = "2025-11-20T18:18:00.454Z" },
 ]
 
 [[package]]

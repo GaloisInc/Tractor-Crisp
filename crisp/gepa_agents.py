@@ -138,6 +138,8 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         for prompt_type, formatted_blocks_for_prompt_type in self.formatted_blocks.items():
             if set(re.findall(r'\{.*\}', candidate[prompt_type])) != formatted_blocks_for_prompt_type:
                 bad_prompt_types.append(prompt_type)
+
+        # If any candidate prompt doesn't have correct placeholders, return a dummy eval batch with all scores 0
         if bad_prompt_types:
             for task in batch:
                 outputs.append(None)
@@ -161,7 +163,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 trajectories = trajectories
             )
 
-        # Normal operation
+        # If all candidate prompts have correct placeholders, proceed with normal operation
         for task in batch:
             n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.

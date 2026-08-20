@@ -14,6 +14,7 @@ from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
 from pathlib import Path
 import random
+import re
 import traceback
 from typing import Any
 
@@ -112,9 +113,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
     def __init__(
         self,
-        evaluator: ResponseEvaluator
+        evaluator: ResponseEvaluator,
+        formatted_blocks: dict[str, set[str]]
     ):
         self.evaluator = evaluator
+        self.formatted_blocks = formatted_blocks
 
     def evaluate(
         self,
@@ -127,6 +130,35 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         scores = []
         trajectories = [] if capture_traces else None
 
+        # Check if all candidate prompts have correct placeholders
+        bad_prompt_types = []
+        for prompt_type, formatted_blocks_for_prompt_type in self.formatted_blocks.items():
+            if set(re.findall(r'\{.*\}', candidate[prompt_type])) != formatted_blocks_for_prompt_type:
+                bad_prompt_types.append(prompt_type)
+        if bad_prompt_types:
+            for task in batch:
+                outputs.append(None)
+                scores.append(self.evaluator.min_score)
+                if capture_traces:
+                    feedback = ''
+                    for bad_prompt_type in bad_prompt_types:
+                        placeholders = ', '.join(self.formatted_blocks[bad_prompt_type])
+                        feedback += f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. Please try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}': {placeholders}.\n"
+                    trajectories.append(
+                        TaskTrace(
+                            task = task,
+                            n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')),
+                            n_output_code = None,
+                            feedback = feedback
+                        )
+                    )
+            return EvaluationBatch(
+                outputs = outputs,
+                scores = scores,
+                trajectories = trajectories
+            )
+
+        # Normal operation
         for task in batch:
             n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
@@ -152,7 +184,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     n_code = n_input_code,
                     n_test_code = n_c_code,
                     n_plans = n_plans,
-                    agent_safety_prompt = candidate['agent_safety_prompt'] #TODO #1 how do we ensure that candidate prompts always have the proper {} portions to be formatted (e.g. `agent_plan_prompt` should always have `{cargo_dir_path}`)? Maybe the solution is to eliminate all such blocks from the GEPA seed prompts.
+                    agent_safety_prompt = candidate['agent_safety_prompt']
                 )
 
                 n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
@@ -264,8 +296,10 @@ def do_gepa(
 
     # Get seed prompts
     seed_prompts = {}
+    formatted_blocks = {}
     for prompt_type in prompt_types:
         seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
+        formatted_blocks[prompt_type] = set(re.findall(r'\{.*\}', seed_prompts[prompt_type]))
 
     # Create datasets
     trainset, valset = [], []
@@ -282,7 +316,10 @@ def do_gepa(
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
     # Instantiate GEPA adapter
-    adapter = RustAdapter(evaluator = ResponseEvaluator())
+    adapter = RustAdapter(
+        evaluator = ResponseEvaluator(),
+        formatted_blocks = formatted_blocks
+    )
 
     # Run GEPA optimization
     gepa_result = gepa.optimize(

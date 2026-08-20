@@ -23,6 +23,7 @@ dir="$1"
 count=0
 for folder in "Test-Corpus/Public-Tests/$dir"/*/; do
     LLM_SAFETY_TRIES=0 python scripts/test_eval.py "$folder"
+    python scripts/save_plans.py "$folder"
     ((count++))
     echo "==================== DONE: $count ===================="
 done

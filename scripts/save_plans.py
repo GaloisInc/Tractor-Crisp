@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import argparse
 from pathlib import Path
 
@@ -49,7 +51,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "project_folder",
-        type = Path,
         help = "The project folder to run on"
     )
     parser.add_argument(
@@ -62,4 +63,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    process_project(project_folder = args.project_folder, overwrite = args.overwrite)
+    process_project(project_folder = Path(args.project_folder).resolve(), overwrite = args.overwrite)

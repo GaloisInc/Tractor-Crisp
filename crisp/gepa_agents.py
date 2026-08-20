@@ -84,7 +84,7 @@ class ResponseEvaluator:
             )
 
         # Check for un-safety
-        unsafe_count = workflow.count_unsafe2(n_output_code) #TODO #3 integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
+        unsafe_count = workflow.count_unsafe2(n_output_code) #TODO integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
         if unsafe_count <= 0:
             score += self.score_safe
         else:
@@ -219,7 +219,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             scores.append(eval_result.score)
 
             if capture_traces:
-                trajectories.append( #TODO #2a do we need to label feedback for individual prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
+                trajectories.append(
                     TaskTrace(
                         task = task,
                         n_input_code = n_input_code,
@@ -268,7 +268,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     "Feedback": traj.feedback
                 }
             )
-            #TODO #2b do we need to get individual input-outputs for specific prompt types, e.g. 'agent_safety_prompt': ... ? Check GEPA docs.
+            #NOTE: When multiple prompts are optimized together, each gets its own key-value pair in `dataset`
         return dataset
 
 

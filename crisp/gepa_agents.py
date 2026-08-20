@@ -131,11 +131,18 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
 
-            task['workflow'].fuel.give(1)
-            n_plans = task['workflow'].do_safety_plan_agent(
-                n_code = n_input_code,
-                n_test_code = n_c_code
-            )[1]
+            #NOTE: Any workflow method that has `fuel.use()` inside it (e.g. `workflow.do_safety_step_agent()`) will require the workflow being given fuel beforehand. If we are not calling any such method, then we don't need to give fuel. Hence, keep the following line commented out.
+            # task['workflow'].fuel.give(1)
+
+            # Try to get pre-saved plans; if they don't exist, ask the agent to generate new ones and save those
+            try:
+                n_plans = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'plans'))
+            except ValueError:
+                n_plans = task['workflow'].do_safety_plan_agent(
+                    n_code = n_input_code,
+                    n_test_code = n_c_code
+                )[1]
+                task['workflow'].mvir.set_tag('plans', n_plans.node_id())
 
             try:
                 #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator

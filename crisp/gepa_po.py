@@ -1,10 +1,9 @@
-"""
-Code for GEPA prompt optimization.
+"""Code for GEPA prompt optimization for individual LLMs.
 
 Note: This file is named gepa_po.py and not gepa.py to
 avoid import issues, since the library is also called gepa.
 
-Note: Code here is inspired from adapters/default_adapter/default_adapter.py
+Code here is inspired from adapters/default_adapter/default_adapter.py
 in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 

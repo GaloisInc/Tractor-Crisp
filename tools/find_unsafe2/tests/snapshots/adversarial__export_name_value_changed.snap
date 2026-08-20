@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_export_name_value_changed::deflate_impl: exported symbol adv_deflate was removed
+adv_export_name_value_changed::deflate_impl: exported symbol adv_deflate_v2 was added

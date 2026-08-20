@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_new_crate::evil: raw pointer derefs increased: 0 -> 1
+adv_new_crate::evil: raw pointer types in signature increased: 0 -> 1

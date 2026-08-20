@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_struct_carried_ptr_sig::promote: raw pointer derefs increased: 0 -> 1

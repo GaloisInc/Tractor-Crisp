@@ -6,6 +6,7 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_middle;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
 use std::hash::Hash;
@@ -21,7 +22,7 @@ use find_unsafe2::{self, Outputs, FunctionOutputs, TypeOutputs};
 /// Prints an error for each thing in `new` that doesn't appear in `old`, and returns `false` if it
 /// found any such things.
 fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
-    let Outputs { total_unsafe: _, ref fns, ref types } = *new;
+    let Outputs { total_unsafe: _, ref fns, ref types, ref unsafe_impls } = *new;
     let mut ok = true;
 
     // We use this default `FunctionOutputs` as the `old_fn` for items that are defined in `new`
@@ -34,13 +35,37 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         is_mut_static: false,
         derefs_raw_ptr: 0,
         calls_unsafe: 0,
+        inline_asm: 0,
         uses_static_mut: IndexMap::new(),
         uses_union_field: IndexMap::new(),
         uses_foreign_fn: IndexMap::new(),
+        uses_ffi_entry_point: IndexMap::new(),
         casts_int_to_ptr: 0,
         sig_contains_raw_ptr: 0,
-        is_ffi_entry_point: false,
+        ffi_symbol: None,
     };
+
+    let old_ffi_symbols = old.fns.iter()
+        .filter_map(|(name, f)| Some((f.ffi_symbol.as_ref()?, name)))
+        .collect::<HashMap<_, _>>();
+    let new_ffi_symbols = fns.iter()
+        .filter_map(|(name, f)| Some((f.ffi_symbol.as_ref()?, name)))
+        .collect::<HashMap<_, _>>();
+    if old_ffi_symbols != new_ffi_symbols {
+        for (sym, name) in &old_ffi_symbols {
+            if !new_ffi_symbols.contains_key(sym) {
+                println!("{name}: exported symbol {sym} was removed");
+                ok = false;
+            }
+        }
+        for (sym, name) in &new_ffi_symbols {
+            if !old_ffi_symbols.contains_key(sym) {
+                println!("{name}: exported symbol {sym} was added");
+                ok = false;
+            }
+        }
+    }
+
     for (fn_name, new_fn) in fns {
         let old_fn = old.fns.get(fn_name).unwrap_or(&empty_fn);
         ok &= check_function_outputs(fn_name, old_fn, new_fn);
@@ -55,11 +80,14 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         ok &= check_type_outputs(type_name, old_type, new_type);
     }
 
+    ok &= check_count_map(&old.unsafe_impls, unsafe_impls,
+        |mod_path| format!("{mod_path}: unsafe impls increased"));
+
     ok
 }
 
 fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutputs) -> bool {
-    if old.is_ffi_entry_point {
+    if old.ffi_symbol.is_some() {
         // Allow increasing unsafe within FFI entry points.
         return true;
     }
@@ -68,10 +96,10 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         // Don't check the total.  Each element that feeds into this total is checked individually.
         total_unsafe: _,
         filename: _,
-        is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
-        ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn,
+        is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
+        ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn, ref uses_ffi_entry_point,
         casts_int_to_ptr, sig_contains_raw_ptr,
-        is_ffi_entry_point,
+        ffi_symbol: _,
     } = *new;
     let mut ok = true;
 
@@ -84,6 +112,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         || format!("{name}: raw pointer derefs"));
     ok &= check_count(old.calls_unsafe, calls_unsafe,
         || format!("{name}: unsafe function calls"));
+    ok &= check_count(old.inline_asm, inline_asm,
+        || format!("{name}: inline asm blocks"));
 
     ok &= check_count_map(&old.uses_static_mut, uses_static_mut,
         |k| format!("{name}: uses of static mut {k}"));
@@ -91,14 +121,13 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         |k| format!("{name}: uses of union field {k}"));
     ok &= check_count_map(&old.uses_foreign_fn, uses_foreign_fn,
         |k| format!("{name}: uses of foreign fn {k}"));
+    ok &= check_count_map(&old.uses_ffi_entry_point, uses_ffi_entry_point,
+        |k| format!("{name}: uses of FFI entry point {k}"));
 
     ok &= check_count(old.casts_int_to_ptr, casts_int_to_ptr,
         || format!("{name}: int-to-pointer casts"));
     ok &= check_count(old.sig_contains_raw_ptr, sig_contains_raw_ptr,
         || format!("{name}: raw pointer types in signature"));
-
-    ok &= check_bad_flag(old.is_ffi_entry_point, is_ffi_entry_point,
-        || format!("{name}: FFI export flag"));
 
     ok
 }
@@ -156,18 +185,32 @@ fn main() {
     assert!(json_dir.is_absolute(),
         "expected $FIND_UNSAFE2_JSON_DIR to be an absolute path, but got {:?}", json_dir);
 
+    let src_dir = env::var("FIND_UNSAFE2_SRC_DIR").unwrap();
+    let src_dir = Path::new(&src_dir);
+    assert!(src_dir.is_absolute(),
+        "expected $FIND_UNSAFE2_SRC_DIR to be an absolute path, but got {:?}", src_dir);
+
     let args = env::args().collect::<Vec<_>>();
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
         let crate_name = rustc_public::local_crate().name;
 
-        let json_path = json_dir.join(format!("{crate_name}.json"));
-        if !fs::exists(&json_path).unwrap() {
+        // Skip build scripts and non-project crates like `find_unsafe2` does.
+        if crate_name == "build_script_build" {
+            return ControlFlow::<(), ()>::Continue(());
+        }
+        if !find_unsafe2::any_local_item_under(tcx, src_dir) {
             return ControlFlow::<(), ()>::Continue(());
         }
 
-        let old_out: Outputs = serde_json::from_reader(
-            File::open(&json_path).unwrap(),
-        ).unwrap();
+        let json_path = json_dir.join(format!("{crate_name}.json"));
+        let old_out = if fs::exists(&json_path).unwrap() {
+            serde_json::from_reader(
+                File::open(&json_path).unwrap(),
+            ).unwrap()
+        } else {
+            // No JSON available, so use an empty baseline (zero unsafe).
+            Outputs::default()
+        };
 
         let new_out = find_unsafe2::process(tcx);
 

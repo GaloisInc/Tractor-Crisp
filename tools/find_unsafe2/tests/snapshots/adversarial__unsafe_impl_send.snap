@@ -1,0 +1,6 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_unsafe_impl_send: unsafe impls increased increased: 0 -> 1
+adv_unsafe_impl_send::nested: unsafe impls increased increased: 0 -> 1

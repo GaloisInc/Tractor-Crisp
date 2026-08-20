@@ -492,6 +492,7 @@ def check_unsafe2(cfg: Config, mvir: MVIR,
     with run_sandbox(cfg, mvir) as sb:
         cmd = [
             'env',
+            f'FIND_UNSAFE2_SRC_DIR={sb.join(cargo_dir)}',
             f'FIND_UNSAFE2_JSON_DIR={sb.join("unsafe_json")}',
             'cargo', 'check-unsafe2',
             '--manifest-path', sb.join(cargo_toml_path),

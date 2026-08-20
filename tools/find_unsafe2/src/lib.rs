@@ -7,8 +7,10 @@ extern crate rustc_public;
 // required to be available in rlib format, but was not found in this form" when running tests.
 extern crate rustc_driver;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::ops::ControlFlow;
+use std::path::Path;
 use indexmap::IndexMap;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
@@ -21,12 +23,10 @@ use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
 use rustc_public::rustc_internal;
 use rustc_public::ty::{
-    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder,
+    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder, TraitDef,
 };
 use serde::{Serialize, Deserialize};
-use crate::mir_visitor::Visitor;
-
-mod mir_visitor;
+use rustc_public::mir::visit::{MirVisitor, PlaceContext, Location};
 
 
 struct FunctionVisitor<'a> {
@@ -52,6 +52,8 @@ struct FunctionVisitor<'a> {
     derefs_raw_ptr: usize,
     /// Number of int-to-pointer casts within the current function.
     casts_int_to_ptr: usize,
+    /// Number of inline assembly blocks within the current function.
+    inline_asm: usize,
 }
 
 impl<'a> FunctionVisitor<'a> {
@@ -64,12 +66,13 @@ impl<'a> FunctionVisitor<'a> {
             calls_unsafe: 0,
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
+            inline_asm: 0,
         }
     }
 }
 
-impl Visitor<'_> for FunctionVisitor<'_> {
-    fn visit_place(&mut self, x: &Place) {
+impl MirVisitor for FunctionVisitor<'_> {
+    fn visit_place(&mut self, x: &Place, ptx: PlaceContext, loc: Location) {
         let mut ty = self.body.local_decl(x.local).unwrap().ty;
         for proj in &x.projection {
             if let ProjectionElem::Deref = *proj {
@@ -88,9 +91,10 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             }
             ty = proj.ty(ty).unwrap();
         }
+        self.super_place(x, ptx, loc);
     }
 
-    fn visit_operand(&mut self, op: &Operand) {
+    fn visit_operand(&mut self, op: &Operand, loc: Location) {
         if let Operand::Constant(ref co) = *op {
             if let ConstantKind::Allocated(ref a) = *co.const_.kind() {
                 for &(_, Prov(alloc_id)) in &a.provenance.ptrs {
@@ -108,10 +112,10 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             _ => {},
         }
 
-        mir_visitor::walk_operand(self, op);
+        self.super_operand(op, loc);
     }
 
-    fn visit_rvalue(&mut self, x: &Rvalue) {
+    fn visit_rvalue(&mut self, x: &Rvalue, loc: Location) {
         if let Rvalue::Aggregate(ref ag, _) = *x {
             if let AggregateKind::Adt(adt, variant_idx, _, _, union_field_idx) = *ag {
                 match adt.kind() {
@@ -138,30 +142,53 @@ impl Visitor<'_> for FunctionVisitor<'_> {
             }
         }
 
-        mir_visitor::walk_rvalue(self, x);
+        self.super_rvalue(x, loc);
     }
 
-    fn visit_terminator(&mut self, x: &Terminator) {
-        if let TerminatorKind::Call { ref func, .. } = x.kind {
-            let ty = func.ty(self.body.locals()).unwrap();
-            if let Some(sig) = ty.kind().fn_sig() {
-                if sig.value.safety == Safety::Unsafe {
-                    let filename = x.span.get_filename();
-                    let is_allowed_unsafe = filename.ends_with("/std/src/macros.rs")
-                        || filename.ends_with("/core/src/macros/mod.rs");
-                    if !is_allowed_unsafe {
-                        self.calls_unsafe += 1;
+    fn visit_terminator(&mut self, x: &Terminator, loc: Location) {
+        match x.kind {
+            TerminatorKind::Call { ref func, .. } => {
+                let ty = func.ty(self.body.locals()).unwrap();
+                if let Some(sig) = ty.kind().fn_sig() {
+                    if sig.value.safety == Safety::Unsafe {
+                        let filename = x.span.get_filename();
+                        let is_allowed_unsafe = filename.ends_with("/std/src/macros.rs")
+                            || filename.ends_with("/core/src/macros/mod.rs");
+                        if !is_allowed_unsafe {
+                            self.calls_unsafe += 1;
+                        }
                     }
                 }
-            }
+                if let Some(&RigidTy::FnDef(fd, _)) = ty.kind().rigid() {
+                    if is_int_to_ptr_call(&fd.name()) {
+                        self.casts_int_to_ptr += 1;
+                    }
+                }
+            },
+            TerminatorKind::InlineAsm { .. } => {
+                self.inline_asm += 1;
+            },
+            _ => {},
         }
 
-        mir_visitor::walk_terminator(self, x);
+        self.super_terminator(x, loc);
     }
 }
 
+/// Calls that convert `usize` to a raw pointer without an `as` cast.  These count toward
+/// `casts_int_to_ptr` just like `as` casts do.
+fn is_int_to_ptr_call(name: &str) -> bool {
+    const INT_TO_PTR_FNS: &[&str] = &[
+        "::with_exposed_provenance", "::with_exposed_provenance_mut",
+        "::without_provenance", "::without_provenance_mut",
+        "::from_exposed_addr", "::from_exposed_addr_mut",
+        "::with_addr", "::map_addr",
+    ];
+    name.contains("::ptr::") && INT_TO_PTR_FNS.iter().any(|s| name.ends_with(s))
+}
 
-#[derive(Debug, Serialize, Deserialize)]
+
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Outputs {
     /// Sum of all unsafe counts from all functions and items, except for FFI entry points.
     ///
@@ -171,7 +198,12 @@ pub struct Outputs {
     pub fns: IndexMap<String, FunctionOutputs>,
     pub types: IndexMap<String, TypeOutputs>,
 
-    // TODO: Unsafety: crate implements `unsafe trait`s.
+    /// Unsafety: the crate contains unsafe impls.
+    ///
+    /// These are indexed by parent module so `check_unsafe2` can give more specific errors when
+    /// new unsafe impls are added.
+    pub unsafe_impls: IndexMap<String, usize>,
+
     // TODO: Unsafety: crate contains `unsafe extern` imports.
 }
 
@@ -194,6 +226,8 @@ pub struct FunctionOutputs {
     pub derefs_raw_ptr: usize,
     /// Unsafety: function calls `unsafe fn`s.
     pub calls_unsafe: usize,
+    /// Unsafety: function contains inline assembly, which can access arbitrary memory.
+    pub inline_asm: usize,
     /// Unsafety: function mentions `static mut`s.
     ///
     /// This is overapproximated: we count any mention of a static `S` as an access, even though
@@ -212,6 +246,12 @@ pub struct FunctionOutputs {
 
     /// Progress: function mentions imported `extern` `fn`s.
     pub uses_foreign_fn: IndexMap<String, usize>,
+    /// Progress: function mentions local FFI entry points.
+    ///
+    /// The FFI rules forbid implementation code from calling or referencing exported entry
+    /// points, and entry points are exempt from the unsafety checks, so routing work through
+    /// them would hide unsafe code.
+    pub uses_ffi_entry_point: IndexMap<String, usize>,
     /// Progress: function casts `usize` to a raw pointer.
     ///
     /// This was added after seeing the agent bypass restrictions on raw pointers in data
@@ -224,9 +264,10 @@ pub struct FunctionOutputs {
     pub sig_contains_raw_ptr: usize,
     // TODO: Progress: function signature type contains raw pointers.
 
-    /// Whether this function is an FFI entry point.  Specifically, this is set when the function
-    /// has the `#[no_mangle]` or `#[export_name = ...]` attribute.
-    pub is_ffi_entry_point: bool,
+    /// The symbol name of this function, if it's an FFI entry point.  For functions that aren't
+    /// FFI entry points (which have neither `#[no_mangle]` nor `#[export_name = "..."]`
+    /// attributes), this will be `None`.
+    pub ffi_symbol: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -246,20 +287,52 @@ impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
             ref mut total_unsafe, filename: _,
-            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe,
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
+            uses_ffi_entry_point: _,
             uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
             // Other
-            is_ffi_entry_point: _,
+            ffi_symbol: _,
         } = *self;
 
         *total_unsafe = is_unsafe_fn as usize
             + is_mut_static as usize
             + derefs_raw_ptr
             + calls_unsafe
+            + inline_asm
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
+    }
+
+    fn add_from(&mut self, src: &Self) {
+        let FunctionOutputs {
+            total_unsafe: _, filename: _,
+            is_unsafe_fn, is_mut_static,
+            derefs_raw_ptr, calls_unsafe, inline_asm,
+            ref uses_static_mut, ref uses_union_field,
+            // Progress, not safety
+            ref uses_ffi_entry_point,
+            ref uses_foreign_fn, casts_int_to_ptr, sig_contains_raw_ptr,
+            // Other
+            ffi_symbol: _,
+        } = *src;
+        fn add_map<K: Eq + Hash + Clone>(dest: &mut IndexMap<K, usize>, src: &IndexMap<K, usize>) {
+            for (k, &v) in src {
+                *dest.entry(k.clone()).or_insert(0) += v;
+            }
+        }
+        self.is_unsafe_fn |= is_unsafe_fn;
+        self.is_mut_static |= is_mut_static;
+        self.derefs_raw_ptr += derefs_raw_ptr;
+        self.calls_unsafe += calls_unsafe;
+        self.inline_asm += inline_asm;
+        add_map(&mut self.uses_static_mut, uses_static_mut);
+        add_map(&mut self.uses_union_field, uses_union_field);
+        add_map(&mut self.uses_ffi_entry_point, uses_ffi_entry_point);
+        add_map(&mut self.uses_foreign_fn, uses_foreign_fn);
+        self.casts_int_to_ptr += casts_int_to_ptr;
+        self.sig_contains_raw_ptr += sig_contains_raw_ptr;
     }
 }
 
@@ -273,6 +346,31 @@ impl TypeOutputs {
 
         0
     }
+}
+
+
+/// Whether any item or type of the current crate has its source under `src_dir`.  Used by the
+/// drivers to restrict analysis to the project's own crates.  Types are checked too, so a crate
+/// holding only type definitions still counts as a project crate.
+pub fn any_local_item_under(tcx: TyCtxt, src_dir: &Path) -> bool {
+    let all_spans_iter = rustc_public::all_local_items().into_iter().map(|item| item.span())
+        .chain(crate_type_defs(tcx).into_iter().map(|td| td.span()));
+
+    // `canonicalize` possibly does a lot of filesystem operations, so check each distinct file
+    // path only once.
+    let mut files_seen = HashSet::new();
+    for span in all_spans_iter {
+        let file = span.get_filename();
+        if files_seen.insert(file.clone()) {
+            if let Ok(file_abs) = Path::new(&file).canonicalize() {
+                if file_abs.starts_with(&src_dir) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 
@@ -405,6 +503,25 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         }
     };
 
+    let mut is_fn_ffi_entry_point = {
+        let mut storage = HashMap::new();
+        move |fd: FnDef| -> bool {
+            if let Some(&x) = storage.get(&fd) {
+                return x;
+            }
+            let x = if CrateItem(fd.0).is_foreign_item() {
+                false
+            } else {
+                let internal_def_id = rustc_internal::internal::<DefId>(tcx, fd.0);
+                let attrs = tcx.codegen_fn_attrs(internal_def_id);
+                attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
+                    || attrs.symbol_name.is_some()
+            };
+            storage.insert(fd, x);
+            x
+        }
+    };
+
     let is_unsafe_fn = move |item: CrateItem| {
         if item.kind() != ItemKind::Fn {
             return false;
@@ -419,10 +536,10 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         tcx.is_mutable_static(internal_def_id)
     };
 
-    let is_ffi_entry_point = move |item: CrateItem| {
+    let ffi_symbol = move |item: CrateItem| -> Option<String> {
         if item.is_foreign_item() {
             // FFI imports are not entry points.
-            return false;
+            return None;
         }
         if !matches!(item.kind(), ItemKind::Fn /* | ItemKind::Static*/) {
             // Only `fn`s and `static`s can be exported.
@@ -432,33 +549,52 @@ pub fn process(tcx: TyCtxt) -> Outputs {
             // allows internal unsafe code.
             //
             // TODO: do set the flag on statics (for accuracy) but filter them out elsewhere
-            return false;
+            return None;
         }
         let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
         let attrs = tcx.codegen_fn_attrs(internal_def_id);
-        attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
-            || attrs.symbol_name.is_some()
+        if !attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE) && attrs.symbol_name.is_none() {
+            return None;
+        }
+        let inst = rustc_middle::ty::Instance::mono(tcx, internal_def_id);
+        let sym_name = tcx.symbol_name(inst);
+        Some(sym_name.name.to_string())
+    };
+
+    // If `item` is a closure, return the `FnDef` of its containing function.
+    let closure_parent = |item: CrateItem| -> Option<CrateItem> {
+        use rustc_hir::def::DefKind;
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, item.0);
+        if !matches!(tcx.def_kind(internal_def_id), DefKind::Closure) {
+            return None;
+        }
+        // Every closure should have a parent, so no need for `tcx.opt_parent` here.
+        let parent_internal_def_id = tcx.parent(internal_def_id);
+        Some(CrateItem(rustc_internal::stable(parent_internal_def_id)))
     };
 
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
         types: IndexMap::new(),
+        unsafe_impls: IndexMap::new(),
     };
 
+    let mut rollup_map = IndexMap::new();
     for item in items {
         if let Some(body) = item.body() {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
             let key: String = item.name();
-            let mut value = FunctionOutputs {
+            let value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
                 is_unsafe_fn: is_unsafe_fn(item),
                 is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
+                inline_asm: v.inline_asm,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {
                     is_static_mut(sd).then(|| (sd.name(), count))
                 }).collect(),
@@ -469,17 +605,47 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 uses_foreign_fn: v.uses_fns.iter().filter_map(|(&fd, &count)| {
                     is_fn_foreign(fd).then(|| (fd.name(), count))
                 }).collect(),
+                uses_ffi_entry_point: v.uses_fns.iter().filter_map(|(&fd, &count)| {
+                    is_fn_ffi_entry_point(fd).then(|| (fd.name(), count))
+                }).collect(),
                 casts_int_to_ptr: v.casts_int_to_ptr,
                 sig_contains_raw_ptr: sig_contains_raw_ptr(item),
 
-                is_ffi_entry_point: is_ffi_entry_point(item),
+                ffi_symbol: ffi_symbol(item),
             };
-            value.calc_total_unsafe();
-            if !value.is_ffi_entry_point {
-                out.total_unsafe += value.total_unsafe;
+            // Record all closure->parent relationships here.  Additional filtering is applied
+            // below when doing the actual folding of closure metrics into parents.
+            if let Some(parent) = closure_parent(item) {
+                rollup_map.insert(key.clone(), parent.name());
             }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());
+        }
+    }
+
+    for (src, mut dest) in &rollup_map {
+        for i in 0.. {
+            assert!(i < rollup_map.len(),
+                "detected infinite cycle in closure parent graph, involving {dest:?}");
+            match rollup_map.get(dest) {
+                Some(x) => { dest = x; },
+                None => break,
+            }
+        }
+
+        // Only fold closures into parents if the parent is an FFI entry point.
+        let dest_is_ffi = out.fns[dest].ffi_symbol.is_some();
+        if dest_is_ffi {
+            let src_value = out.fns.swap_remove(src).unwrap();
+            let dest_value = out.fns.get_mut(dest).unwrap();
+            dest_value.add_from(&src_value);
+        }
+    }
+
+    for value in out.fns.values_mut() {
+        value.calc_total_unsafe();
+        if value.ffi_symbol.is_none() {
+            out.total_unsafe += value.total_unsafe;
         }
     }
 
@@ -492,6 +658,17 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         out.total_unsafe += value.total_unsafe();
         let old = out.types.insert(key, value);
         assert!(old.is_none(), "duplicate types entry for {:?}", td.name());
+    }
+
+    for id in rustc_public::local_crate().trait_impls() {
+        let it = id.trait_impl();
+        let td = it.value.def_id;
+        let decl = TraitDef::declaration(&td);
+        if matches!(decl.safety, Safety::Unsafe) {
+            let impl_parent = id.0.parent().unwrap().name();
+            *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
+            out.total_unsafe += 1;
+        }
     }
 
     out

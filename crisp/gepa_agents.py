@@ -17,7 +17,7 @@ from typing import Any
 from . import llm_format
 from .config import Config
 from .error import CrispError
-from .gepa_po import is_project_gepaready
+from .gepa_llm import is_project_gepaready
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow

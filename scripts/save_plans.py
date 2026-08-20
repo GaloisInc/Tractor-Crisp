@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from crisp.gepa_po import is_project_gepaready
+from crisp.gepa_llm import is_project_gepaready
 from crisp.config import Config
 from crisp.mvir import MVIR
 from crisp.workflow import Workflow

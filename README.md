@@ -224,7 +224,7 @@ ulimit -Sn $(ulimit -Hn)
 ## Running GEPA for individual prompt optimization of LLMs
 Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_llm()`.
 ```python
-from crisp.gepa_po import do_gepa
+from crisp.gepa_llm import do_gepa
 
 do_gepa(
 
@@ -248,7 +248,7 @@ do_gepa(
 
 The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py::evaluate_gepa_llm()`.
 ```python
-from crisp.gepa_po import run_gepa_eval_on_prompt
+from crisp.gepa_llm import run_gepa_eval_on_prompt
 
 run_gepa_eval_on_prompt(
 

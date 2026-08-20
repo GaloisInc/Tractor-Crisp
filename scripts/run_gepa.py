@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from crisp.gepa_po import do_gepa, run_gepa_eval_on_prompt
+from crisp.gepa_llm import do_gepa, run_gepa_eval_on_prompt
 from crisp.gepa_agents import do_gepa as do_gepa_agents
 
 

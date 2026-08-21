@@ -224,9 +224,9 @@ ulimit -Sn $(ulimit -Hn)
 ## Running GEPA for individual prompt optimization of LLMs
 Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_llm()`.
 ```python
-from crisp.gepa_llm import do_gepa
+from crisp.gepa_llm import run_gepa
 
-do_gepa(
+run_gepa(
 
     # dataset_path is the dataset folder on which GEPA will run its optimization
     dataset_path = <full/path/to/dataset/>,
@@ -248,9 +248,9 @@ do_gepa(
 
 The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py::evaluate_gepa_llm()`.
 ```python
-from crisp.gepa_llm import run_gepa_eval_on_prompt
+from crisp.gepa_llm import eval_gepa_prompt
 
-run_gepa_eval_on_prompt(
+eval_gepa_prompt(
 
     # dataset_path is the dataset folder on which the prompt will be evaluated
     dataset_path = <full/path/to/dataset/>,
@@ -282,9 +282,9 @@ In future, we may also optimize the following prompts. Currently they are not su
 
 Run optimization as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
 ```python
-from crisp.gepa_agents import do_gepa as do_gepa_agents
+from crisp.gepa_agents import run_gepa
 
-do_gepa_agents(
+run_gepa(
 
     # dataset_path is the dataset folder on which GEPA will run its optimization
     dataset_path = <full/path/to/dataset/>,

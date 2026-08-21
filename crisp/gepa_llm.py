@@ -217,7 +217,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         return dataset
 
 
-def do_gepa(
+def run_gepa(
     dataset_path: Path,
     seed_prompt_path: Path,
     task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
@@ -278,7 +278,7 @@ def do_gepa(
         f.write(gepa_result.best_candidate['system_prompt'])
 
 
-def run_gepa_eval_on_prompt(
+def eval_gepa_prompt(
     dataset_path: Path,
     optimized_prompt_folder: Path,
     model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),

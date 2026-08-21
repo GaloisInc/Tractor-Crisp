@@ -299,7 +299,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         return dataset
 
 
-def do_gepa(
+def run_gepa(
     dataset_path: Path,
     seed_prompt_paths: dict[str, Path],
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),

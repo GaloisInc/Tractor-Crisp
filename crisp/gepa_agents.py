@@ -17,7 +17,7 @@ from typing import Any
 from . import llm_format
 from .config import Config
 from .error import CrispError
-from .gepa_llm import is_project_gepaready
+from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow
@@ -52,14 +52,12 @@ class ResponseEvaluator:
         score_safe: float = 0.5,
         score_passtests: float = 0.5,
         score_penalty_per_output_token: float = 1e-5,
-        score_penalty_per_call_duration_sec: float = 1e-3,
-        min_score: float = 0.,
+        score_penalty_per_call_duration_sec: float = 1e-3
     ):
         self.score_safe = score_safe
         self.score_passtests = score_passtests
         self.score_penalty_per_output_token = score_penalty_per_output_token
         self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
-        self.min_score = min_score
 
     def __call__(
         self,
@@ -69,12 +67,12 @@ class ResponseEvaluator:
         n_c_code: TreeNode,
         run_details: dict[str, Any]
     ) -> EvaluationResult:
-        score = 0
+        score = GEPA_MIN_SCORE
 
         # Check if anything changed from input to output; if not, the agent failed
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
-                score = self.min_score,
+                score = GEPA_MIN_SCORE,
                 feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
             )
 
@@ -102,12 +100,12 @@ class ResponseEvaluator:
         feedback_components.append(f"The refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Penalize for call duration
-        total_call_duration_sec = sum(run_details[k].get('call_duration_sec', 0) for k in run_details)
+        total_call_duration_sec = sum(run_details[k].get('call_duration_sec', 0.) for k in run_details)
         score -= (self.score_penalty_per_call_duration_sec * total_call_duration_sec)
         feedback_components.append(f"The refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Return final results
-        score = max(score, self.min_score)
+        score = max(score, GEPA_MIN_SCORE)
         feedback = '\n\n'.join(feedback_components)
         return EvaluationResult(score = score, feedback = feedback)
 
@@ -139,11 +137,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             if set(re.findall(r'\{.*\}', candidate[prompt_type])) != formatted_blocks_for_prompt_type:
                 bad_prompt_types.append(prompt_type)
 
-        # If any candidate prompt doesn't have correct placeholders, return a dummy eval batch with all scores 0
+        # If any candidate prompt doesn't have correct placeholders, return a dummy eval batch with all scores minimum
         if bad_prompt_types:
             for task in batch:
                 outputs.append(None)
-                scores.append(self.evaluator.min_score)
+                scores.append(GEPA_MIN_SCORE)
                 if capture_traces:
                     feedback_components = []
                     for bad_prompt_type in bad_prompt_types:

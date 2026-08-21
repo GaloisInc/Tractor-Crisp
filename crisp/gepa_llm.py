@@ -18,6 +18,7 @@ from typing import Any
 from . import llm_format
 from .config import Config
 from .error import CrispError
+from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE, GEPA_MAX_SCORE
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow
@@ -47,35 +48,15 @@ class EvaluationResult:
     feedback: str
 
 
-def is_project_gepaready(project_folder: Path) -> bool:
-    """
-    Given a project folder, check if it has the required files to run GEPA and return True / False accordingly.
-    """
-    res = True
-    for required_file in [
-        project_folder / 'crisp.toml',
-        project_folder / 'crisp-storage/tags/c_code',
-        project_folder / 'crisp-storage/tags/current'
-    ]:
-        if not required_file.is_file():
-            print(f"WARNING: Required file '{required_file}' not found.")
-            res = False
-    return res
-
-
 class ResponseEvaluator:
 
     def __init__(
         self,
-        score_success: float = 1.0,
         score_passtests_but_unsafe: float = 0.5,
-        score_compiles_but_failtests: float = 0.25,
-        score_failure: float = 0.0
+        score_compiles_but_failtests: float = 0.25
     ):
-        self.score_success = score_success
         self.score_passtests_but_unsafe = score_passtests_but_unsafe
         self.score_compiles_but_failtests = score_compiles_but_failtests
-        self.score_failure = score_failure
 
     def __call__(
         self,
@@ -88,7 +69,7 @@ class ResponseEvaluator:
         # Check for correct format; if not, TreeNode hasn't changed
         if n_llm_output_code.node_id() == n_llm_input_code.node_id():
             return EvaluationResult(
-                score = self.score_failure,
+                score = GEPA_MIN_SCORE,
                 feedback = "The generated response is not in the proper format."
             )
 
@@ -96,7 +77,7 @@ class ResponseEvaluator:
         compile_results = workflow.cargo_check_json_op(n_llm_output_code)
         if not compile_results.passed:
             return EvaluationResult(
-                score = self.score_failure,
+                score = GEPA_MIN_SCORE,
                 feedback = f"The generated response includes Rust code that cannot compile. Please try again to produce Rust code that can compile, has identical behavior as the input, and is safe.\nHere are the results of attempting to compile:\n{compile_results.body_str()}"
             )
 
@@ -127,7 +108,7 @@ class ResponseEvaluator:
 
         # Everything works
         return EvaluationResult(
-            score = self.score_success,
+            score = GEPA_MAX_SCORE,
             feedback = "The generated response includes Rust code that successfully compiles, has identical behavior to the input (i.e. passes tests), and is safe. Good job!"
         )
 

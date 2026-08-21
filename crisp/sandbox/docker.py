@@ -79,7 +79,12 @@ class WorkContainer:
             t.addfile(info, io.BytesIO(body))
         self._checkout_tar_file(tar_io.getvalue())
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ) -> TreeNode:
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -93,8 +98,12 @@ class WorkContainer:
         dest_prefix = os.path.dirname(rel_path)
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
+                if ignore_spec is not None and ignore_spec.match_file(dest_path):
                     continue
+                if path_filter is not None and not path_filter(dest_path):
+                    continue
+
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -105,9 +114,9 @@ class WorkContainer:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
-                f = t.extractfile(info)
-                dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
+
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path
+                f = t.extractfile(info)
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 

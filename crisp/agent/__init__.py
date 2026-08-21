@@ -10,9 +10,10 @@ import shlex
 from pathlib import Path
 from typing import Sequence
 
+from fastapi import FastAPI
 from pathspec.pathspec import PathSpec
 
-from .. import llm
+from .. import http_server, llm
 from ..config import Config
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
@@ -192,7 +193,7 @@ class AgentSandbox:
         self.sb = sb
         self.output_filters = output_filters
         self.cwd = cwd
-        self.env = env
+        self.env = env.copy()
 
     def run(self, cmd):
         return self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
@@ -206,6 +207,16 @@ class AgentSandbox:
             if exit_code != 0:
                 break
         return exit_code, logs
+
+    def run_all_with_api_port(self, api_port, cmds):
+        port_env_var = 'CRISP_API_PORT'
+        assert port_env_var not in self.env
+        self.env[port_env_var] = str(api_port)
+
+        r = self.run_all(cmds)
+
+        del self.env[port_env_var]
+        return r
 
     def commit_raw_output_files(
         self,
@@ -240,6 +251,7 @@ def run_agent(
     setup_cmds: list[list[str]] = [],
     clean_cmds: list[list[str]] = [],
     env: dict | None = None,
+    http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
 ) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
     """
     Run the agent on some input files to produce some outputs.
@@ -273,6 +285,8 @@ def run_agent(
     - clean_cmds: Extra cleanup commands to run after `codex_cmd` but before
       extracting outputs.
     - cwd: Working directory (relative to sandbox root) used for all commands.
+    - http_build_app: If set, this will be called to set up an HTTP API that
+      will be available to the agent while it runs.
     """
 
     if env is None:
@@ -344,7 +358,13 @@ def run_agent(
         ]
         all_cmds += clean_cmds
 
-        exit_code, logs = asb.run_all(all_cmds)
+        if http_build_app is not None:
+            exit_code, logs = http_server.run_with_callbacks(
+                lambda app: http_build_app(asb, app),
+                asb.run_all_with_api_port, all_cmds,
+            )
+        else:
+            exit_code, logs = asb.run_all(all_cmds)
 
         raw_output_files = asb.commit_raw_output_files()
 

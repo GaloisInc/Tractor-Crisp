@@ -83,7 +83,12 @@ class SudoSandbox:
         )
         self._run_sudo(('sh', '-c', cmd), input=body)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ):
         assert not os.path.isabs(rel_path)
         p = self._run_sudo(('tar', '-C', self.join(rel_path), '-c', '.'), stdout=subprocess.PIPE)
         tar_bytes = p.stdout
@@ -91,8 +96,13 @@ class SudoSandbox:
         files = {}
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                # Prefix output paths with the requested `rel_path`.
+                dest_path = os.path.normpath(os.path.join(rel_path, info.name))
+                if ignore_spec is not None and ignore_spec.match_file(dest_path):
                     continue
+                if path_filter is not None and not path_filter(dest_path):
+                    continue
+
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -103,9 +113,9 @@ class SudoSandbox:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+
+                assert dest_path not in files, 'duplicate entry for %s' % dest_path
                 f = t.extractfile(info)
-                # Prefix output paths with the requested `rel_path`.
-                dest_path = os.path.normpath(os.path.join(rel_path, info.name))
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 

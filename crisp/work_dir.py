@@ -62,7 +62,12 @@ class WorkDir:
             dct[rel_path] = self.commit_file(rel_path).node_id()
         return TreeNode.new(self.mvir, files=dct)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ):
         """
         `ignore_spec` is a `PathSpec` object specifying a gitignore-style
         (or alternative encoding) list of files to ignore during this operation,
@@ -80,6 +85,8 @@ class WorkDir:
                 for file_name in file_names:
                     file_path = os.path.join(dir_path_rel, file_name)
                     if ignore_spec is not None and ignore_spec.match_file(file_path):
+                        continue
+                    if path_filter is not None and not path_filter(file_path):
                         continue
 
                     assert file_path not in files

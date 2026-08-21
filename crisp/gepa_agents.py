@@ -397,7 +397,7 @@ def eval_gepa_prompt(
         optimized_prompts[prompt_type] = optimized_prompt_paths[prompt_type].read_text()
 
     # Get project folders
-    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder))
+    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder, plans_required=True))
 
     # Load response evaluator
     response_evaluator = ResponseEvaluator()

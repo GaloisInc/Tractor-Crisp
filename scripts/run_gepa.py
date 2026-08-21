@@ -74,8 +74,7 @@ def evaluate_gepa_agents():
                 optimized_prompt_folder = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}',
                 optimized_prompt_paths = {
                     'agent_safety_prompt': Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/agent_safety_prompt.txt'
-                },
-                model = 'gpt-5.6-sol'
+                }
             )
 
 

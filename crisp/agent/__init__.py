@@ -181,6 +181,44 @@ def _add_codex_agent_inputs(
         )
 
 
+class AgentSandbox:
+    def __init__(
+        self,
+        sb: Sandbox,
+        output_filters: dict[str, Callable[[str], bool]],
+        cwd: str,
+        env: dict,
+    ):
+        self.sb = sb
+        self.output_filters = output_filters
+        self.cwd = cwd
+        self.env = env
+
+    def run(self, cmd):
+        return self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
+
+    def commit_raw_output_files(
+        self,
+        path_filter: Callable[[str], bool] | None = None,
+    ) -> TreeNode:
+        # Gather raw output files.
+        ignore_lines = [
+            '.git/',
+            '__pycache__/',
+            'build/',
+            'build-ninja/',
+            'target/',
+            '.codex/',
+            '!.codex/log/',
+            '!.codex/sessions/',
+        ]
+        ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
+        return self.sb.commit_dir('.', ignore_spec=ignore_spec, path_filter=path_filter)
+
+    def get_output(self, name) -> TreeNode:
+        path_filter = self.output_filters[name]
+        return self.commit_raw_output_files(path_filter)
+
 def run_agent(
     cfg: Config,
     mvir: MVIR,
@@ -278,6 +316,8 @@ def run_agent(
         codex_dir = sb.join('.codex')
         env.setdefault('CODEX_HOME', codex_dir)
 
+        asb = AgentSandbox(sb, output_filters, cwd, env)
+
         all_cmds = []
         if init_git:
             all_cmds += [
@@ -297,24 +337,12 @@ def run_agent(
         logs = None
         for cmd in all_cmds:
             print(f'run: {shlex.join(cmd)}')
-            exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
+            exit_code, logs2 = asb.run(cmd)
             logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
             if exit_code != 0:
                 break
 
-        # Gather raw output files.
-        ignore_lines = [
-            '.git/',
-            '__pycache__/',
-            'build/',
-            'build-ninja/',
-            'target/',
-            '.codex/',
-            '!.codex/log/',
-            '!.codex/sessions/',
-        ]
-        ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
-        raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
+        raw_output_files = asb.commit_raw_output_files()
 
     # Gather input `NodeId`s.
     input_node_ids = {}

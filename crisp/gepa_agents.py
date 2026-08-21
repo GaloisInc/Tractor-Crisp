@@ -90,7 +90,7 @@ class ResponseEvaluator:
         test_results = workflow.test_op(n_output_code, n_c_code)
         if test_results.exit_code == 0:
             score += self.score_passtests
-            feedback_components.append("The refactored Rust code passes functaionality tests. Good job!")
+            feedback_components.append("The refactored Rust code passes functionality tests. Good job!")
         else:
             feedback_components.append(f"The refactored Rust code fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe.")
 

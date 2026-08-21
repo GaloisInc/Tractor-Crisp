@@ -4,10 +4,12 @@ Code here is inspired from adapters/default_adapter/default_adapter.py
 in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
+import csv
 from dataclasses import dataclass
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
+import pandas as pd
 from pathlib import Path
 import random
 import traceback
@@ -366,5 +368,112 @@ def do_gepa(
             f.write(gepa_result.best_candidate[prompt_type])
 
 
-def run_gepa_eval_on_prompt():
-    ...
+def eval_gepa_prompt(
+    dataset_path: Path,
+    optimized_prompt_folder: Path,
+    optimized_prompt_paths: dict[str, Path],
+    model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
+    output_csv_path: Path | None = None
+):
+    """
+    Use the GEPA evaluation function(s) to check the performance of any prompt.
+
+    Inputs:
+    - dataset_path: Path to a corpus folder, e.g. .../B01_organic.
+    - optimized_prompt_folder: Path to a folder containing the prompt to be used for evaluating inside `prompt.txt`.
+    - model: The LM to run the prompt on.
+    - output_csv_path: Save results to this CSV.
+        - If None, set to `<optimized_prompt_folder> / results_<dataset_name>_<model>.csv`
+        - File will be appended to if it already exists
+    """
+
+    # Set model
+    os.environ['CRISP_API_MODEL'] = model
+
+    # Get prompts
+    prompt_types = optimized_prompt_paths.keys()
+    optimized_prompts = {}
+    for prompt_type in prompt_types:
+        optimized_prompts[prompt_type] = optimized_prompt_paths[prompt_type].read_text()
+
+    # Get project folders
+    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder))
+
+    # Load response evaluator
+    response_evaluator = ResponseEvaluator()
+
+    # If it exists, read output CSV and get done files
+    if output_csv_path is None:
+        output_csv_path = optimized_prompt_folder / f'results_{dataset_path.name}_{model}.csv'
+    output_csv_existed = False
+    done_already = set()
+    if output_csv_path.exists():
+        output_csv_existed = True
+        output_csv = pd.read_csv(output_csv_path)
+        done_already = set(output_csv['project_folder'])
+        del output_csv
+
+    # Write to output CSV
+    with open(output_csv_path, 'a', encoding='utf-8') as csvfile:
+        csvwriter = csv.writer(csvfile)
+
+        # Write header if this is the first time output CSV is being written to
+        if not output_csv_existed:
+            csvwriter.writerow([
+                'project_folder',
+                'score'
+            ])
+
+        # Iterate
+        for project_folder in project_folders:
+
+            # Check if already done
+            if project_folder.name in done_already:
+                continue
+
+            # Create mvir and workflow
+            cfg = Config.from_toml_file(
+                str(project_folder / 'crisp.toml'),
+                mvir_storage_dir = str(project_folder / 'crisp-storage')
+            )
+            mvir = MVIR(cfg.mvir_storage_dir, '.')
+            workflow = Workflow(cfg, mvir)
+
+            # Get relevant nodes
+            n_input_code = mvir.node(parse_node_id_arg(mvir, 'current'))
+            n_c_code = mvir.node(parse_node_id_arg(mvir, 'c_code'))
+            n_plans = mvir.node(parse_node_id_arg(mvir, 'plans'))
+
+            # Run agent
+            try:
+                n_output_code, _ = workflow.agent_safety(
+                    n_code = n_input_code,
+                    n_test_code = n_c_code,
+                    n_plans = n_plans,
+                    agent_safety_prompt = optimized_prompts['agent_safety_prompt']
+                )
+                n_codex = mvir.node(parse_node_id_arg(mvir, 'op_history'))
+                run_details = {
+                    'agent_safety_prompt': {
+                        'call_duration_sec': n_codex.call_duration_sec,
+                        'output_tokens': n_codex.output_tokens
+                    }
+                }
+            except CrispError as e:
+                print(f'Safety attempt failed: {e}')
+                traceback.print_exc()
+
+            # Get evaluation result
+            eval_result = response_evaluator(
+                workflow = workflow,
+                n_output_code = n_output_code,
+                n_input_code = n_input_code,
+                n_c_code = n_c_code,
+                run_details = run_details
+            )
+
+            # Write results
+            csvwriter.writerow([
+                project_folder.name,
+                eval_result.score
+            ])

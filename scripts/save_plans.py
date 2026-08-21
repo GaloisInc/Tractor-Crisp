@@ -3,10 +3,7 @@
 import argparse
 from pathlib import Path
 
-from crisp.gepa_common import is_project_gepaready
-from crisp.config import Config
-from crisp.mvir import MVIR
-from crisp.workflow import Workflow
+from crisp.gepa_common import is_project_gepaready, get_workflow_for_project
 from crisp.__main__ import parse_node_id_arg
 
 
@@ -18,16 +15,11 @@ def process_project(project_folder: Path, overwrite: bool):
     """
 
     if is_project_gepaready(project_folder):
-        cfg = Config.from_toml_file(
-            str(project_folder / 'crisp.toml'),
-            mvir_storage_dir = str(project_folder / 'crisp-storage')
-        )
-        mvir = MVIR(cfg.mvir_storage_dir, '.')
-        workflow = Workflow(cfg, mvir)
+        workflow = get_workflow_for_project(project_folder)
 
         exists = False
         try:
-            mvir.node(parse_node_id_arg(mvir, 'plans'))
+            workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'plans'))
             exists = True
         except ValueError:
             pass
@@ -37,10 +29,10 @@ def process_project(project_folder: Path, overwrite: bool):
         else:
             print(f"Processing project '{project_folder.name}' ...")
             n_plans = workflow.do_safety_plan_agent(
-                n_code = mvir.node(parse_node_id_arg(mvir, 'current')), #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
-                n_test_code =  mvir.node(parse_node_id_arg(mvir, 'c_code'))
+                n_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current')), #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
+                n_test_code =  workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))
             )[1]
-            mvir.set_tag('plans', n_plans.node_id())
+            workflow.mvir.set_tag('plans', n_plans.node_id())
             print(f"Done processing project '{project_folder.name}.'")
 
     else:

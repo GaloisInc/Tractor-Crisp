@@ -16,11 +16,15 @@ import random
 from typing import Any
 
 from . import llm_format
-from .config import Config
 from .error import CrispError
-from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE, GEPA_MAX_SCORE
+from .gepa_common import (
+    GEPA_MIN_SCORE,
+    GEPA_MAX_SCORE,
+    is_project_gepaready,
+    get_workflow_for_project
+)
 from .__main__ import parse_node_id_arg
-from .mvir import MVIR, TreeNode
+from .mvir import TreeNode
 from .workflow import Workflow
 
 
@@ -251,12 +255,7 @@ def run_gepa(
     project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
     random.shuffle(project_folders)
     for i,project_folder in enumerate(project_folders):
-        cfg = Config.from_toml_file(
-            str(project_folder / 'crisp.toml'),
-            mvir_storage_dir = str(project_folder / 'crisp-storage')
-        )
-        mvir = MVIR(cfg.mvir_storage_dir, '.')
-        workflow = Workflow(cfg, mvir)
+        workflow = get_workflow_for_project(project_folder)
         task_input = {'workflow': workflow}
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
@@ -339,18 +338,13 @@ def eval_gepa_prompt(
                 continue
 
             # Create mvir and workflow
-            cfg = Config.from_toml_file(
-                str(project_folder / 'crisp.toml'),
-                mvir_storage_dir = str(project_folder / 'crisp-storage')
-            )
-            mvir = MVIR(cfg.mvir_storage_dir, '.')
-            workflow = Workflow(cfg, mvir)
+            workflow = get_workflow_for_project(project_folder)
 
             # Get relevant nodes
-            n_c_code_id = parse_node_id_arg(mvir, 'c_code')
-            n_c_code = mvir.node(n_c_code_id)
-            n_llm_input_code_id = parse_node_id_arg(mvir, 'current')
-            n_llm_input_code = mvir.node(n_llm_input_code_id)
+            n_c_code_id = parse_node_id_arg(workflow.mvir, 'c_code')
+            n_c_code = workflow.mvir.node(n_c_code_id)
+            n_llm_input_code_id = parse_node_id_arg(workflow.mvir, 'current')
+            n_llm_input_code = workflow.mvir.node(n_llm_input_code_id)
 
             # LLM rewriting
             n_llm_output_code = workflow.llm_gepa(n_code=n_llm_input_code, prompt=prompt)

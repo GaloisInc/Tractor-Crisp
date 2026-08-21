@@ -3,6 +3,10 @@
 from pathlib import Path
 import re
 
+from .config import Config
+from .mvir import MVIR
+from .workflow import Workflow
+
 
 # Don't mess with these because GEPA internals depend on these
 GEPA_MIN_SCORE = 0.
@@ -27,6 +31,16 @@ def is_project_gepaready(project_folder: Path, plans_required: bool = False) -> 
             print(f"WARNING: Required file '{required_file}' not found.")
             res = False
     return res
+
+
+def get_workflow_for_project(project_folder: Path) -> Workflow:
+    cfg = Config.from_toml_file(
+        str(project_folder / 'crisp.toml'),
+        mvir_storage_dir = str(project_folder / 'crisp-storage')
+    )
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    workflow = Workflow(cfg, mvir)
+    return workflow
 
 
 def get_expected_formatted_blocks_from_seed_candidate(seed_candidate: dict[str, str]) -> dict[str, set[str]]:

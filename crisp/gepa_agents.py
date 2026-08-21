@@ -16,17 +16,17 @@ import traceback
 from typing import Any
 
 from . import llm_format
-from .config import Config
 from .error import CrispError
 from .gepa_common import (
     GEPA_MIN_SCORE,
     GEPA_MAX_SCORE,
     is_project_gepaready,
+    get_workflow_for_project,
     get_bad_prompts_in_candidate,
     get_expected_formatted_blocks_from_seed_candidate
 )
 from .__main__ import parse_node_id_arg
-from .mvir import MVIR, TreeNode
+from .mvir import TreeNode
 from .workflow import Workflow
 
 
@@ -337,12 +337,7 @@ def run_gepa(
     project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
     random.shuffle(project_folders)
     for i,project_folder in enumerate(project_folders):
-        cfg = Config.from_toml_file(
-            str(project_folder / 'crisp.toml'),
-            mvir_storage_dir = str(project_folder / 'crisp-storage')
-        )
-        mvir = MVIR(cfg.mvir_storage_dir, '.')
-        workflow = Workflow(cfg, mvir)
+        workflow = get_workflow_for_project(project_folder)
         task_input = {'workflow': workflow}
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
@@ -431,18 +426,13 @@ def eval_gepa_prompt(
             if project_folder.name in done_already:
                 continue
 
-            # Create mvir and workflow
-            cfg = Config.from_toml_file(
-                str(project_folder / 'crisp.toml'),
-                mvir_storage_dir = str(project_folder / 'crisp-storage')
-            )
-            mvir = MVIR(cfg.mvir_storage_dir, '.')
-            workflow = Workflow(cfg, mvir)
+            # Create workflow
+            workflow = get_workflow_for_project(project_folder)
 
             # Get relevant nodes
-            n_input_code = mvir.node(parse_node_id_arg(mvir, 'current'))
-            n_c_code = mvir.node(parse_node_id_arg(mvir, 'c_code'))
-            n_plans = mvir.node(parse_node_id_arg(mvir, 'plans'))
+            n_input_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current'))
+            n_c_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))
+            n_plans = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'plans'))
 
             # Run agent
             try:
@@ -452,7 +442,7 @@ def eval_gepa_prompt(
                     n_plans = n_plans,
                     agent_safety_prompt = optimized_prompts['agent_safety_prompt']
                 )
-                n_codex = mvir.node(parse_node_id_arg(mvir, 'op_history'))
+                n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
                 run_details = {
                     'agent_safety_prompt': {
                         'call_duration_sec': n_codex.call_duration_sec,

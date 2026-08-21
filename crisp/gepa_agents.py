@@ -84,7 +84,7 @@ class ResponseEvaluator:
         unsafe_count = workflow.count_unsafe2(n_output_code) #TODO integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
         if unsafe_count <= 0:
             score += self.score_safe
-            feedback_components.append("The refactored Rust code has no entities that are unsafe. Good job!")
+            feedback_components.append("The refactored Rust code has no unsafe entities. Good job!")
         else:
             feedback_components.append(f"The refactored Rust code has {unsafe_count} unsafe entities. Please try again to produce Rust code that is safe, and is functionally correct.")
 

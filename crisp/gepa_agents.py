@@ -82,7 +82,7 @@ class ResponseEvaluator:
         n_output_code: TreeNode,
         n_input_code: TreeNode,
         n_c_code: TreeNode,
-        run_details: dict[str, Any]
+        run_details: dict[str, AgentRunDetails]
     ) -> EvaluationResult:
         score = GEPA_MIN_SCORE
 
@@ -461,10 +461,10 @@ def eval_gepa_prompt(
                 )
                 n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
                 run_details = {
-                    'agent_safety_prompt': {
-                        'call_duration_sec': n_codex.call_duration_sec,
-                        'output_tokens': n_codex.output_tokens
-                    }
+                    'agent_safety_prompt': AgentRunDetails(
+                        call_duration_sec = n_codex.call_duration_sec,
+                        output_tokens = n_codex.output_tokens
+                    )
                 }
             except CrispError as e:
                 print(f'Safety attempt failed: {e}')

@@ -110,6 +110,21 @@ class ResponseEvaluator:
         return EvaluationResult(score = score, feedback = feedback)
 
 
+def bad_prompt_evaluator(
+    formatted_blocks: dict[str, set[str]],
+    bad_prompt_types: list[str]
+) -> EvaluationResult:
+    score = GEPA_MIN_SCORE
+    feedback_components = []
+
+    for bad_prompt_type in bad_prompt_types:
+        placeholders = ', '.join(formatted_blocks[bad_prompt_type])
+        feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. This is an invalid candidate. Try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}' -- {placeholders}.")
+
+    feedback = '\n\n'.join(feedback_components)
+    return EvaluationResult(score = score, feedback = feedback)
+
+
 class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
     def __init__(
@@ -137,104 +152,102 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             if set(re.findall(r'\{.*\}', candidate[prompt_type])) != formatted_blocks_for_prompt_type:
                 bad_prompt_types.append(prompt_type)
 
-        # If any candidate prompt doesn't have correct placeholders, return a dummy eval batch with all scores minimum
-        if bad_prompt_types:
-            for task in batch:
-                outputs.append(None)
-                scores.append(GEPA_MIN_SCORE)
-                if capture_traces:
-                    feedback_components = []
-                    for bad_prompt_type in bad_prompt_types:
-                        placeholders = ', '.join(self.formatted_blocks[bad_prompt_type])
-                        feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. Please try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}': {placeholders}.")
-                    trajectories.append(
-                        TaskTrace(
-                            task = task,
-                            n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')),
-                            n_output_code = None,
-                            feedback = '\n\n'.join(feedback_components)
-                        )
-                    )
-            return EvaluationBatch(
-                outputs = outputs,
-                scores = scores,
-                trajectories = trajectories
-            )
-
-        # If all candidate prompts have correct placeholders, proceed with normal operation
+        # Iterate over tasks
         for task in batch:
-            n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
 
-            #NOTE: Any workflow method that has `fuel.use()` inside it (e.g. `workflow.do_safety_step_agent()`) will require the workflow being given fuel beforehand. If we are not calling any such method, then we don't need to give fuel. Hence, keep the following line commented out.
-            # task['workflow'].fuel.give(1)
-
-            # Try to get pre-saved plans; if they don't exist, ask the agent to generate new ones and save those
-            try:
-                n_plans = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'plans'))
-            except ValueError:
-                n_plans = task['workflow'].do_safety_plan_agent(
-                    n_code = n_input_code,
-                    n_test_code = n_c_code
-                )[1]
-                task['workflow'].mvir.set_tag('plans', n_plans.node_id())
-
-            # ================== # ================== # ================== # ================== #
-            #NOTE: Alternative to the above try-except block is:
-            # ================== # ================== # ================== # ================== #
-            # from crisp.__main__ import prior_agent_plans
-            # n_plans = prior_agent_plans(task['workflow'].mvir, n_input_code)
-            # if not n_plans:
-            #     n_plans = task['workflow'].do_safety_plan_agent(
-            #         n_code = n_input_code,
-            #         n_test_code = n_c_code
-            #     )[1]
-            # ================== # ================== # ================== # ================== #
-            # If we do the above, the agent will basically generate the plan for an example whenever it's first run in this function.
-            # This is as opposed to generating the `plans` nodes for all examples via the `save_plans.py` script prior to starting a GEPA run.
-            # In terms of runtime, both approaches will be similar because the agent will eventually have to generate plans for all examples, one way or another.
-            # FWIW doing them using the separate script may be better because it ensures a single source of truth for all plans that is set in stone prior to starting a GEPA run. 
-            # ================== # ================== # ================== # ================== #
-
-            try:
-                #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator
-                #NOTE this may be a bad idea because each iteration takes a very long time
-
-                n_output_code, _ = task['workflow'].agent_safety(
-                    n_code = n_input_code,
-                    n_test_code = n_c_code,
-                    n_plans = n_plans,
-                    agent_safety_prompt = candidate['agent_safety_prompt']
+            # If any candidate prompt doesn't have correct placeholders
+            if bad_prompt_types:
+                n_output_code = TreeNode.new(task['workflow'].mvir, files={}) # dummy, since output code isn't actually generated
+                eval_result = bad_prompt_evaluator(
+                    formatted_blocks = self.formatted_blocks,
+                    bad_prompt_types = bad_prompt_types
                 )
+                outputs.append(None)
 
-                n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
-                run_details = {
-                    'agent_safety_prompt': {
-                        'call_duration_sec': n_codex.call_duration_sec,
-                        'output_tokens': n_codex.output_tokens
+            # If all candidate prompts have correct placeholders
+            else:
+                n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
+
+                #NOTE: Any workflow method that has `fuel.use()` inside it (e.g. `workflow.do_safety_step_agent()`) will require the workflow being given fuel beforehand. If we are not calling any such method, then we don't need to give fuel. Hence, keep the following line commented out.
+                # task['workflow'].fuel.give(1)
+
+                # Try to get pre-saved plans; if they don't exist, ask the agent to generate new ones and save those
+                try:
+                    n_plans = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'plans'))
+                except ValueError:
+                    n_plans = task['workflow'].do_safety_plan_agent(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code
+                    )[1]
+                    task['workflow'].mvir.set_tag('plans', n_plans.node_id())
+
+                # ================== # ================== # ================== # ================== #
+                #NOTE: Alternative to the above try-except block is:
+                # ================== # ================== # ================== # ================== #
+                # from crisp.__main__ import prior_agent_plans
+                # n_plans = prior_agent_plans(task['workflow'].mvir, n_input_code)
+                # if not n_plans:
+                #     n_plans = task['workflow'].do_safety_plan_agent(
+                #         n_code = n_input_code,
+                #         n_test_code = n_c_code
+                #     )[1]
+                # ================== # ================== # ================== # ================== #
+                # If we do the above, the agent will basically generate the plan for an example whenever it's first run in this function.
+                # This is as opposed to generating the `plans` nodes for all examples via the `save_plans.py` script prior to starting a GEPA run.
+                # In terms of runtime, both approaches will be similar because the agent will eventually have to generate plans for all examples, one way or another.
+                # FWIW doing them using the separate script may be better because it ensures a single source of truth for all plans that is set in stone prior to starting a GEPA run. 
+                # ================== # ================== # ================== # ================== #
+
+                try:
+                    #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator
+                    #NOTE this may be a bad idea because each iteration takes a very long time
+
+                    n_output_code, _ = task['workflow'].agent_safety(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code,
+                        n_plans = n_plans,
+                        agent_safety_prompt = candidate['agent_safety_prompt']
+                    )
+
+                    # ================== # ================== # ================== # ================== #
+                    #NOTE: The following commented-out line makes the rewritten code the 'current' node
+                    # It is recommended to *not* do this, since this reduces the performance of GEPA
+                    # since the optimization goalposts are being changed by changing the 'current' node
+                    # Hence, keep the following line commented out
+                    # ================== # ================== # ================== # ================== #
+                    # task['workflow'].accept(n_output_code)
+                    # ================== # ================== # ================== # ================== #
+
+                    n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
+                    run_details = {
+                        'agent_safety_prompt': {
+                            'call_duration_sec': n_codex.call_duration_sec,
+                            'output_tokens': n_codex.output_tokens
+                        }
                     }
-                }
 
-            except CrispError as e:
-                print(f'Safety attempt failed: {e}')
-                traceback.print_exc()
+                except CrispError as e:
+                    print(f'Safety attempt failed: {e}')
+                    traceback.print_exc()
 
-            outputs.append(
-                TaskOutput(
-                    n_code = n_output_code,
+                eval_result = self.evaluator(
+                    workflow = task['workflow'],
+                    n_output_code = n_output_code,
+                    n_input_code = n_input_code,
+                    n_c_code = n_c_code,
                     run_details = run_details
                 )
-            )
 
-            eval_result = self.evaluator(
-                workflow = task['workflow'],
-                n_output_code = n_output_code,
-                n_input_code = n_input_code,
-                n_c_code = n_c_code,
-                run_details = run_details
-            )
+                outputs.append(
+                    TaskOutput(
+                        n_code = n_output_code,
+                        run_details = run_details
+                    )
+                )
+
+            # Get score and trajectory
             scores.append(eval_result.score)
-
             if capture_traces:
                 trajectories.append(
                     TaskTrace(
@@ -245,16 +258,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
                 )
 
-            # ================== # ================== # ================== # ================== #
-            #NOTE: The following commented-out line makes the rewritten code the 'current' node
-            # It is recommended to *not* do this, since this reduces the performance of GEPA
-            # since the optimization goalposts are being changed by changing the 'current' node
-            # Hence, keep the following line commented out
-            # ================== # ================== # ================== # ================== #
-            # task['workflow'].accept(n_output_code)
-            # ================== # ================== # ================== # ================== #
-
-        print("==================== RETURNING EVALUATION BATCH ====================")
+        # After all tasks are done, return batch
         return EvaluationBatch(
             outputs = outputs,
             scores = scores,

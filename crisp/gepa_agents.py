@@ -10,14 +10,19 @@ from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
 from pathlib import Path
 import random
-import re
 import traceback
 from typing import Any
 
 from . import llm_format
 from .config import Config
 from .error import CrispError
-from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE, GEPA_MAX_SCORE
+from .gepa_common import (
+    GEPA_MIN_SCORE,
+    GEPA_MAX_SCORE,
+    is_project_gepaready,
+    get_bad_prompts_in_candidate,
+    get_expected_formatted_blocks_from_seed_candidate
+)
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow
@@ -111,14 +116,14 @@ class ResponseEvaluator:
 
 
 def bad_prompt_evaluator(
-    formatted_blocks: dict[str, set[str]],
-    bad_prompt_types: list[str]
+    expected_formatted_blocks: dict[str, set[str]],
+    bad_prompt_types: set[str]
 ) -> EvaluationResult:
     score = GEPA_MIN_SCORE
     feedback_components = []
 
     for bad_prompt_type in bad_prompt_types:
-        placeholders = ', '.join(formatted_blocks[bad_prompt_type])
+        placeholders = ', '.join(expected_formatted_blocks[bad_prompt_type])
         feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. This is an invalid candidate. Try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}' -- {placeholders}.")
 
     feedback = '\n\n'.join(feedback_components)
@@ -130,10 +135,10 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
     def __init__(
         self,
         evaluator: ResponseEvaluator,
-        formatted_blocks: dict[str, set[str]]
+        expected_formatted_blocks: dict[str, set[str]]
     ):
         self.evaluator = evaluator
-        self.formatted_blocks = formatted_blocks
+        self.expected_formatted_blocks = expected_formatted_blocks
 
     def evaluate(
         self,
@@ -146,21 +151,20 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         scores = []
         trajectories = [] if capture_traces else None
 
-        # Check if all candidate prompts have correct placeholders
-        bad_prompt_types = []
-        for prompt_type, formatted_blocks_for_prompt_type in self.formatted_blocks.items():
-            if set(re.findall(r'\{.*\}', candidate[prompt_type])) != formatted_blocks_for_prompt_type:
-                bad_prompt_types.append(prompt_type)
+        bad_prompt_types = get_bad_prompts_in_candidate(
+            candidate = candidate,
+            expected_formatted_blocks = self.expected_formatted_blocks
+        )
 
         # Iterate over tasks
         for task in batch:
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
 
-            # If any candidate prompt doesn't have correct placeholders
+            # If any candidate prompt doesn't have correct formatted blocks
             if bad_prompt_types:
                 n_output_code = TreeNode.new(task['workflow'].mvir, files={}) # dummy, since output code isn't actually generated
                 eval_result = bad_prompt_evaluator(
-                    formatted_blocks = self.formatted_blocks,
+                    expected_formatted_blocks = self.expected_formatted_blocks,
                     bad_prompt_types = bad_prompt_types
                 )
                 outputs.append(None)
@@ -320,10 +324,11 @@ def do_gepa(
 
     # Get seed prompts
     seed_prompts = {}
-    formatted_blocks = {}
     for prompt_type in prompt_types:
         seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
-        formatted_blocks[prompt_type] = set(re.findall(r'\{.*\}', seed_prompts[prompt_type]))
+
+    # Get expected formatted blocks
+    expected_formatted_blocks = get_expected_formatted_blocks_from_seed_candidate(seed_prompts)
 
     # Create datasets
     trainset, valset = [], []
@@ -342,7 +347,7 @@ def do_gepa(
     # Instantiate GEPA adapter
     adapter = RustAdapter(
         evaluator = ResponseEvaluator(),
-        formatted_blocks = formatted_blocks
+        expected_formatted_blocks = expected_formatted_blocks
     )
 
     # Run GEPA optimization

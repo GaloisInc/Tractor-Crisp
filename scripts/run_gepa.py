@@ -58,7 +58,6 @@ def evaluate_gepa_agents():
     Use the GEPA evaluation function(s) to check the performance of a set of prompts using agents.
     """
     for prompt_name in [ # insert prompt names for evaluation here (see examples below)
-        # '20260616_taskGPT5p5_reflGPT5p5',
         'seed_prompts_agents',
         # ...
     ]:
@@ -83,5 +82,5 @@ if __name__ == '__main__':
     # run_gepa_llm()
     # evaluate_gepa_llm()
 
-    # run_gepa_agents()
+    run_gepa_agents()
     evaluate_gepa_agents()

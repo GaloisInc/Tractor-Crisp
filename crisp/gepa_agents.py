@@ -31,6 +31,16 @@ from .workflow import Workflow
 
 
 @dataclass
+class AgentRunDetails:
+    call_duration_sec: float = 0.
+    output_tokens: int = 0
+
+    @property
+    def valid(self) -> bool:
+        return self.call_duration_sec != 0. and self.output_tokens != 0
+
+
+@dataclass
 class TaskInput:
     workflow: Workflow
 
@@ -44,7 +54,7 @@ class TaskTrace:
 @dataclass
 class TaskOutput:
     n_code: TreeNode
-    run_details: dict[str, dict[str, Any]]
+    run_details: dict[str, AgentRunDetails]
 
 @dataclass
 class EvaluationResult:
@@ -81,6 +91,13 @@ class ResponseEvaluator:
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
                 feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
+            )
+
+        # Check if all Codex run details make sense; if not, the agent failed
+        if any(not agent_run_details.valid for agent_run_details in run_details.values()):
+            return EvaluationResult(
+                score = GEPA_MIN_SCORE,
+                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct."
             )
 
         feedback_components = []
@@ -227,10 +244,10 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
                     n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
                     run_details = {
-                        'agent_safety_prompt': {
-                            'call_duration_sec': n_codex.call_duration_sec,
-                            'output_tokens': n_codex.output_tokens
-                        }
+                        'agent_safety_prompt': AgentRunDetails(
+                            call_duration_sec = n_codex.call_duration_sec,
+                            output_tokens = n_codex.output_tokens
+                        )
                     }
 
                 except CrispError as e:

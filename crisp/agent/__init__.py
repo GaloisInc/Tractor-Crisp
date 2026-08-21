@@ -204,8 +204,8 @@ def run_rewrite(
 ) -> tuple[TreeNode, TreeNode]:
     extra_code, env = _normalize_run_args(extra_code, env)
 
-    codex_call_duration_sec = None
-    codex_output_tokens = None
+    codex_call_duration_sec = 0.
+    codex_output_tokens = 0
 
     with run_sandbox(cfg, mvir) as sb:
         sb.checkout(input_code)
@@ -257,19 +257,23 @@ def run_rewrite(
                 env['FIND_UNSAFE2_JSON_DIR'] = sb.join(find_unsafe2_json_dir)
 
             for cmd in all_cmds:
+
                 if cmd == codex_cmd:
+
+                    # capture time taken by codex command
                     codex_start_time = time.perf_counter()
                     exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
                     codex_call_duration_sec = time.perf_counter() - codex_start_time
+
+                    # capture token usage of codex command, if possible
                     for line in logs2.decode('utf-8').splitlines():
                         try:
                             event = json.loads(line)
-                            if event.get('type') == 'turn.completed':
-                                usage = event.get('usage', {})
-                                codex_output_tokens = usage.get('output_tokens', 0) + usage.get('reasoning_output_tokens', 0)
-                                break
+                            if event.get('type') == 'turn.completed' and 'usage' in event:
+                                codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
                         except json.decoder.JSONDecodeError:
                             pass
+
                 else:
                     exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
                 logs += logs2

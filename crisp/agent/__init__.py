@@ -197,6 +197,16 @@ class AgentSandbox:
     def run(self, cmd):
         return self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
 
+    def run_all(self, cmds):
+        logs = None
+        for cmd in cmds:
+            print(f'run: {shlex.join(cmd)}')
+            exit_code, logs2 = self.run(cmd)
+            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
+            if exit_code != 0:
+                break
+        return exit_code, logs
+
     def commit_raw_output_files(
         self,
         path_filter: Callable[[str], bool] | None = None,
@@ -334,13 +344,7 @@ def run_agent(
         ]
         all_cmds += clean_cmds
 
-        logs = None
-        for cmd in all_cmds:
-            print(f'run: {shlex.join(cmd)}')
-            exit_code, logs2 = asb.run(cmd)
-            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
-            if exit_code != 0:
-                break
+        exit_code, logs = asb.run_all(all_cmds)
 
         raw_output_files = asb.commit_raw_output_files()
 

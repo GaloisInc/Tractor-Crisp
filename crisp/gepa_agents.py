@@ -17,7 +17,7 @@ from typing import Any
 from . import llm_format
 from .config import Config
 from .error import CrispError
-from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE
+from .gepa_common import is_project_gepaready, GEPA_MIN_SCORE, GEPA_MAX_SCORE
 from .__main__ import parse_node_id_arg
 from .mvir import MVIR, TreeNode
 from .workflow import Workflow
@@ -49,8 +49,8 @@ class ResponseEvaluator:
 
     def __init__(
         self,
-        score_safe: float = 0.5,
-        score_passtests: float = 0.5,
+        score_safe: float = GEPA_MAX_SCORE/2,
+        score_passtests: float = GEPA_MAX_SCORE/2,
         score_penalty_per_output_token: float = 1e-5,
         score_penalty_per_call_duration_sec: float = 1e-3
     ):

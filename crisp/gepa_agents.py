@@ -49,8 +49,8 @@ class ResponseEvaluator:
 
     def __init__(
         self,
-        score_safe: float = 1.,
-        score_passtests: float = 1.,
+        score_safe: float = 0.5,
+        score_passtests: float = 0.5,
         score_penalty_per_output_token: float = 1e-5,
         score_penalty_per_call_duration_sec: float = 1e-3,
         min_score: float = 0.,
@@ -75,7 +75,7 @@ class ResponseEvaluator:
         # Check if anything changed from input to output; if not, the agent failed
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
-                score = 0.,
+                score = self.min_score,
                 feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
             )
 

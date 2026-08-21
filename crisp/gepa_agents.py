@@ -70,7 +70,6 @@ class ResponseEvaluator:
         run_details: dict[str, Any]
     ) -> EvaluationResult:
         score = 0
-        feedback = ""
 
         # Check if anything changed from input to output; if not, the agent failed
         if n_output_code.node_id() == n_input_code.node_id():
@@ -79,32 +78,37 @@ class ResponseEvaluator:
                 feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
             )
 
+        feedback_components = []
+
         # Check for un-safety
         unsafe_count = workflow.count_unsafe2(n_output_code) #TODO integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
         if unsafe_count <= 0:
             score += self.score_safe
+            feedback_components.append("The refactored Rust code has no entities that are unsafe. Good job!")
         else:
-            feedback += f"\nThe refactored Rust code has {unsafe_count} entities that are unsafe. Please try again to produce Rust code that is safe, and is functionally correct."
+            feedback_components.append(f"The refactored Rust code has {unsafe_count} unsafe entities. Please try again to produce Rust code that is safe, and is functionally correct.")
 
         # Check for tests passing
         test_results = workflow.test_op(n_output_code, n_c_code)
         if test_results.exit_code == 0:
             score += self.score_passtests
+            feedback_components.append("The refactored Rust code passes functaionality tests. Good job!")
         else:
-            feedback += f"\nThe refactored Rust code does not achieve identical behavior as the input. It fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe."
+            feedback_components.append(f"The refactored Rust code fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe.")
 
         # Penalize for output tokens
         total_output_tokens = sum(run_details[k].get('output_tokens', 0) for k in run_details)
         score -= (self.score_penalty_per_output_token * total_output_tokens)
-        feedback += f"\nThe refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct."
+        feedback_components.append(f"The refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Penalize for call duration
         total_call_duration_sec = sum(run_details[k].get('call_duration_sec', 0) for k in run_details)
         score -= (self.score_penalty_per_call_duration_sec * total_call_duration_sec)
-        feedback += f"\nThe refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct."
+        feedback_components.append(f"The refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Return final results
         score = max(score, self.min_score)
+        feedback = '\n\n'.join(feedback_components)
         return EvaluationResult(score = score, feedback = feedback)
 
 
@@ -141,16 +145,16 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 outputs.append(None)
                 scores.append(self.evaluator.min_score)
                 if capture_traces:
-                    feedback = ''
+                    feedback_components = []
                     for bad_prompt_type in bad_prompt_types:
                         placeholders = ', '.join(self.formatted_blocks[bad_prompt_type])
-                        feedback += f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. Please try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}': {placeholders}.\n"
+                        feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. Please try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}': {placeholders}.")
                     trajectories.append(
                         TaskTrace(
                             task = task,
                             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')),
                             n_output_code = None,
-                            feedback = feedback
+                            feedback = '\n\n'.join(feedback_components)
                         )
                     )
             return EvaluationBatch(

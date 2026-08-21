@@ -5,7 +5,7 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
@@ -60,6 +60,9 @@ class TaskOutput:
 class EvaluationResult:
     score: float
     feedback: str
+    safe: bool | None = None
+    passtests: bool | None = None
+    run_details: dict[str, AgentRunDetails] = field(default_factory = dict)
 
 
 class ResponseEvaluator:
@@ -90,21 +93,26 @@ class ResponseEvaluator:
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
+                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct.",
+                run_details = run_details
             )
 
         # Check if all Codex run details make sense; if not, the agent failed
         if any(not agent_run_details.valid for agent_run_details in run_details.values()):
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct."
+                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct.",
+                run_details = run_details
             )
 
         feedback_components = []
+        safe = False
+        passtests = False
 
         # Check for un-safety
         unsafe_count = workflow.count_unsafe2(n_output_code) #TODO integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
         if unsafe_count <= 0:
+            safe = True
             score += self.score_safe
             feedback_components.append("The refactored Rust code has no unsafe entities. Good job!")
         else:
@@ -113,25 +121,32 @@ class ResponseEvaluator:
         # Check for tests passing
         test_results = workflow.test_op(n_output_code, n_c_code)
         if test_results.exit_code == 0:
+            passtests = True
             score += self.score_passtests
             feedback_components.append("The refactored Rust code passes functionality tests. Good job!")
         else:
             feedback_components.append(f"The refactored Rust code fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe.")
 
         # Penalize for output tokens
-        total_output_tokens = sum(run_details[k].get('output_tokens', 0) for k in run_details)
+        total_output_tokens = sum(elem.output_tokens for elem in run_details.values())
         score -= (self.score_penalty_per_output_token * total_output_tokens)
         feedback_components.append(f"The refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Penalize for call duration
-        total_call_duration_sec = sum(run_details[k].get('call_duration_sec', 0.) for k in run_details)
+        total_call_duration_sec = sum(elem.call_duration_sec for elem in run_details.values())
         score -= (self.score_penalty_per_call_duration_sec * total_call_duration_sec)
         feedback_components.append(f"The refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Return final results
         score = max(score, GEPA_MIN_SCORE)
         feedback = '\n\n'.join(feedback_components)
-        return EvaluationResult(score = score, feedback = feedback)
+        return EvaluationResult(
+            score = score,
+            feedback = feedback,
+            safe = safe,
+            passtests = passtests,
+            run_details = run_details
+        )
 
 
 def bad_prompt_evaluator(
@@ -384,7 +399,6 @@ def eval_gepa_prompt(
     dataset_path: Path,
     optimized_prompt_folder: Path,
     optimized_prompt_paths: dict[str, Path],
-    model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
     output_csv_path: Path | None = None
 ):
     """
@@ -399,11 +413,10 @@ def eval_gepa_prompt(
         - File will be appended to if it already exists
     """
 
-    # Set model
-    os.environ['CRISP_API_MODEL'] = model
+    # Get prompt types
+    prompt_types = optimized_prompt_paths.keys()
 
     # Get prompts
-    prompt_types = optimized_prompt_paths.keys()
     optimized_prompts = {}
     for prompt_type in prompt_types:
         optimized_prompts[prompt_type] = optimized_prompt_paths[prompt_type].read_text()
@@ -416,7 +429,7 @@ def eval_gepa_prompt(
 
     # If it exists, read output CSV and get done files
     if output_csv_path is None:
-        output_csv_path = optimized_prompt_folder / f'results_{dataset_path.name}_{model}.csv'
+        output_csv_path = optimized_prompt_folder / f'results_{dataset_path.name}.csv'
     output_csv_existed = False
     done_already = set()
     if output_csv_path.exists():
@@ -431,10 +444,16 @@ def eval_gepa_prompt(
 
         # Write header if this is the first time output CSV is being written to
         if not output_csv_existed:
-            csvwriter.writerow([
-                'project_folder',
-                'score'
-            ])
+            csvwriter.writerow(
+                [
+                    'project_folder',
+                    'score',
+                    'safe',
+                    'passtests'
+                ] + [
+                    f'{prompt_type}_{f.name}' for prompt_type in prompt_types for f in fields(AgentRunDetails)
+                ]
+            )
 
         # Iterate
         for project_folder in project_folders:
@@ -480,7 +499,13 @@ def eval_gepa_prompt(
             )
 
             # Write results
-            csvwriter.writerow([
-                project_folder.name,
-                eval_result.score
-            ])
+            csvwriter.writerow(
+                [
+                    project_folder.name,
+                    eval_result.score,
+                    eval_result.safe,
+                    eval_result.passtests,
+                ] + [
+                    getattr(eval_result.run_details[prompt_type], f.name) for prompt_type in prompt_types for f in fields(AgentRunDetails)
+                ]
+            )

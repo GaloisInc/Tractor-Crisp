@@ -37,7 +37,7 @@ class AgentRunDetails:
 
     @property
     def valid(self) -> bool:
-        return self.call_duration_sec != 0. and self.output_tokens != 0
+        return (self.call_duration_sec != 0. and self.output_tokens != 0)
 
 
 @dataclass

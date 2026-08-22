@@ -5,7 +5,7 @@ in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
 import csv
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 import os
@@ -62,7 +62,6 @@ class EvaluationResult:
     feedback: str
     safe: bool | None = None
     passtests: bool | None = None
-    run_details: dict[str, AgentRunDetails] = field(default_factory = dict)
 
 
 class ResponseEvaluator:
@@ -93,16 +92,14 @@ class ResponseEvaluator:
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct.",
-                run_details = run_details
+                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
             )
 
         # Check if all Codex run details make sense; if not, the agent failed
         if any(not agent_run_details.valid for agent_run_details in run_details.values()):
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct.",
-                run_details = run_details
+                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct."
             )
 
         feedback_components = []
@@ -144,8 +141,7 @@ class ResponseEvaluator:
             score = score,
             feedback = feedback,
             safe = safe,
-            passtests = passtests,
-            run_details = run_details
+            passtests = passtests
         )
 
 
@@ -199,12 +195,14 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
             # If any candidate prompt doesn't have correct formatted blocks
             if bad_prompt_types:
-                n_output_code = TreeNode.new(task['workflow'].mvir, files={}) # dummy, since output code isn't actually generated
                 eval_result = bad_prompt_evaluator(
                     expected_formatted_blocks = self.expected_formatted_blocks,
                     bad_prompt_types = bad_prompt_types
                 )
-                outputs.append(None)
+
+                # Assign dummy values to required variables
+                n_output_code = TreeNode.new(task['workflow'].mvir, files={})
+                run_details = {}
 
             # If all candidate prompts have correct placeholders
             else:
@@ -272,6 +270,12 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     print(f'Safety attempt failed: {e}')
                     traceback.print_exc()
 
+                    # Assign dummy values to required variables
+                    n_output_code = TreeNode.new(task['workflow'].mvir, files={})
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails()
+                    }
+
                 eval_result = self.evaluator(
                     workflow = task['workflow'],
                     n_output_code = n_output_code,
@@ -280,14 +284,13 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     run_details = run_details
                 )
 
-                outputs.append(
-                    TaskOutput(
-                        n_code = n_output_code,
-                        run_details = run_details
-                    )
+            # Get everything required for EvaluationBatch
+            outputs.append(
+                TaskOutput(
+                    n_code = n_output_code,
+                    run_details = run_details
                 )
-
-            # Get score and trajectory
+            )
             scores.append(eval_result.score)
             if capture_traces:
                 trajectories.append(
@@ -493,6 +496,12 @@ def eval_gepa_prompt(
                 print(f'Safety attempt failed: {e}')
                 traceback.print_exc()
 
+                # Assign dummy values to required variables
+                n_output_code = TreeNode.new(workflow.mvir, files={})
+                run_details = {
+                    'agent_safety_prompt': AgentRunDetails()
+                }
+
             # Get evaluation result
             eval_result = response_evaluator(
                 workflow = workflow,
@@ -510,12 +519,6 @@ def eval_gepa_prompt(
                     eval_result.safe,
                     eval_result.passtests,
                 ] + [
-                    (
-                        getattr(eval_result.run_details.get(prompt_type), f.name)
-                        if hasattr(eval_result.run_details.get(prompt_type), f.name)
-                        else None
-                    )
-                    for prompt_type in prompt_types
-                    for f in fields(AgentRunDetails)
+                    getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.
                 ]
             )

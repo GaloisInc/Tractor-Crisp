@@ -161,7 +161,10 @@ def bad_prompt_evaluator(
         feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. This is an invalid candidate. Try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}' -- {placeholders}.")
 
     feedback = '\n\n'.join(feedback_components)
-    return EvaluationResult(score = score, feedback = feedback)
+    return EvaluationResult(
+        score = score,
+        feedback = feedback
+    )
 
 
 class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
@@ -386,7 +389,8 @@ def run_gepa(
         valset = valset,
         adapter = adapter,
         max_metric_calls = max_metric_calls,
-        reflection_lm = reflection_lm
+        reflection_lm = reflection_lm,
+        perfect_score = GEPA_MAX_SCORE
     )
 
     # Save optimization results

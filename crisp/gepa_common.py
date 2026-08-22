@@ -8,7 +8,6 @@ from .mvir import MVIR
 from .workflow import Workflow
 
 
-# Don't mess with these because GEPA internals depend on these
 GEPA_MIN_SCORE = 0.
 GEPA_MAX_SCORE = 1.
 

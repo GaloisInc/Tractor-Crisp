@@ -269,7 +269,8 @@ def run_gepa(
         valset = valset,
         adapter = adapter,
         max_metric_calls = max_metric_calls,
-        reflection_lm = reflection_lm
+        reflection_lm = reflection_lm,
+        perfect_score = GEPA_MAX_SCORE
     )
 
     # Save optimization results

@@ -1,0 +1,12 @@
+Continue the plan from `SAFETY_PLAN.md`.
+**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+
+{target_goal}
+
+{after_refactoring_instruction}
+
+Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+```sh
+cargo check-unsafe2 --manifest-path {cargo_path}/Cargo.toml
+```
+This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.

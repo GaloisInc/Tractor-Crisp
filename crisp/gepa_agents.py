@@ -506,6 +506,12 @@ def eval_gepa_prompt(
                     eval_result.safe,
                     eval_result.passtests,
                 ] + [
-                    getattr(eval_result.run_details[prompt_type], f.name) for prompt_type in prompt_types for f in fields(AgentRunDetails)
+                    (
+                        getattr(eval_result.run_details.get(prompt_type), f.name)
+                        if hasattr(eval_result.run_details.get(prompt_type), f.name)
+                        else None
+                    )
+                    for prompt_type in prompt_types
+                    for f in fields(AgentRunDetails)
                 ]
             )

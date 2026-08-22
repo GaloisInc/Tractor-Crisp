@@ -63,7 +63,7 @@ def get_expected_formatted_blocks_from_seed_candidate(seed_candidate: dict[str, 
     """
     expected_formatted_blocks = {}
     for prompt_type, prompt in seed_candidate.items():
-        expected_formatted_blocks[prompt_type] = set(re.findall(r'\{.*\}', prompt))
+        expected_formatted_blocks[prompt_type] = set(re.findall(r'\{[^{}]+\}', prompt))
     return expected_formatted_blocks
 
 
@@ -100,6 +100,6 @@ def get_bad_prompts_in_candidate(
 
     bad_prompt_types = set()
     for prompt_type, current_expected_formatted_blocks in expected_formatted_blocks.items():
-        if set(re.findall(r'\{.*\}', candidate[prompt_type])) != current_expected_formatted_blocks:
+        if set(re.findall(r'\{[^{}]+\}', candidate[prompt_type])) != current_expected_formatted_blocks:
             bad_prompt_types.add(prompt_type)
     return bad_prompt_types

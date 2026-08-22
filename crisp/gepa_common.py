@@ -102,5 +102,5 @@ def get_bad_prompts_in_candidate(
     bad_prompt_types = set()
     for prompt_type, current_expected_formatted_blocks in expected_formatted_blocks.items():
         if set(re.findall(r'\{.*\}', candidate[prompt_type])) != current_expected_formatted_blocks:
-            bad_prompt_types.append(prompt_type)
+            bad_prompt_types.add(prompt_type)
     return bad_prompt_types

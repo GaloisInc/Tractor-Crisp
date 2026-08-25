@@ -2,7 +2,7 @@ import os
 import pygit2
 from typing import Optional
 
-from . import mvir as mvir_module
+from . import history, mvir as mvir_module
 from .mvir import MVIR, TreeNode, FileNode
 
 def repo_path(mvir: MVIR) -> str:
@@ -26,64 +26,18 @@ def get_repo(mvir: MVIR) -> pygit2.Repository:
                 | pygit2.GIT_REPOSITORY_INIT_NO_DOTGIT_DIR,
         )
 
-# For each MVIR node kind that represents a code transformation, this gives the
-# names of the fields containing the old and new `TreeNode`s.
-OP_NODE_KINDS = {
-    mvir_module.LlmOpNode.KIND: ('old_code', 'new_code'),
-    mvir_module.CodexAgentOpNode.KIND: ('old_code', 'new_code'),
-
-    # Backward compatibility with unmigrated `CodexAgentOp`s
-    'codex_agent_op': ('old_code', 'new_code'),
-}
-
-HISTORY_INDEX_KEYS = set((kind, new) for (kind, (old, new)) in OP_NODE_KINDS.items())
-HISTORY_INDEX_OLD_KEYS = set((kind, old) for (kind, (old, new)) in OP_NODE_KINDS.items())
-
 def render(mvir: MVIR, target: TreeNode) -> pygit2.Oid:
     """
     Generate git history representing the steps that produced `target`, and
     return the git object ID of the final commit.
     """
-    trees = [target]
-    ops = []
-    while True:
-        # Try to find an op that produced the last tree.
-        tree = trees[-1]
-        op_node_id = None
-        index = mvir.index(tree.node_id())
-
-        # Save a set of all nodes with `old_code`
-        old_node_ids = set()
-        for ie in index:
-            if (ie.kind, ie.key) in HISTORY_INDEX_OLD_KEYS:
-                old_node_ids.add(ie.node_id)
-
-        for ie in index:
-            if ie.node_id in old_node_ids:
-                # Ignore nodes where `old_code==new_code`,
-                # such as the planning node from agent mode
-                continue
-            if (ie.kind, ie.key) in HISTORY_INDEX_KEYS:
-                op_node_id = ie.node_id
-                break
-        if op_node_id is None:
-            # `tree` is the oldest tree we could find in the history.
-            break
-
-        op = mvir.node(op_node_id)
-        old_key, _ = OP_NODE_KINDS[op.kind]
-        old_tree_node_id = getattr(op, old_key)
-        old_tree = mvir.node(old_tree_node_id)
-        ops.append(op)
-        trees.append(old_tree)
-
-    assert len(ops) == len(trees) - 1
+    hist = history.get_history(mvir, target)
+    hist.reverse()
 
     repo = get_repo(mvir)
-    commit = commit_tree(mvir, repo, trees[-1], 'initial commit')
-
-    for (tree, op) in zip(reversed(trees[:-1]), reversed(ops)):
-        msg = op.kind   # TODO
+    commit = None
+    for (tree, op) in hist:
+        msg = op.kind if op is not None else 'initial commit'
         commit = commit_tree(mvir, repo, tree, msg, parent=commit)
 
     return commit

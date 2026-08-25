@@ -26,11 +26,15 @@ class WorkDir:
         self.mvir = mvir
         self.path = path
 
-    def checkout(self, n_tree):
+    def checkout(self, n_tree, rel_path: str | None = None):
         assert isinstance(n_tree, TreeNode)
-        for rel_path, n_file_id in n_tree.files.items():
+        if rel_path is not None:
+            assert not os.path.isabs(rel_path)
+        for file_path, n_file_id in n_tree.files.items():
+            if rel_path is not None:
+                file_path = os.path.join(rel_path, file_path)
             n_file = self.mvir.node(n_file_id)
-            self.checkout_file(rel_path, n_file)
+            self.checkout_file(file_path, n_file)
 
     def checkout_file(self, rel_path, n_file):
         assert not os.path.isabs(rel_path)

@@ -159,17 +159,22 @@ class BwrapSandbox:
 
         printer = ChunkPrinter()
         acc = bytearray()
-        while True:
-            data = p.stdout.read(4096)
-            if len(data) == 0:
-                break
-            printer.write_bytes(data)
-            printer.flush()
-            printer.increment()
-            acc.extend(data)
-        printer.finish()
 
-        p.wait()
+        try:
+            while True:
+                data = p.stdout.read(4096)
+                if len(data) == 0:
+                    break
+                printer.write_bytes(data)
+                printer.flush()
+                printer.increment()
+                acc.extend(data)
+            printer.finish()
+
+        finally:
+            if p.stdout:
+                p.stdout.close()
+            p.wait()
 
         logs = bytes(acc)
 

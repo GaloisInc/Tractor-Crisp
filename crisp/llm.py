@@ -159,46 +159,51 @@ def do_request(req, stream=False):
 
     resp_dct = {}
     resp_choices = {}
-    for evt in sse_events(resp):
-        if evt == b'[DONE]':
-            break
-        j = json.loads(evt.decode('utf-8'))
 
-        for choice_delta in j.get('choices', ()):
-            index = choice_delta['index']
-            if (choice := resp_choices.get(index)) is None:
-                choice = StreamingChoice.new()
-                resp_choices[index] = choice
+    try:
+        for evt in sse_events(resp):
+            if evt == b'[DONE]':
+                break
+            j = json.loads(evt.decode('utf-8'))
 
-            prev_role = choice.message.role
-            prev_content_len = len(choice.message.content or '')
-            prev_reasoning_content_len = len(choice.message.reasoning_content or '')
+            for choice_delta in j.get('choices', ()):
+                index = choice_delta['index']
+                if (choice := resp_choices.get(index)) is None:
+                    choice = StreamingChoice.new()
+                    resp_choices[index] = choice
 
-            choice.apply_delta(choice_delta)
+                prev_role = choice.message.role
+                prev_content_len = len(choice.message.content or '')
+                prev_reasoning_content_len = len(choice.message.reasoning_content or '')
 
-            if index == 0:
-                if choice.message.role is not None:
-                    if prev_role is None:
-                        if choice.message.reasoning_content is not None:
-                            emit(choice.message.role, choice.message.reasoning_content,
+                choice.apply_delta(choice_delta)
+
+                if index == 0:
+                    if choice.message.role is not None:
+                        if prev_role is None:
+                            if choice.message.reasoning_content is not None:
+                                emit(choice.message.role, choice.message.reasoning_content,
+                                    is_reasoning=True)
+                            if choice.message.content is not None:
+                                emit(choice.message.role, choice.message.content)
+                        else:
+                            reasoning_content = choice.message.reasoning_content or ''
+                            emit(choice.message.role, reasoning_content[prev_reasoning_content_len:],
                                 is_reasoning=True)
-                        if choice.message.content is not None:
-                            emit(choice.message.role, choice.message.content)
-                    else:
-                        reasoning_content = choice.message.reasoning_content or ''
-                        emit(choice.message.role, reasoning_content[prev_reasoning_content_len:],
-                             is_reasoning=True)
-                        content = choice.message.content or ''
-                        emit(choice.message.role, content[prev_content_len:])
-                    p.flush()
-                p.increment()
+                            content = choice.message.content or ''
+                            emit(choice.message.role, content[prev_content_len:])
+                        p.flush()
+                    p.increment()
 
-        for k, v in j.items():
-            if k == 'choices':
-                continue
-            if resp_dct.get(k) is not None:
-                continue
-            resp_dct[k] = v
+            for k, v in j.items():
+                if k == 'choices':
+                    continue
+                if resp_dct.get(k) is not None:
+                    continue
+                resp_dct[k] = v
+
+    finally:
+        resp.close()
 
     p.finish()
 

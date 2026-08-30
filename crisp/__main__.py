@@ -893,30 +893,24 @@ def main():
         cfg_kwargs['on_accept'] = args.on_accept
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
 
-    if args.cmd == 'main':
-        do_main(args, cfg)
-    elif args.cmd == 'safety-loop':
-        do_safety_loop(args, cfg)
-    elif args.cmd == 'repl':
-        do_repl(args, cfg)
-    elif args.cmd == 'eval':
-        do_eval(args, cfg)
-    elif args.cmd == 'reflog':
-        do_reflog(args, cfg)
-    elif args.cmd == 'tag':
-        do_tag(args, cfg)
-    elif args.cmd == 'show':
-        do_show(args, cfg)
-    elif args.cmd == 'index':
-        do_index(args, cfg)
-    elif args.cmd == 'commit':
-        do_commit(args, cfg)
-    elif args.cmd == 'checkout':
-        do_checkout(args, cfg)
-    elif args.cmd == 'git':
-        do_git(args, cfg)
-    elif args.cmd == 'sandbox-run':
-        do_sandbox_run(args, cfg)
+    dispatch = { x.__name__: x for x in [
+        do_main,
+        do_safety_loop,
+        do_repl,
+        do_eval,
+        do_reflog,
+        do_tag,
+        do_show,
+        do_index,
+        do_commit,
+        do_checkout,
+        do_git,
+        do_sandbox_run,
+    ]}
+
+    fn_name = "do_" + args.cmd.replace('-', '_')
+    if fn_name in dispatch:
+        dispatch[fn_name](args, cfg)
     else:
         raise ValueError('unknown command %r' % (args.cmd,))
 

@@ -39,7 +39,7 @@ class WorkContainer:
     def start(self):
         self.container = self.client.containers.run(
             # `sleep` is PID 1; its duration caps the lifetime of the container.
-            self.image, ('sleep', '1800'), detach=True, remove=True)
+            self.image, ['sleep', '1800'], detach=True, remove=True)
 
     def stop(self):
         if self.container is not None:
@@ -47,6 +47,7 @@ class WorkContainer:
             #self.container.remove(v=True)
 
     def _checkout_tar_file(self, tar_bytes):
+        assert self.container is not None
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
@@ -81,6 +82,7 @@ class WorkContainer:
 
     def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
         assert not os.path.isabs(rel_path)
+        assert self.container is not None
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
         tar_io = io.BytesIO(tar_bytes)
@@ -113,6 +115,7 @@ class WorkContainer:
 
     def commit_file(self, rel_path):
         assert not os.path.isabs(rel_path)
+        assert self.container is not None
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
         tar_io = io.BytesIO(tar_bytes)
@@ -148,6 +151,7 @@ class WorkContainer:
                 env['CRISP_API_KEY'] = api_key
 
         if not stream:
+            assert self.container is not None
             exit_code, logs = self.container.exec_run(
                 cmd, workdir=self.join(cwd), stream=stream,
                 environment = env,

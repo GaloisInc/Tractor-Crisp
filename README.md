@@ -210,11 +210,17 @@ uv run scripts/test_eval.py /path/to/Test-Corpus/foo/bar -- --llm-mode agent_ran
 # GEPA prompt optimization
 GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.org/abs/2507.19457)). GEPA can be used to optimize the system prompt on any dataset to achieve better performance of converting unsafe Rust to safe Rust via LLMs. See `gepa_artifacts/` for prompts found via GEPA, and the results of running them on various datasets.
 
-Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run:
-```shell
-./gepa_setup_initial.sh <dataset_dir>
-```
-from the root of this repo. See the docstring of `gepa_setup_initial.sh` for more details.
+Setting up:
+- Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run:
+  ```shell
+  python scripts/gepa_setup.py <dataset_dir> initial
+  ```
+- Whenever GEPA is to be run on a new individual project which is present at `../<project_dir>`, first run:
+  ```shell
+  python scripts/gepa_setup.py <project_dir> initial
+  ```
+
+See the docstring of `scripts/gepa_setup.py` for more details.
 
 Note: The GEPA optimization process may crash with `OSError: Too many open files`. To prevent this, run the following in the terminal first, then run GEPA optimization.
 ```shell
@@ -253,7 +259,7 @@ from crisp.gepa_llm import eval_gepa_prompt
 eval_gepa_prompt(
 
     # dataset_path is the dataset folder on which the prompt will be evaluated
-    dataset_path = <full/path/to/dataset/>,
+    dataset_path = <full/path/to/dataset/>,v
 
     # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
     # which contains `prompt.txt` containing the actual prompt to be evaluated

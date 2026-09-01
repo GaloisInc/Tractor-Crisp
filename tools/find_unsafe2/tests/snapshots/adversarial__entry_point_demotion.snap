@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_entry_point_demotion::adv_demote: exported symbol adv_demote was removed

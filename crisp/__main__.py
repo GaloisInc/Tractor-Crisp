@@ -245,7 +245,7 @@ def do_main(args, cfg):
         n_code = w.transpile(
             n_c_code,
             src_loc_annotations=True,
-            refactor_transforms=("rename_unnamed", "reorganize_definitions"),
+            refactor_transforms=("rename_unnamed", "reorganize_definitions", "remove_redundant_casts", "remove_redundant_let_types"),
         )
     if n_code is None:
         n_code = w.transpile(n_c_code, src_loc_annotations=True, hayroll=True)

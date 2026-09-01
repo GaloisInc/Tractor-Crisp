@@ -38,7 +38,8 @@ class WorkContainer:
 
     def start(self):
         self.container = self.client.containers.run(
-                self.image, ('sleep', '1000'), detach=True, remove=True)
+            # `sleep` is PID 1; its duration caps the lifetime of the container.
+            self.image, ('sleep', '1800'), detach=True, remove=True)
 
     def stop(self):
         if self.container is not None:
@@ -49,13 +50,17 @@ class WorkContainer:
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
-    def checkout(self, n_tree):
+    def checkout(self, n_tree, rel_path=None):
         assert isinstance(n_tree, TreeNode)
+        if rel_path is not None:
+            assert not os.path.isabs(rel_path)
         tar_io = io.BytesIO()
         with tarfile.open(fileobj=tar_io, mode='w') as t:
-            for rel_path, n_file_id in n_tree.files.items():
+            for file_path, n_file_id in n_tree.files.items():
+                if rel_path is not None:
+                    file_path = os.path.join(rel_path, file_path)
                 n_file = self.mvir.node(n_file_id)
-                info = tarfile.TarInfo(rel_path)
+                info = tarfile.TarInfo(file_path)
                 info.size = len(n_file.body())
                 t.addfile(info, io.BytesIO(n_file.body()))
         self._checkout_tar_file(tar_io.getvalue())

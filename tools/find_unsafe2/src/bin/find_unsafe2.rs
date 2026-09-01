@@ -6,7 +6,6 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_middle;
 
-use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::path::Path;
@@ -40,31 +39,18 @@ fn main() {
             return ControlFlow::<(), ()>::Continue(());
         }
 
-        let mut found_src = false;
-        let mut files_seen = HashSet::new();
-        let items = rustc_public::all_local_items();
-        for item in items {
-            let file = item.span().get_filename();
-            if files_seen.insert(file.clone()) {
-                if let Ok(file_abs) = Path::new(&file).canonicalize() {
-                    if file_abs.starts_with(&src_dir) {
-                        found_src = true;
-                        break;
-                    }
-                }
-            }
-        }
-
         // Only process the current crate if it's inside the `SRC_DIR`.
-        if found_src {
-            let out = find_unsafe2::process(tcx);
-
-            let out_path = json_dir.join(format!("{crate_name}.json"));
-            serde_json::to_writer(
-                File::create(&out_path).unwrap(),
-                &out,
-            ).unwrap();
+        if !find_unsafe2::any_local_item_under(tcx, src_dir) {
+            return ControlFlow::<(), ()>::Continue(());
         }
+
+        let out = find_unsafe2::process(tcx);
+
+        let out_path = json_dir.join(format!("{crate_name}.json"));
+        serde_json::to_writer(
+            File::create(&out_path).unwrap(),
+            &out,
+        ).unwrap();
 
         ControlFlow::<(), ()>::Continue(())
     });

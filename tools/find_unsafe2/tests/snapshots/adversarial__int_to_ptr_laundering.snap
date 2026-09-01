@@ -1,0 +1,10 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_int_to_ptr_laundering::via_expose: int-to-pointer casts increased: 0 -> 1
+adv_int_to_ptr_laundering::via_expose_mut: int-to-pointer casts increased: 0 -> 1
+adv_int_to_ptr_laundering::via_without: int-to-pointer casts increased: 0 -> 1
+adv_int_to_ptr_laundering::via_without_mut: int-to-pointer casts increased: 0 -> 1
+adv_int_to_ptr_laundering::via_with_addr: int-to-pointer casts increased: 0 -> 1
+adv_int_to_ptr_laundering::via_map_addr: int-to-pointer casts increased: 0 -> 1

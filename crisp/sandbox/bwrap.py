@@ -70,8 +70,8 @@ class BwrapSandbox:
 
         self.bwrap_cfg = BwrapConfig.from_toml_file(CRISP_DIR / 'crisp-bwrap.toml')
 
-    def checkout(self, n_tree: TreeNode):
-        self.work_dir.checkout(n_tree)
+    def checkout(self, n_tree: TreeNode, rel_path: str | None = None):
+        self.work_dir.checkout(n_tree, rel_path = rel_path)
 
     def checkout_file(self, rel_path, n_file: FileNode):
         self.work_dir.checkout_file(rel_path, n_file)

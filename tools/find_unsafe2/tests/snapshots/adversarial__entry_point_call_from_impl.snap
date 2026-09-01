@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_entry_point_call_from_impl::use_it: uses of FFI entry point adv_entry_point_call_from_impl::exported_read increased: 0 -> 1

@@ -1,0 +1,5 @@
+---
+source: find_unsafe2/tests/adversarial.rs
+expression: out.stdout
+---
+adv_new_ptr_field::Handle: field buf raw pointer count increased: 0 -> 1

@@ -287,29 +287,6 @@ def _cc_impl(
     )
     return n_op
 
-def cc_cmake(cfg: Config, mvir: MVIR, c_code: TreeNode) -> CompileCommandsOpNode:
-    with run_sandbox(cfg, mvir) as sb:
-        src_dir = sb.join(cfg.relative_path(cfg.transpile.cmake_src_dir))
-        build_dir = sb.join("build")
-        config_cmd = ["cmake", "-B", build_dir, src_dir]
-        if cfg.transpile.cmake_preset is not None:
-            config_cmd += ['--preset', cfg.transpile.cmake_preset]
-        build_cmake_cmd = ["cmake", "--build", build_dir, "--"]
-        if cfg.transpile.single_target is not None:
-            build_cmake_cmd.append(cfg.transpile.single_target)
-        # We wrap the inner cmake command in `sh -c "cmake ..."` because
-        # the bear command line parser strips the second `--`, e.g.
-        # `bear -- cmake --build <build_dir> -- <target>` becomes
-        # `cmake --build <build_dir> <target>` which is incorrect.
-        build_cmd = ["bear", "--", "sh", "-c", " ".join(build_cmake_cmd)]
-        cmds = [config_cmd, build_cmd]
-        n_op = _cc_impl(cfg, mvir, sb, c_code, cmds)
-
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
-    if n_op.compile_commands is not None:
-        mvir.set_tag('compile_commands', n_op.compile_commands, n_op.kind)
-    return n_op
-
 def cc_custom(
     cfg: Config,
     mvir: MVIR,
@@ -515,6 +492,7 @@ def check_unsafe2(cfg: Config, mvir: MVIR,
     with run_sandbox(cfg, mvir) as sb:
         cmd = [
             'env',
+            f'FIND_UNSAFE2_SRC_DIR={sb.join(cargo_dir)}',
             f'FIND_UNSAFE2_JSON_DIR={sb.join("unsafe_json")}',
             'cargo', 'check-unsafe2',
             '--manifest-path', sb.join(cargo_toml_path),

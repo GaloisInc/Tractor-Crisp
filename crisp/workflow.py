@@ -28,16 +28,6 @@ from .mvir import (
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
-
-# Whether to cache the results of workflow steps.  This is more aggressive than
-# the built-in caching of the `analysis` module because it will even cache the
-# results of nondeterministic steps like LLM calls.  This is useful during
-# development, particularly when working on a step later in the pipeline,
-# because it allows skipping over all of the prior steps and going directly to
-# the step of interest.
-USE_WORKFLOW_CACHE = int(os.environ.get('CRISP_USE_WORKFLOW_CACHE') or 0) != 0
-
-
 LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
@@ -298,11 +288,6 @@ def _print_step_value(prefix: str, x: Any):
 def step(f):
     name = f.__name__
     sig = inspect.signature(f)
-    ann = typing.get_type_hints(f)
-    return_type = ann['return']
-    can_cache = isinstance(return_type, type) and issubclass(return_type, Node)
-    if not USE_WORKFLOW_CACHE:
-        can_cache = False
 
     @functools.wraps(f)
     def g(self, *args, **kwargs):
@@ -316,42 +301,11 @@ def step(f):
                 continue
             _print_step_value(arg_name, val)
 
-        mvir = self.mvir
-        n_step = None
-        if can_cache:
-            # Look for a cached node for this step.
-            inputs = [(k, v.node_id().to_cbor() if isinstance(v, Node) else v)
-                      for k, v in bound.arguments.items()
-                      if not isinstance(v, Workflow)]
-            n_inputs = WorkflowStepInputsNode.new(
-                    mvir, func_name = name, body = cbor.dumps(inputs))
-
-            for ie in mvir.index(n_inputs.node_id()):
-                if ie.kind == 'workflow_step' and ie.key == 'inputs':
-                    n = mvir.node(ie.node_id)
-                    if n_step is None or n.timestamp > n_step.timestamp:
-                        n_step = n
-
-        if n_step is not None:
-            print(f'use workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
-            result = mvir.node(n_step.output)
-        else:
-            self._step_depth += 1
-            try:
-                result = f(self, *args, **kwargs)
-            finally:
-                self._step_depth -= 1
-
-            if can_cache:
-                # Create a cached node for this step, for future use.
-                n_step = WorkflowStepNode.new(
-                    mvir,
-                    inputs = n_inputs.node_id(),
-                    output = result.node_id(),
-                    timestamp = datetime.now(),
-                )
-                mvir.set_tag('workflow_cache', n_step, name)
-                print(f'save workflow cache: {n_inputs.node_id()} -> {n_step.node_id()}')
+        self._step_depth += 1
+        try:
+            result = f(self, *args, **kwargs)
+        finally:
+            self._step_depth -= 1
 
         if result is not None:
             _print_step_value(name + ' result', result)
@@ -385,18 +339,12 @@ class Workflow:
                     print(f'warning: on-accept hook cwd: {os.getcwd()}', file=sys.stderr)
 
     @step
-    def cc_cmake(self, c_code: TreeNode) -> FileNode:
-        n_op_cc = self.cc_cmake_op(c_code)
-        compile_commands = self.mvir.node(n_op_cc.compile_commands)
-        return compile_commands
-
-    @step
-    def cc_cmake_op(self, c_code: TreeNode) -> CompileCommandsOpNode:
-        return analysis.cc_cmake(self.cfg, self.mvir, c_code)
-
-    @step
     def cc_custom(self, c_code: TreeNode, artifact: str | int | None = None) -> FileNode:
         n_op_cc = self.cc_custom_op(c_code, artifact = artifact)
+        if n_op_cc.exit_code != 0:
+            raise CrispError(f"cc_custom_op failed with exit code {n_op_cc.exit_code}; "
+                "ensure all needed c_code files were committed", n_op_cc)
+        assert n_op_cc.compile_commands is not None
         compile_commands = self.mvir.node(n_op_cc.compile_commands)
         return compile_commands
 
@@ -1311,11 +1259,9 @@ class Workflow:
         else:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
 
-        extra_code = [
-            self.find_unsafe2_json(n_code),
-        ]
+        extra_code = {}
         if n_test_code is not None:
-            extra_code.append(n_test_code)
+            extra_code['tests'] = n_test_code
 
         prompt = agent_safety_prompt.format(
             cargo_dir_path = cargo_dir,
@@ -1327,11 +1273,13 @@ class Workflow:
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
+            unsafe_json = self.find_unsafe2_json(n_code),
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            find_unsafe2_src_dir = cargo_dir,
         )
 
     @step
@@ -1496,9 +1444,7 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        extra_code = [
-            self.find_unsafe2_json(n_code),
-        ]
+        extra_code = {}
         if n_test_code is not None:
             # In planning mode, we do provide the entire C code to the planner
             # since that might increase the quality of the plan. However, if
@@ -1507,13 +1453,14 @@ class Workflow:
             # might contain references to it. This might confuse the agent and
             # break the `agent_sim_no_tests` mode.
             # TODO: un-break that mode somehow (without hiding the C code).
-            extra_code.append(n_test_code)
+            extra_code['c_code'] = n_test_code
 
         prompt = agent_plan_prompt.format(
             cargo_dir_path = cargo_dir,
             ffi_entry_point_rules = ffi_entry_point_rules)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
+            unsafe_json = self.find_unsafe2_json(n_code),
             planning_files = None,
             codex_login=self.codex_login,
             codex_agents=agent.PLANNING_CODEX_AGENTS,
@@ -1521,6 +1468,7 @@ class Workflow:
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            find_unsafe2_src_dir = cargo_dir,
         )
 
     @step

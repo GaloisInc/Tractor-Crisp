@@ -70,11 +70,13 @@ class ResponseEvaluator:
         self,
         score_safe: float = GEPA_MAX_SCORE/2,
         score_passtests: float = GEPA_MAX_SCORE/2,
+        score_penalty_per_unsafe: float = 1e-1,
         score_penalty_per_output_token: float = 1e-5,
         score_penalty_per_call_duration_sec: float = 1e-3
     ):
         self.score_safe = score_safe
         self.score_passtests = score_passtests
+        self.score_penalty_per_unsafe = score_penalty_per_unsafe
         self.score_penalty_per_output_token = score_penalty_per_output_token
         self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
 
@@ -107,13 +109,24 @@ class ResponseEvaluator:
         passtests = False
 
         # Check for un-safety
-        unsafe_count = workflow.count_unsafe2(n_output_code) #TODO integrate finer-grained results of types of unsafe using find_unsafe2 instead of just count_unsafe2
-        if unsafe_count <= 0:
+        feedback_unsafety = "Here is additional analysis on unsafe entities:"
+        unsafe_count = 0
+
+        for n_json_file in workflow.find_unsafe2_json_files(n_output_code):
+            unsafe_json = n_json_file.body_json()
+            for k, v in unsafe_json['fns'].items():
+                if v['total_unsafe'] > 0:
+                    feedback_unsafety += f"\n- Function {k} -- {v}"
+            for k, v in unsafe_json['types'].items():
+                pass #TODO types
+            unsafe_count += unsafe_json['total_unsafe']
+
+        score = self.score_safe - (self.score_penalty_per_unsafe * unsafe_count)
+        if unsafe_count == 0:
             safe = True
-            score += self.score_safe
             feedback_components.append("The refactored Rust code has no unsafe entities. Good job!")
         else:
-            feedback_components.append(f"The refactored Rust code has {unsafe_count} unsafe entities. Please try again to produce Rust code that is safe, and is functionally correct.")
+            feedback_components.append(f"The refactored Rust code has a total of {unsafe_count} unsafe entities. Please try again to produce Rust code that is safe, and is functionally correct.\n{feedback_unsafety}")
 
         # Check for tests passing
         test_results = workflow.test_op(n_output_code, n_c_code)

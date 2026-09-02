@@ -72,6 +72,10 @@ def project_setup_initial(project_dir: Path, initial_setup_crisp_storage_backup_
         env = {**os.environ, "LLM_SAFETY_TRIES": "0"},
         cwd = str(project_dir),
     )
+    subprocess.run(
+        ["python", "scripts/save_plans.py", str(project_dir)],
+        cwd = str(Path(__file__).resolve().parent.parent), # run from repo root
+    )
     shutil.copytree(project_dir / 'crisp-storage', initial_setup_crisp_storage_backup_path)
 
 

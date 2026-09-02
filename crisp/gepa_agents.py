@@ -415,6 +415,72 @@ def run_gepa(
             f.write(gepa_result.best_candidate[prompt_type])
 
 
+def run_gepa_individual(
+    project_folder: Path,
+    seed_prompt_paths: dict[str, Path],
+    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
+    max_metric_calls: int = 150,
+    optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
+):
+    """
+    Run GEPA optimization for converting unsafe Rust to safe Rust on an individual project.
+
+    Inputs:
+    - project_folder: Path to the individual project, e.g. zlib.
+    - reflection_lm: The LM outside the loop for GEPA.
+    - max_metric_calls: Required by GEPA.
+    - optimized_prompts_folder: The new prompt will be saved in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
+    """
+    assert is_project_gepaready(project_folder), f"Project at {project_folder} is not GEPA-ready."
+
+    # Get prompt types being optimized
+    prompt_types = seed_prompt_paths.keys()
+
+    # Create optimized prompts folder
+    optimized_prompts_folder.mkdir(parents=True, exist_ok=False)
+
+    # Get seed prompts
+    seed_prompts = {}
+    for prompt_type in prompt_types:
+        seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
+
+    # Get expected formatted blocks
+    expected_formatted_blocks = get_expected_formatted_blocks_from_seed_candidate(seed_prompts)
+
+    # Create datasets
+    workflow = get_workflow_for_project(project_folder)
+    task_input = {'workflow': workflow}
+    trainset = [task_input]
+    valset = [task_input]
+
+    # Instantiate GEPA adapter
+    adapter = RustAdapter(
+        evaluator = ResponseEvaluator(
+            score_safe = 2/3 * GEPA_MAX_SCORE,
+            score_passtests = 1/3 * GEPA_MAX_SCORE,
+            score_penalty_per_unsafe = 1e-4,
+        ),
+        expected_formatted_blocks = expected_formatted_blocks
+    )
+
+    # Run GEPA optimization
+    gepa_result = gepa.optimize(
+        seed_candidate = seed_prompts,
+        trainset = trainset,
+        valset = valset,
+        adapter = adapter,
+        max_metric_calls = max_metric_calls,
+        reflection_lm = reflection_lm,
+        perfect_score = GEPA_MAX_SCORE,
+        reflection_minibatch_size = 1
+    )
+
+    # Save optimization results
+    for prompt_type in prompt_types:
+        with open(optimized_prompts_folder / f'{prompt_type}.txt', 'w', encoding='utf-8') as f:
+            f.write(gepa_result.best_candidate[prompt_type])
+
+
 def eval_gepa_prompt(
     dataset_path: Path,
     optimized_prompt_folder: Path,

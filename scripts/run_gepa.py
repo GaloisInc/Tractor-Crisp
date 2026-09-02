@@ -53,6 +53,20 @@ def run_gepa_agents():
         reflection_lm = 'gpt-5.6-sol'
     )
 
+
+def run_gepa_agents_individual():
+    """
+    Multi-prompt GEPA optimization using agents.
+    """
+    gepa_agents.run_gepa_individual(
+        project_folder = Path(__file__).resolve().parent.parent.parent / 'zlib',
+        seed_prompt_paths = {
+            'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
+        },
+        reflection_lm = 'gpt-5.6-sol'
+    )
+
+
 def evaluate_gepa_agents():
     """
     Use the GEPA evaluation function(s) to check the performance of a set of prompts using agents.
@@ -82,5 +96,7 @@ if __name__ == '__main__':
     # run_gepa_llm()
     # evaluate_gepa_llm()
 
-    run_gepa_agents()
-    evaluate_gepa_agents()
+    # run_gepa_agents()
+    # evaluate_gepa_agents()
+
+    run_gepa_agents_individual()

@@ -313,10 +313,12 @@ def run_agent(
                 for line in logs2.decode('utf-8').splitlines():
                     try:
                         event = json.loads(line)
+                        if not isinstance(event, dict):
+                            continue
                         if event.get('type') == 'turn.completed' and 'usage' in event:
                             codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
                     except json.decoder.JSONDecodeError:
-                        pass
+                        continue
 
             else:
                 exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)

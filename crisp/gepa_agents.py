@@ -355,7 +355,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                         n = traj.n_output_code,
                         glob_filter = traj.task['workflow'].cfg.src_globs
                     )[0],
-                    "Feedback": traj.feedback
+                    "Feedback": traj.feedback + "\n\nWhen suggesting new candidate prompts, don't include instructions for specific files or functions. Instead, try to come up with generally good candidate prompts which can achieve the desired goals -- generating safe and functionally correct Rust code without expending too much time or output tokens -- across a wide variety of projects."
                 }
             )
             #NOTE: When multiple prompts are optimized together, each gets its own key-value pair in `dataset`

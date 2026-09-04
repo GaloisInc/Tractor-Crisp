@@ -472,6 +472,7 @@ def run_gepa_individual(
     task_input = {'workflow': workflow}
     trainset = [task_input]
     valset = [task_input]
+    #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
 
     # Instantiate GEPA adapter
     adapter = RustAdapter(

@@ -10,3 +10,8 @@ Your changes must not introduce new unsafe code within implementation functions.
 cargo check-unsafe2 --manifest-path {cargo_path}/Cargo.toml
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+
+Note the following code: {
+    func foo:
+        haha
+}

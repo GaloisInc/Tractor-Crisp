@@ -23,8 +23,8 @@ from .gepa_common import (
     GEPA_MAX_SCORE,
     is_project_gepaready,
     get_workflow_for_project,
-    get_bad_prompts_in_candidate,
-    get_expected_formatted_blocks_from_seed_candidate
+    get_expected_formatted_blocks,
+    analyze_formatted_blocks_in_candidate
 )
 from .__main__ import parse_node_id_arg
 from .mvir import TreeNode
@@ -179,7 +179,7 @@ def bad_prompt_evaluator(
 
     for bad_prompt_type in bad_prompt_types:
         placeholders = ', '.join(expected_formatted_blocks[bad_prompt_type])
-        feedback_components.append(f"'{bad_prompt_type}' either did not have placeholders {placeholders}, or had extra placeholders. This is an invalid candidate. Try again. It is VERY important that the following placeholders, and ONLY the following placeholders, are present in every candidate for '{bad_prompt_type}' -- {placeholders}.")
+        feedback_components.append(f"The candidate key '{bad_prompt_type}' does not have the required placeholders {placeholders}. Hence, this is an invalid candidate. Try again. It is VERY important that the following placeholders are present in the '{bad_prompt_type}' for every candidate -- {placeholders}.")
 
     feedback = '\n\n'.join(feedback_components)
     return EvaluationResult(
@@ -209,16 +209,24 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         scores = []
         trajectories = [] if capture_traces else None
 
-        bad_prompt_types = get_bad_prompts_in_candidate(
+        # Analyze formatted blocks in candidate -- mark the ones that have missing fblocks as bad, and escape the extra fblocks in the ones that have them
+        fblock_analysis = analyze_formatted_blocks_in_candidate(
             candidate = candidate,
             expected_formatted_blocks = self.expected_formatted_blocks
         )
+        bad_prompt_types = set()
+        for prompt_type in candidate:
+            if fblock_analysis[prompt_type].missing_expected_fblocks:
+                bad_prompt_types.add(prompt_type)
+                continue
+            for extra_fblock in fblock_analysis[prompt_type].has_extra_fblocks:
+                candidate[prompt_type] = candidate[prompt_type].replace(extra_fblock, '{'+extra_fblock+'}')
 
         # Iterate over tasks
         for task in batch:
             n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
 
-            # If any candidate prompt doesn't have correct formatted blocks
+            # If any candidate prompt is missing expected formatted blocks
             if bad_prompt_types:
                 eval_result = bad_prompt_evaluator(
                     expected_formatted_blocks = self.expected_formatted_blocks,
@@ -229,7 +237,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 n_output_code = TreeNode.new(task['workflow'].mvir, files={})
                 run_details = {}
 
-            # If all candidate prompts have correct placeholders
+            # If all candidate prompts have at least the expected formatted blocks
             else:
                 n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
 
@@ -393,7 +401,7 @@ def run_gepa(
         seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
 
     # Get expected formatted blocks
-    expected_formatted_blocks = get_expected_formatted_blocks_from_seed_candidate(seed_prompts)
+    expected_formatted_blocks = get_expected_formatted_blocks(seed_prompts)
 
     # Create datasets
     trainset, valset = [], []
@@ -457,7 +465,7 @@ def run_gepa_individual(
         seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
 
     # Get expected formatted blocks
-    expected_formatted_blocks = get_expected_formatted_blocks_from_seed_candidate(seed_prompts)
+    expected_formatted_blocks = get_expected_formatted_blocks(seed_prompts)
 
     # Create datasets
     workflow = get_workflow_for_project(project_folder)

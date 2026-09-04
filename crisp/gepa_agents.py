@@ -8,6 +8,7 @@ import csv
 from dataclasses import dataclass, fields
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
+import math
 import os
 import pandas as pd
 from pathlib import Path
@@ -70,13 +71,11 @@ class ResponseEvaluator:
         self,
         score_safe: float = GEPA_MAX_SCORE/2,
         score_passtests: float = GEPA_MAX_SCORE/2,
-        score_penalty_per_unsafe: float = 1e-1,
         score_penalty_per_output_token: float = 1e-5,
         score_penalty_per_call_duration_sec: float = 1e-3
     ):
         self.score_safe = score_safe
         self.score_passtests = score_passtests
-        self.score_penalty_per_unsafe = score_penalty_per_unsafe
         self.score_penalty_per_output_token = score_penalty_per_output_token
         self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
 
@@ -109,24 +108,37 @@ class ResponseEvaluator:
         passtests = False
 
         # Check for un-safety
-        feedback_unsafety = "Here is additional analysis on unsafe entities:"
-        unsafe_count = 0
 
+        ### Get prior unsafe count as baseline
+        prior_unsafe_count = workflow.count_unsafe2(n_input_code)
+
+        ### Get current unsafe count and sub-categories
+        unsafe_count = 0
+        unsafe_fns = []
+        unsafe_types = []
         for n_json_file in workflow.find_unsafe2_json_files(n_output_code):
             unsafe_json = n_json_file.body_json()
-            for k, v in unsafe_json['fns'].items():
-                if v['total_unsafe'] > 0:
-                    feedback_unsafety += f"\n- Function {k} -- {v}"
-            for k, v in unsafe_json['types'].items():
-                pass #TODO types
+            try:
+                unsafe_fns += [k for k,v in unsafe_json['fns'].items() if v['total_unsafe'] > 0]
+                unsafe_types += [k for k,v in unsafe_json['types'].items() if sum(v['field_contains_raw_ptr'].values()) > 0]
+            except KeyError: # in case some dicts in `unsafe_json` don't have the appropriate keys, do nothing
+                pass
             unsafe_count += unsafe_json['total_unsafe']
 
-        score = self.score_safe - (self.score_penalty_per_unsafe * unsafe_count)
+        ### Get unsafe removed and compute score
+        unsafe_removed = prior_unsafe_count - unsafe_count
+        score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0))
+
+        ### Give feedback
         if unsafe_count == 0:
             safe = True
-            feedback_components.append("The refactored Rust code has no unsafe entities. Good job!")
+            feedback_components.append(f"The refactored Rust code has no unsafe entities remaining. All of the {prior_unsafe_count} unsafe entities in the original Rust code have been removed in the refactored Rust code. Good job!")
         else:
-            feedback_components.append(f"The refactored Rust code has a total of {unsafe_count} unsafe entities. Please try again to produce Rust code that is safe, and is functionally correct.\n{feedback_unsafety}")
+            feedback_components.append(f"The refactored Rust code has a total of {unsafe_count} unsafe entities. The original Rust code had {prior_unsafe_count} unsafe entities, so the refactor has {'added' if unsafe_removed < 0 else 'removed'} {unsafe_removed} unsafe entities. Keep trying to achieve the goal of making the Rust code safe by removing as many unsafe entities as possible, while maintaining functional correctness.")
+            if unsafe_fns:
+                feedback_components.append(f"At the moment, the unsafe functions are {', '.join(['`'+elem+'`' for elem in unsafe_fns])}")
+            if unsafe_types:
+                feedback_components.append(f"At the moment, the fields containing raw pointers are {', '.join(['`'+elem+'`' for elem in unsafe_types])}")
 
         # Check for tests passing
         test_results = workflow.test_op(n_output_code, n_c_code)
@@ -457,8 +469,7 @@ def run_gepa_individual(
     adapter = RustAdapter(
         evaluator = ResponseEvaluator(
             score_safe = 2/3 * GEPA_MAX_SCORE,
-            score_passtests = 1/3 * GEPA_MAX_SCORE,
-            score_penalty_per_unsafe = 1e-4,
+            score_passtests = 1/3 * GEPA_MAX_SCORE
         ),
         expected_formatted_blocks = expected_formatted_blocks
     )

@@ -119,7 +119,7 @@ def analyze_formatted_blocks_in_candidate(
     assert candidate.keys() == expected_formatted_blocks.keys()
     result = {}
     for prompt_type, current_expected_formatted_blocks in expected_formatted_blocks.items():
-        candidate_formatted_blocks = set(re.findall(r'\{[^{}]+\}', candidate[prompt_type]))
+        candidate_formatted_blocks = set(re.findall(r'\{[^{}]*\}', candidate[prompt_type]))
         result[prompt_type] = FBlockReport(
             missing_expected_fblocks = current_expected_formatted_blocks - candidate_formatted_blocks,
             has_extra_fblocks = candidate_formatted_blocks - current_expected_formatted_blocks

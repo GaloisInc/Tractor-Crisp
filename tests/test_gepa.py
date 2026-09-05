@@ -32,7 +32,7 @@ def test_analyze_formatted_blocks_in_candidate():
 
         'agent_target_goal_field': "hello `{field_name}`",
 
-        'some_prompt': "here's the number:{number}. Now, follow {instructions} as per your ID: A-{id}{B}"
+        'some_prompt': "here's the number:{number}. Now {}, follow {instructions} as per {} your {} ID: A-{id}{B}"
     }
     assert mut.analyze_formatted_blocks_in_candidate(
         candidate = candidate1,
@@ -43,7 +43,7 @@ def test_analyze_formatted_blocks_in_candidate():
             missing_expected_fblocks = {'{struct_name}'}
         ),
         'some_prompt': mut.FBlockReport(
-            has_extra_fblocks = {'{B}'}
+            has_extra_fblocks = {'{}', '{B}'}
         )
     }
 

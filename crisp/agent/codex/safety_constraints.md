@@ -40,8 +40,12 @@ The following FFI rules are mandatory:
   point that still has the old signature.
 
 Do not recommend editing tests or original C code to make validation pass. Do
-not recommend new unsafe or unsafe-adjacent implementation code, including raw
-pointer fields or arguments, int-to-pointer casts, or calls to unsafe FFI APIs.
+not recommend new unsafe-adjacent implementation code: raw pointer fields,
+int-to-pointer casts, or calls to unsafe FFI APIs. The checker compares every
+tracked metric in each non-FFI function against its baseline; reductions in one
+function cannot offset increases in another. New functions have an empty
+baseline, so new unsafe helpers and helpers with raw-pointer signatures fail
+the gate. Plan conversions that satisfy these checks when the step is complete.
 
 Dependency policy: a Rust crate may be recommended as a replacement for a
 dependency of the original C project (for example, a zlib crate where the C
@@ -58,16 +62,20 @@ directory named by the `FIND_UNSAFE2_JSON_DIR` environment variable (the
 parent's spawn message may give the concrete path). Each file contains:
 
 - `total_unsafe`: crate-wide count of unsafety findings, excluding FFI entry
-  points.
+  points and including raw-pointer fields and unsafe impls.
 - `fns`: a map from function name to a record with `filename`, `total_unsafe`,
-  `is_ffi_entry_point`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`,
-  `calls_unsafe`, and the maps `uses_static_mut` and `uses_union_field` (keyed
-  by the static or field used), plus the progress metrics `uses_foreign_fn`,
-  `casts_int_to_ptr`, and `sig_contains_raw_ptr`.
+  `ffi_symbol` (the exported name, or null), `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`,
+  `calls_unsafe`, `inline_asm`, and the maps `uses_static_mut` and
+  `uses_union_field` (keyed by the static or field used), plus the progress
+  metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
+  `sig_contains_raw_ptr`. Closures inside FFI entry points are attributed to
+  that entry point; other closures have their own inventory records.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field
   `"type"`.
+- `unsafe_impls`: counts of `unsafe impl` blocks by parent module (e.g.
+  `unsafe impl Send`). Increasing a module's count fails the checker.
 
 The harness that later executes the plan assigns work targets using exactly
 these function, type, and field names. Cite symbols in your report using these

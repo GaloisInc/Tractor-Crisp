@@ -124,6 +124,14 @@ AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
 
 AGENT_FFI_REVIEW_PROMPT = _prompt('ffi_review.md')
 
+# Prose statement of the gates `check-unsafe2` enforces; update it
+# alongside any checker gate change.
+CHECKER_RULES = _prompt('checker_rules.md').strip()
+
+TOLERATED_UNSAFETY_RULES = _prompt('tolerated_unsafety_rules.md').strip()
+
+AGENT_TOLERATED_REVIEW_PROMPT = _prompt('tolerated_review.md')
+
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
 # a clean review is prose with no such lines.
 AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
@@ -148,43 +156,199 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
     return seen[-FFI_SEEN_FINDINGS_CAP:]
 
 AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+Consult `SAFETY_PLAN.md` for the crate-wide conventions and the cluster covering your target.  It is read-only reference: notes in it are guidance, not rules — only the rules stated below bind your work.
+
+{menu}
 
 {target_goal}
 
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+Check your work using this command:
 ```sh
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
-This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+{checker_rules}
+
+Checker-tolerated warnings are judged under these binding rules:
+
+{tolerated_unsafety_rules}
+
+FFI entry points are judged under these binding rules:
+
+{ffi_entry_point_rules}
+
+Begin your final message with a line `TARGET: <name>` naming the function (or `Type.field`) this step worked on, and end it with one of these lines — or no verdict line, which means DONE: the step's work is complete and is judged against the code as it stood when the step began.
+- `CONTINUE: <what the next invocation must finish>` — the change is sound but needs more than one invocation (an ownership facade, a state-machine conversion). The step then spans several invocations, judged once as a whole. The unsafe baseline in your workspace stays pinned to the step's start, so `cargo check-unsafe2` always shows the exact judgment the whole step will face; failing it mid-step is expected, and it must pass before you declare DONE. Every invocation must still build — one that does not is discarded, and the step resumes from the last good state.
+- `BLOCKED: <target> — <verbatim gate diagnostic or one-line reason>` — no legal reduction exists at that target; your code edits will be discarded and the target deferred until another target lands an unsafe-count reduction. Do not use BLOCKED for work that is merely too large for one invocation — that is what CONTINUE is for.
 '''
 
+def _abi_header_type(name: str) -> bool:
+    # C-header (`*_h` module) types carry ABI layout; their fields cannot go.
+    return any(seg.endswith('_h') for seg in name.split('::')[1:-1])
+
+def menu_targets(
+    fns: dict, types: dict, suppressed: 'frozenset[str] | set[str]' = frozenset(),
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """
+    The live target lists from merged inventory records: counted non-FFI
+    functions by unsafe operations, and `Type.field` entries by raw-pointer
+    count, both largest first and minus `suppressed`.  Fields name the
+    ownership unit a redesign must change, so they are offered alongside
+    functions rather than hidden behind them.
+    """
+    fn_list = sorted(
+        ((name, r.get('total_unsafe', 0)) for name, r in fns.items()
+            if r.get('ffi_symbol') is None and not r.get('is_ffi_entry_point')
+                and r.get('total_unsafe', 0) > 0
+                and name not in suppressed),
+        key = lambda kv: (-kv[1], kv[0]))
+    field_list = sorted(
+        ((f'{ty}.{field}', n) for ty, r in types.items()
+            for field, n in r.get('field_contains_raw_ptr', {}).items()
+            # A type alias records its target under the pseudo-field "type".
+            if n > 0 and field != 'type'
+                and not _abi_header_type(ty)
+                and f'{ty}.{field}' not in suppressed),
+        key = lambda kv: (-kv[1], kv[0]))
+    return fn_list, field_list
+
+# The menu is the target vocabulary: suppression rotates lower-ranked
+# targets into view.  Per-file totals give the mass map in a line per file.
+MENU_MAX_FNS = 20
+MENU_MAX_FIELDS = 10
+
+def format_menu(
+    fns: dict, types: dict, suppressed: 'frozenset[str] | set[str]' = frozenset(),
+) -> str:
+    """Render the target menu for the step prompt, biggest targets first."""
+    fn_list, field_list = menu_targets(fns, types)
+    live_names = {name for name, _ in fn_list + field_list}
+    live_suppressed = set(suppressed) & live_names
+    fn_list = [(name, mass) for name, mass in fn_list
+        if name not in live_suppressed]
+    field_list = [(name, mass) for name, mass in field_list
+        if name not in live_suppressed]
+    by_file = {}
+    for name, r in fns.items():
+        if (r.get('ffi_symbol') is None and not r.get('is_ffi_entry_point')
+                and r.get('total_unsafe', 0) > 0):
+            f = r.get('filename', '')
+            by_file[f] = by_file.get(f, 0) + r['total_unsafe']
+    lines = ['Where the remaining unsafe operations are — pick one target '
+        'from the lists below and name it in your `TARGET:` line.']
+    lines.append('')
+    lines.append('By file:')
+    lines.extend(f'- {f}: {n}'
+        for f, n in sorted(by_file.items(), key = lambda kv: (-kv[1], kv[0])))
+    lines.append('')
+    lines.append('Largest open functions:')
+    lines.extend(f'- {name}: {n}' for name, n in fn_list[:MENU_MAX_FNS])
+    if field_list:
+        lines.append('')
+        lines.append('Fields still carrying raw pointers '
+            '(name as `Type.field`):')
+        lines.extend(f'- {name}: {n}' for name, n in field_list[:MENU_MAX_FIELDS])
+    if live_suppressed:
+        lines.append('')
+        lines.append('Deferred until another target reduces unsafe '
+            '— do not target: '
+            + ', '.join(f'`{name}`' for name in sorted(live_suppressed)))
+    return '\n'.join(lines)
+
+
+class StepOutcome(typing.NamedTuple):
+    """
+    Result of one judged safety step.  `code` is the accepted tree, the
+    unchanged input tree for a blocked step, or `None` when a gate or
+    review rejected the step.
+
+    A tuple, so the step logger prints indexed `result[N]` lines; log
+    tooling keys on `result[0]` and `result[2]`, with new fields appended.
+    """
+    code: 'TreeNode | None'
+    plans: 'TreeNode | None'
+    ffi_report: str | None
+    target: str | None
+    note: str
+    invocations: int
+
+
+AGENT_FINAL_INVOCATION_NOTE = (
+    'This is the final invocation of this step: finish the work and shed any '
+    'transitional scaffolding, then declare DONE — or declare BLOCKED. '
+    'A CONTINUE here is judged as it stands.')
+
+AGENT_CONTINUE_HANDOFF = (
+    'This step continues from your previous invocation, which reported: {note}')
+
+# Warning lines printed by `check-unsafe2` for tolerated changes.  Anchored on
+# the checker's distinctive suffixes so rustc/cargo warnings don't match.
+CHECK_UNSAFE2_WARNING_RES = [
+    re.compile(r'^warning: .+ increased: \d+ -> \d+$'),
+    re.compile(r'^warning: .+ changed: false -> true$'),
+    re.compile(r'^warning: .+ entry points must stay thin$'),
+]
+
+def extract_checker_warnings(logs: str) -> list[str]:
+    """
+    Extract `check-unsafe2` tolerated-change warnings from a check run's
+    output.
+    """
+    return [
+        line for line in logs.splitlines()
+        if any(r.match(line) for r in CHECK_UNSAFE2_WARNING_RES)
+    ]
+
 AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
+A previous attempt at `{target}` was rejected by review. The reviewer reported:
 
 {report}
 
-Do not repeat this mistake.
+This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
+# Sticky reminder injected into every attempt after the first review
+# rejection, built from harvested reviewer finding titles.  Unlike the full
+# latest report, this remains useful after unrelated work lands.
 AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
+Earlier attempts in this run or a prior run were rejected by review. The reviewer's findings included:
 
 {findings}
 
 Do not repeat these mistakes.
 '''.strip()
 
+
+def parse_verdict(final_message: str) -> tuple[str, str]:
+    """
+    The step verdict from the agent's final message: `('blocked', note)`,
+    `('continue', handoff)`, or `('done', '')`.  The verdict must be the
+    last non-empty line; anything else — including no verdict at all —
+    reads as `done`, the only default that neither suppresses a target nor
+    hands out extra invocations.
+    """
+    lines = [l.strip() for l in final_message.splitlines() if l.strip()]
+    if lines:
+        last = lines[-1]
+        for kind, prefix in (('blocked', 'BLOCKED:'), ('continue', 'CONTINUE:')):
+            if last.startswith(prefix):
+                return kind, last[len(prefix):].strip()
+    return 'done', ''
+
+TARGET_LINE_RE = re.compile(r'^TARGET:\s*(\S+)\s*$', re.MULTILINE)
+
+def parse_target(final_message: str) -> str | None:
+    """The first `TARGET:` declaration in the agent's final message."""
+    m = TARGET_LINE_RE.search(final_message)
+    return m.group(1) if m else None
+
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this script:
 ```sh
 {test_cmd}
 ```
+Run the full script once, before you declare DONE.  While work is in progress, `cargo build` and `cargo check-unsafe2` are the checks worth their cost; the full suite mid-step mostly re-proves what the build already shows.
 Note: you MUST NOT edit the tests (or the original C code) to get them to pass.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()
 
@@ -948,6 +1112,20 @@ class Workflow:
             self, n_code: TreeNode, n_unsafe_json: TreeNode) -> CheckUnsafe2AnalysisNode:
         return analysis.check_unsafe2(self.cfg, self.mvir, n_code, n_unsafe_json)
 
+    def fn_records(self, n_code: TreeNode) -> dict:
+        """Merged `fns` records across all crates' unsafety inventories."""
+        out = {}
+        for n_file in self.find_unsafe2_json_files(n_code):
+            out.update(n_file.body_json().get('fns', {}))
+        return out
+
+    def type_records(self, n_code: TreeNode) -> dict:
+        """Merged `types` records across all crates' unsafety inventories."""
+        out = {}
+        for n_file in self.find_unsafe2_json_files(n_code):
+            out.update(n_file.body_json().get('types', {}))
+        return out
+
     @step
     def compare_unsafe2_op(
             self, n_old_code: TreeNode, n_new_code: TreeNode) -> CheckUnsafe2AnalysisNode:
@@ -1248,9 +1426,20 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode, TreeNode]:
+        # Baseline for the agent's in-sandbox `cargo check-unsafe2`; a
+        # multi-invocation step pins this to the step's start so the check
+        # reproduces the judgment the whole step will face.
+        baseline_json: TreeNode | None = None,
+        # Pre-rendered target menu; a multi-invocation step pins this to the
+        # step's start alongside the baseline.
+        menu_text: str | None = None,
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        if menu_text is None:
+            menu_text = format_menu(
+                self.fn_records(n_code), self.type_records(n_code))
 
         if provide_test_cmd and cfg.test_command is not None:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
@@ -1266,13 +1455,18 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            menu = menu_text,
+            checker_rules = CHECKER_RULES,
+            tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
+            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
-            unsafe_json = self.find_unsafe2_json(n_code),
+            unsafe_json = (baseline_json if baseline_json is not None
+                else self.find_unsafe2_json(n_code)),
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
@@ -1281,30 +1475,27 @@ class Workflow:
             find_unsafe2_src_dir = cargo_dir,
         )
 
-    @step
-    def ffi_review_op(
+    def _run_codex_review(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
+        prompt: str,
     ) -> CodexReviewOpNode:
         cfg, mvir = self.cfg, self.mvir
-        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
-            cfg.models.agent_loop, n_old_code, n_new_code,
-            codex_login = self.codex_login)
+            cfg.models.agent_review, n_old_code, n_new_code,
+            codex_login = self.codex_login,
+            effort = 'xhigh')
 
         if report.strip() == '':
             # Fail closed on a missing report.
-            print('warning: FFI review returned an empty report')
+            print('warning: review returned an empty report')
             passed = False
         elif not ran_commands:
             # Fail closed when the reviewer never successfully ran a command:
             # it cannot have inspected the diff, whatever the report says.
-            print('warning: FFI review ran no commands; ignoring its report')
+            print('warning: reviewer ran no commands; ignoring its report')
             passed = False
         else:
             passed = AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
@@ -1319,6 +1510,58 @@ class Workflow:
         )
         mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
         return n_op
+
+    @step
+    def ffi_review_op(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+    ) -> CodexReviewOpNode:
+        cargo_dir = self.cfg.relative_path(self.cfg.transpile.output_dir)
+        prompt = AGENT_FFI_REVIEW_PROMPT.format(
+            cargo_dir_path = cargo_dir,
+            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+        return self._run_codex_review(n_old_code, n_new_code, prompt)
+
+    @step
+    def tolerated_review_op(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+        warnings: str,
+    ) -> CodexReviewOpNode:
+        cargo_dir = self.cfg.relative_path(self.cfg.transpile.output_dir)
+        prompt = AGENT_TOLERATED_REVIEW_PROMPT.format(
+            cargo_dir_path = cargo_dir,
+            warnings = warnings,
+            tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
+            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+        return self._run_codex_review(n_old_code, n_new_code, prompt)
+
+    @step
+    def do_tolerated_review(
+        self,
+        n_old_code: TreeNode,
+        n_new_code: TreeNode,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
+    ) -> tuple[bool, str | None]:
+        """
+        Review a change that `check-unsafe2` tolerated with warnings: per-
+        function unsafety increases are legal when the global total doesn't
+        grow, but a reviewer must confirm they aren't laundering.  Returns
+        `(passed, report)` like `do_ffi_review`.
+        """
+        warnings = extract_checker_warnings(n_op_unsafe.body_str())
+        if not warnings:
+            return True, None
+
+        n_op = self.tolerated_review_op(
+            n_old_code, n_new_code, '\n'.join(warnings))
+        report = self.mvir.node(n_op.report).body_str()
+        print(report)
+        if n_op.verdict == 'PASS':
+            return True, None
+        return False, report if report.strip() else None
 
     @step
     def do_ffi_review(
@@ -1349,7 +1592,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
 
 
@@ -1433,7 +1676,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1455,6 +1698,7 @@ class Workflow:
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),
             planning_files = None,
+            effort = 'high',
             codex_login=self.codex_login,
             codex_agents=agent.PLANNING_CODEX_AGENTS,
             clean_cmds = [
@@ -1472,24 +1716,83 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
-        self.fuel.use()
-
-        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
-            prompt_suffix = prompt_suffix,
-            target_goal = target_goal)
-        # The change must pass tests, must not regress any unsafe count, and
-        # must not break the FFI entry point rules.
-        n_op_test = self.test_op(n_new_code, n_test_code)
-        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
-            return None, None, None
-        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
+        max_invocations: int = 1,
+        suppressed: frozenset[str] = frozenset(),
+    ) -> StepOutcome:
+        """
+        Run one safety step of up to `max_invocations` agent invocations and
+        judge the result once, against `n_code`.  A `CONTINUE` verdict
+        extends the step: the intermediate tree may regress the unsafe
+        counts, but must build to become the checkpoint the next invocation
+        resumes from.  The judged battery is unchanged from a
+        single-invocation step, and only a landing candidate pays for it.
+        """
+        n_base = n_code
+        # Pin the checker baseline to the step's start: the agent's own
+        # `cargo check-unsafe2` then reproduces the final judgment exactly,
+        # instead of comparing against its latest checkpoint.
+        n_base_json = self.find_unsafe2_json(n_base)
+        menu_text = format_menu(
+            self.fn_records(n_base), self.type_records(n_base), suppressed)
+        n_cur = n_code
+        target = None
+        invocations = 0
+        handoff = None
+        for i in range(max_invocations):
+            self.fuel.use()
+            invocations += 1
+            parts = [p for p in (prompt_suffix, handoff) if p]
+            if i + 1 == max_invocations and max_invocations > 1:
+                parts.append(AGENT_FINAL_INVOCATION_NOTE)
+            n_next, _, final_message = self.agent_safety(
+                n_cur, n_test_code, n_plans,
+                prompt_suffix = '\n\n'.join(parts) if parts else None,
+                target_goal = target_goal,
+                baseline_json = n_base_json,
+                menu_text = menu_text)
+            if target is None:
+                target = parse_target(final_message)
+            verdict, note = parse_verdict(final_message)
+            if verdict == 'blocked':
+                # No legal reduction here.  Keep the plan updates, discard
+                # the code edits; the accepted code is unchanged.
+                print(f'agent declared blocked: {note}')
+                return StepOutcome(n_base, n_plans, None, target,
+                    note, invocations)
+            if verdict == 'done':
+                n_cur = n_next
+                break
+            if not self.cargo_check_json_op(n_next).passed:
+                # A checkpoint that does not build rejects the whole step.
+                return StepOutcome(None, None, None, target, '',
+                    invocations)
+            n_cur = n_next
+            handoff = AGENT_CONTINUE_HANDOFF.format(note = note)
+        if n_cur.node_id() == n_base.node_id():
+            # No invocation produced a usable tree; nothing to judge.
+            return StepOutcome(n_base, n_plans, None, target, '',
+                invocations)
+        # The step must pass tests, must not regress the unsafe counts, must
+        # pass review of any tolerated unsafety moves, and must not break the
+        # FFI entry point rules — all judged against the step's start.  The
+        # cheap unsafe comparison runs first so a regressing attempt doesn't
+        # pay for the full test suite.
+        n_op_unsafe = self.compare_unsafe2_op(n_base, n_cur)
+        if n_op_unsafe.exit_code != 0:
+            return StepOutcome(None, None, None, target, '', invocations)
+        n_op_test = self.test_op(n_cur, n_test_code)
+        if n_op_test.exit_code != 0:
+            return StepOutcome(None, None, None, target, '', invocations)
+        tol_ok, tol_report = self.do_tolerated_review(
+            n_base, n_cur, n_op_unsafe)
+        if not tol_ok:
+            return StepOutcome(None, None, tol_report, target, '', invocations)
+        ffi_ok, ffi_report = self.do_ffi_review(n_base, n_cur)
         if not ffi_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
-            return None, None, ffi_report
-        return n_new_code, n_plans, None
+            return StepOutcome(None, None, ffi_report, target, '', invocations)
+        return StepOutcome(n_cur, n_plans, None, target, '', invocations)
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1505,10 +1808,16 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_new_code, _, final_message = self.agent_safety_no_tests(
+            n_code, n_plans)
+        if parse_verdict(final_message)[0] == 'blocked':
+            print(f'agent declared blocked: {final_message.strip()}')
+            return n_code, n_plans
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
+            return None, None
+        if not self.do_tolerated_review(n_code, n_new_code, n_op_unsafe)[0]:
             return None, None
         if not self.do_ffi_review(n_code, n_new_code)[0]:
             return None, None

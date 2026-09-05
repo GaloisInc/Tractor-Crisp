@@ -24,7 +24,7 @@ from .config import Config
 from .error import CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
-    CodexAgentOpNode
+    CodexAgentOpNode, CodexReviewOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
@@ -307,6 +307,25 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
             )
 
 
+def prior_review_findings(mvir) -> list[str]:
+    """
+    Rebuild the seen-findings reminder list from rejected reviews recorded in
+    the `op_history` reflog, so restarts don't forget past review rejections.
+    """
+    seen: list[str] = []
+    if not mvir.has_tag('op_history'):
+        return seen
+    for entry in mvir.tag_reflog('op_history'):
+        if entry.reason != CodexReviewOpNode.KIND:
+            continue
+        n_op = mvir.node(entry.node_id)
+        if n_op.verdict != 'FAIL':
+            continue
+        seen = merge_ffi_finding_titles(
+            seen, mvir.node(n_op.report).body_str())
+    return seen
+
+
 @dataclass(frozen = True)
 class FuelLimits:
     # Try at most this many times in total to make the code safe.
@@ -394,9 +413,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
-    # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
-    # never cleared by an accepted step.
-    ffi_seen_findings = []
+    # Titles of review findings seen this run and in prior runs.  Unlike
+    # `ffi_feedback`, never cleared by an accepted step.
+    ffi_seen_findings = prior_review_findings(mvir)
+    if ffi_seen_findings:
+        print(f'recovered {len(ffi_seen_findings)} review findings '
+            'from prior runs')
     n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:

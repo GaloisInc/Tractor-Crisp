@@ -458,7 +458,8 @@ def run_rewrite(
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
     effort: str = 'high',
-) -> tuple[TreeNode, TreeNode]:
+) -> tuple[TreeNode, TreeNode, str]:
+    """Return the edited code, planning files, and final message if available."""
     extra_code, env = _normalize_run_args(extra_code, env)
 
     if find_unsafe2_json_dir is not None:
@@ -484,9 +485,11 @@ def run_rewrite(
         inputs[name] = Input(tree)
         extra_code_files.update(tree.files.keys())
 
+    last_message_path = 'codex_last_message.txt'
     codex_cmd = _codex_command(cfg, 'exec', [
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
     ], model=model, effort=effort)
 
@@ -499,6 +502,7 @@ def run_rewrite(
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+            'last_message': lambda p: p == last_message_path,
         },
         cwd = cwd,
         clean_cmds = clean_cmds,
@@ -508,8 +512,12 @@ def run_rewrite(
 
     output_code = outputs['code']
     output_plans = outputs['plans']
+    message_files = outputs['last_message'].files
+    final_message = (
+        mvir.node(message_files[last_message_path]).body().decode('utf-8', errors='replace')
+        if last_message_path in message_files else '')
 
-    return (output_code, output_plans)
+    return (output_code, output_plans, final_message)
 
 
 def run_review_op(
@@ -574,7 +582,7 @@ def run_review_op(
         '--dangerously-bypass-approvals-and-sandbox',
         # Structured events let us verify the reviewer ran commands.
         '--json',
-        '--output-last-message', last_message_path,
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
     ], model=model, effort=effort)
 

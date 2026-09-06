@@ -42,6 +42,9 @@ class ConfigBase:
 class ModelsConfig(ConfigBase):
     agent_plan: str = "gpt-5.6-sol"
     agent_loop: str = "gpt-5.6-terra"
+    # Reviews are adversarial reads, not rewrites; luna at xhigh effort is
+    # comparable to the bigger tiers there at a fraction of the price.
+    agent_review: str = "gpt-5.6-luna"
     postprocess: str = "gpt-5.6-luna"
     # `rewriter = None` means call `/v1/models` and pick the first from the list.
     rewriter: str | None = None

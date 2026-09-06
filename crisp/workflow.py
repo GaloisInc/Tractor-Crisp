@@ -1295,8 +1295,9 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
-            cfg.models.agent_loop, n_old_code, n_new_code,
-            codex_login = self.codex_login)
+            cfg.models.agent_review, n_old_code, n_new_code,
+            codex_login = self.codex_login,
+            effort = 'xhigh')
 
         if report.strip() == '':
             # Fail closed on a missing report.

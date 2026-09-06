@@ -377,6 +377,7 @@ def run_gepa(
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
     trainset_frac: float = 0.5,
     max_metric_calls: int = 150,
+    response_evaluator: ResponseEvaluator | None = None,
     optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
 ):
     """
@@ -387,6 +388,7 @@ def run_gepa(
     - reflection_lm: The LM outside the loop for GEPA.
     - trainset_frac: If `is_individual_project` is False, this is the fraction of the data to use for training, with the remaining used for validation. If `is_individual_project` is True, this is ignored.
     - max_metric_calls: Required by GEPA.
+    - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
     - optimized_prompts_folder: Optimized prompts and GEPA logs will be saved in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
     """
 
@@ -422,8 +424,10 @@ def run_gepa(
         #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
 
     # Instantiate GEPA adapter
+    if response_evaluator is None:
+        response_evaluator = ResponseEvaluator()
     adapter = RustAdapter(
-        evaluator = ResponseEvaluator(),
+        evaluator = response_evaluator,
         expected_formatted_blocks = expected_formatted_blocks
     )
 

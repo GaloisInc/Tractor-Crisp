@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from crisp import gepa_llm, gepa_agents
+from crisp import gepa_llm, gepa_agents, gepa_common
 
 
 os.environ['OPENAI_API_KEY'] = os.getenv('CRISP_API_KEY') # required for GEPA
@@ -51,7 +51,8 @@ def run_gepa_agents():
         seed_prompt_paths = {
             'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
         },
-        reflection_lm = 'gpt-5.6-sol'
+        reflection_lm = 'gpt-5.6-sol',
+        response_evaluator = gepa_agents.ResponseEvaluator()
     )
 
 
@@ -65,7 +66,11 @@ def run_gepa_agents_individual():
         seed_prompt_paths = {
             'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
         },
-        reflection_lm = 'gpt-5.6-sol'
+        reflection_lm = 'gpt-5.6-sol',
+        response_evaluator = gepa_agents.ResponseEvaluator(
+            score_safe = 2/3 * gepa_common.GEPA_MAX_SCORE,
+            score_passtests = 1/3 * gepa_common.GEPA_MAX_SCORE
+        )
     )
 
 

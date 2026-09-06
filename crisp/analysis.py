@@ -484,6 +484,8 @@ def _check_unsafe2_impl(cfg: Config, mvir: MVIR, sb: Sandbox,
     )
     return n_op
 
+# TODO: reject baseline crates that produced no JSON, so dropping a crate from
+# the build can't silently retire its unsafety
 def check_unsafe2(cfg: Config, mvir: MVIR,
         code: TreeNode, unsafe_json: TreeNode) -> CheckUnsafe2AnalysisNode:
     cargo_dir = cfg.relative_path(cfg.transpile.output_dir)

@@ -129,6 +129,15 @@ class ResponseEvaluator:
         unsafe_removed = prior_unsafe_count - unsafe_count
         score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0))
 
+        ### Save node if unsafe count is within certain thresholds
+        unsafe_count_rounded_1000 = unsafe_count // 1000
+        if unsafe_count_rounded_1000 < 6:
+            unsafe_node_name = f'unsafe_{unsafe_count_rounded_1000}k'
+            try:
+                _ = workflow.mvir.node(parse_node_id_arg(workflow.mvir, unsafe_node_name))
+            except ValueError:
+                workflow.mvir.set_tag(unsafe_node_name, n_output_code.node_id())
+
         ### Give feedback
         if unsafe_count == 0:
             safe = True
@@ -382,7 +391,7 @@ def run_gepa(
     seed_prompt_paths: dict[str, Path],
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
     trainset_frac: float = 0.5,
-    max_metric_calls: int = 150,
+    max_metric_calls: int = 4,
     response_evaluator: ResponseEvaluator | None = None,
     optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
 ):
@@ -427,7 +436,7 @@ def run_gepa(
         task_input = {'workflow': workflow}
         trainset = [task_input]
         valset = [task_input]
-        #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
+        #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes which can be used in trainset and valset instead of just 1 data point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can try saving these.
 
     # Instantiate response evaluator
     if response_evaluator is None:

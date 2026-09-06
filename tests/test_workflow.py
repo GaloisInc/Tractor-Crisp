@@ -31,6 +31,7 @@ class ReviewRuleParityTest(unittest.TestCase):
 
         self.assertIn(TOLERATED_UNSAFETY_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('notes in it are guidance, not rules', prompt)
 
     def test_tolerated_reviewer_uses_the_same_rules(self):
         prompt = AGENT_TOLERATED_REVIEW_PROMPT.format(

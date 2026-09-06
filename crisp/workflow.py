@@ -156,8 +156,7 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
     return seen[-FFI_SEEN_FINDINGS_CAP:]
 
 AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+Consult `SAFETY_PLAN.md` for the crate-wide conventions and the cluster covering your target.  It is read-only reference: notes in it are guidance, not rules — only the rules stated below bind your work.
 
 {target_goal}
 

@@ -617,7 +617,8 @@ def pick_file_and_list_targets(w, n_code):
     for n_json_file in w.find_unsafe2_json_files(n_code):
         j = n_json_file.body_json()
         for fn_name, j_fn in j['fns'].items():
-            if j_fn['total_unsafe'] == 0 or j_fn['is_ffi_entry_point']:
+            if (j_fn['total_unsafe'] == 0 or j_fn.get('ffi_symbol') is not None
+                    or j_fn.get('is_ffi_entry_point')):
                 continue
             files[j_fn['filename']].functions.append(AgentTargetFunction(fn_name))
         for type_name, j_type in j['types'].items():

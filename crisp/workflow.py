@@ -301,16 +301,16 @@ def extract_checker_warnings(logs: str) -> list[str]:
     ]
 
 AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected by review. The reviewer reported:
+A previous attempt at `{target}` was rejected by review. The reviewer reported:
 
 {report}
 
-Do not repeat this mistake.
+This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
 # Sticky reminder injected into every attempt after the first review
-# rejection in this or a prior run, built from harvested reviewer finding
-# titles.
+# rejection, built from harvested reviewer finding titles.  Unlike the full
+# latest report, this remains useful after unrelated work lands.
 AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
 Earlier attempts in this run or a prior run were rejected by review. The reviewer's findings included:
 

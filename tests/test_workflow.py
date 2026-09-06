@@ -3,7 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from crisp.workflow import (
-    AGENT_SAFETY_PROMPT, AGENT_TOLERATED_REVIEW_PROMPT,
+    AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT,
+    AGENT_TOLERATED_REVIEW_PROMPT,
     CHECKER_RULES, FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
     TOLERATED_UNSAFETY_RULES, merge_ffi_finding_titles,
     extract_checker_warnings,
@@ -70,6 +71,18 @@ class ReviewRuleParityTest(unittest.TestCase):
         self.assertIn(TOLERATED_UNSAFETY_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
         self.assertIn('dedicated FFI review', prompt)
+
+
+class RejectedReviewPromptTest(unittest.TestCase):
+    def test_report_names_the_target_it_describes(self):
+        prompt = AGENT_FFI_REJECTED_PROMPT.format(
+            target='zlib::src::inffast::inflate_fast',
+            report='Keep the exported wrapper thin.',
+        )
+
+        self.assertIn('attempt at `zlib::src::inffast::inflate_fast`', prompt)
+        self.assertIn('rejection of that unrelated work', prompt)
+        self.assertNotIn('attempt at this step', prompt)
 
 
 class MergeFfiFindingTitlesTest(unittest.TestCase):

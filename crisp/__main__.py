@@ -335,6 +335,20 @@ def update_target_deferrals(
         deferred.add(target)
 
 
+def update_review_feedback(
+    current: tuple[str, str] | None,
+    attempted_target: str | None,
+    report: str | None,
+    completed: bool,
+) -> tuple[str, str] | None:
+    """Keep one full review report until its target completes another attempt."""
+    if report is not None and attempted_target is not None:
+        return attempted_target, report
+    if completed and current is not None and attempted_target == current[0]:
+        return None
+    return current
+
+
 @dataclass(frozen = True)
 class FuelLimits:
     # Try at most this many times in total to make the code safe.
@@ -486,9 +500,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     ledger = []
     # Why the loop ended; 'budget' unless a stop condition says otherwise.
     stop_reason = 'budget'
-    # Report from the most recent review rejection since the last accepted
-    # step; fed back into the next attempt's prompt.
-    ffi_feedback = None
+    # The most recent full review report and the target it describes.  It
+    # remains until that target completes another attempt; unrelated accepted
+    # work must not silently retire it.
+    ffi_feedback: tuple[str, str] | None = None
     # Titles of review findings seen this run and in prior runs.  Unlike
     # `ffi_feedback`, never cleared by an accepted step.
     ffi_seen_findings = prior_review_findings(mvir)
@@ -526,13 +541,16 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
         try:
             ffi_report = None
+            attempted_target = None
             ffi_parts = []
             if ffi_seen_findings:
                 ffi_parts.append(AGENT_FFI_SEEN_FINDINGS_PROMPT.format(
                     findings = '\n'.join(f'- {t}' for t in ffi_seen_findings)))
             if ffi_feedback is not None:
+                feedback_target, feedback_report = ffi_feedback
                 ffi_parts.append(AGENT_FFI_REJECTED_PROMPT.format(
-                    report = ffi_feedback))
+                    target = feedback_target,
+                    report = feedback_report))
             ffi_suffix = '\n\n'.join(ffi_parts) if ffi_parts else None
 
             match args.llm_mode:
@@ -550,6 +568,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     # menu entry and repetition stays bounded.
                     target = outcome.target or \
                         (fn_targets + field_targets)[0][0]
+                    attempted_target = target
                     if outcome.code is None:
                         update_target_deferrals(deferred, target, reduced=False)
                         ledger.append((target, 'rejected', ''))
@@ -574,6 +593,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         target_goal = target_goal)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.ffi_report
+                    attempted_target = outcome.target
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
@@ -594,11 +614,14 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
-                ffi_feedback = None
-            elif ffi_report is not None:
-                ffi_feedback = ffi_report
+            if ffi_report is not None:
                 ffi_seen_findings = merge_ffi_finding_titles(
                     ffi_seen_findings, ffi_report)
+            ffi_feedback = update_review_feedback(
+                ffi_feedback,
+                attempted_target,
+                ffi_report,
+                completed = n_new_code is not None)
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')

@@ -47,6 +47,7 @@ def run_gepa_agents():
     """
     gepa_agents.run_gepa(
         dataset_path = Path(__file__).resolve().parent.parent / 'Test-Corpus/Public-Tests/B01_organic',
+        is_individual_project = False,
         seed_prompt_paths = {
             'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
         },
@@ -56,10 +57,11 @@ def run_gepa_agents():
 
 def run_gepa_agents_individual():
     """
-    Multi-prompt GEPA optimization using agents.
+    Multi-prompt GEPA optimization using agents on an individual project.
     """
-    gepa_agents.run_gepa_individual(
-        project_folder = Path(__file__).resolve().parent.parent.parent / 'zlib',
+    gepa_agents.run_gepa(
+        dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
+        is_individual_project = True,
         seed_prompt_paths = {
             'agent_safety_prompt': Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompts_agents/agent_safety_prompt.txt'
         },

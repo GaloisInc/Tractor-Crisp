@@ -372,6 +372,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
 def run_gepa(
     dataset_path: Path,
+    is_individual_project: bool,
     seed_prompt_paths: dict[str, Path],
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
     trainset_frac: float = 0.5,
@@ -382,11 +383,11 @@ def run_gepa(
     Run GEPA optimization for converting unsafe Rust to safe Rust.
 
     Inputs:
-    - dataset_path: Path to a corpus folder, e.g. B01_organic.
+    - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
     - reflection_lm: The LM outside the loop for GEPA.
-    - trainset_frac: Fraction of the data to use for training. Remaining is used for validation.
+    - trainset_frac: If `is_individual_project` is False, this is the fraction of the data to use for training, with the remaining used for validation. If `is_individual_project` is True, this is ignored.
     - max_metric_calls: Required by GEPA.
-    - optimized_prompts_folder: The new prompt will be saved as `prompt.txt` in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
+    - optimized_prompts_folder: Optimized prompts and GEPA logs will be saved in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
     """
 
     # Get prompt types being optimized
@@ -404,13 +405,21 @@ def run_gepa(
     expected_formatted_blocks = get_expected_formatted_blocks(seed_prompts)
 
     # Create datasets
-    trainset, valset = [], []
-    project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
-    random.shuffle(project_folders)
-    for i,project_folder in enumerate(project_folders):
-        workflow = get_workflow_for_project(project_folder)
+    if not is_individual_project:
+        trainset, valset = [], []
+        project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
+        random.shuffle(project_folders)
+        for i,project_folder in enumerate(project_folders):
+            workflow = get_workflow_for_project(project_folder)
+            task_input = {'workflow': workflow}
+            (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
+    else:
+        assert is_project_gepaready(dataset_path), f"Project at {dataset_path} is not GEPA-ready."
+        workflow = get_workflow_for_project(dataset_path)
         task_input = {'workflow': workflow}
-        (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
+        trainset = [task_input]
+        valset = [task_input]
+        #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
 
     # Instantiate GEPA adapter
     adapter = RustAdapter(
@@ -419,81 +428,18 @@ def run_gepa(
     )
 
     # Run GEPA optimization
-    gepa_result = gepa.optimize(
-        seed_candidate = seed_prompts,
-        trainset = trainset,
-        valset = valset,
-        adapter = adapter,
-        max_metric_calls = max_metric_calls,
-        reflection_lm = reflection_lm,
-        perfect_score = GEPA_MAX_SCORE
-    )
-
-    # Save optimization results
-    for prompt_type in prompt_types:
-        with open(optimized_prompts_folder / f'{prompt_type}.txt', 'w', encoding='utf-8') as f:
-            f.write(gepa_result.best_candidate[prompt_type])
-
-
-def run_gepa_individual(
-    project_folder: Path,
-    seed_prompt_paths: dict[str, Path],
-    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
-    max_metric_calls: int = 150,
-    optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
-):
-    """
-    Run GEPA optimization for converting unsafe Rust to safe Rust on an individual project.
-
-    Inputs:
-    - project_folder: Path to the individual project, e.g. zlib.
-    - reflection_lm: The LM outside the loop for GEPA.
-    - max_metric_calls: Required by GEPA.
-    - optimized_prompts_folder: The new prompt will be saved in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
-    """
-    assert is_project_gepaready(project_folder), f"Project at {project_folder} is not GEPA-ready."
-
-    # Get prompt types being optimized
-    prompt_types = seed_prompt_paths.keys()
-
-    # Create optimized prompts folder
-    optimized_prompts_folder.mkdir(parents=True, exist_ok=False)
-
-    # Get seed prompts
-    seed_prompts = {}
-    for prompt_type in prompt_types:
-        seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
-
-    # Get expected formatted blocks
-    expected_formatted_blocks = get_expected_formatted_blocks(seed_prompts)
-
-    # Create datasets
-    workflow = get_workflow_for_project(project_folder)
-    task_input = {'workflow': workflow}
-    trainset = [task_input]
-    valset = [task_input]
-    #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
-
-    # Instantiate GEPA adapter
-    adapter = RustAdapter(
-        evaluator = ResponseEvaluator(
-            score_safe = 2/3 * GEPA_MAX_SCORE,
-            score_passtests = 1/3 * GEPA_MAX_SCORE
-        ),
-        expected_formatted_blocks = expected_formatted_blocks
-    )
-
-    # Run GEPA optimization
-    gepa_result = gepa.optimize(
-        seed_candidate = seed_prompts,
-        trainset = trainset,
-        valset = valset,
-        adapter = adapter,
-        max_metric_calls = max_metric_calls,
-        reflection_lm = reflection_lm,
-        perfect_score = GEPA_MAX_SCORE,
-        reflection_minibatch_size = 1
-    )
+    gepa_optimize_params = {
+        'seed_candidate': seed_prompts,
+        'trainset': trainset,
+        'valset': valset,
+        'adapter': adapter,
+        'max_metric_calls': max_metric_calls,
+        'reflection_lm': reflection_lm,
+        'perfect_score': GEPA_MAX_SCORE
+    }
+    if is_individual_project:
+        gepa_optimize_params['reflection_minibatch_size'] = 1
+    gepa_result = gepa.optimize(**gepa_optimize_params)
 
     # Save optimization results
     for prompt_type in prompt_types:

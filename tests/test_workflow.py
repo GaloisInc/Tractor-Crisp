@@ -102,6 +102,7 @@ class ReviewRuleParityTest(unittest.TestCase):
 
         self.assertIn(SAFETY_REVIEW_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('notes in it are guidance, not rules', prompt)
 
     def test_semantic_reviewer_uses_the_same_rules(self):
         prompt = AGENT_SAFETY_REVIEW_PROMPT.format(

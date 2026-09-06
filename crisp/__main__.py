@@ -535,7 +535,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
-                n_plans = n_new_plans
                 ffi_feedback = None
             elif ffi_report is not None:
                 ffi_feedback = ffi_report

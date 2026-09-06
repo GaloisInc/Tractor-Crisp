@@ -3,7 +3,6 @@ import ast
 from collections import defaultdict
 from dataclasses import dataclass
 import glob
-import json
 import os
 import pathlib
 from pathlib import Path
@@ -30,7 +29,7 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
-    merge_ffi_finding_titles,
+    merge_ffi_finding_titles, menu_targets,
 )
 
 
@@ -326,17 +325,20 @@ def prior_review_findings(mvir) -> list[str]:
     return seen
 
 
+def update_target_deferrals(
+    deferred: set[str], target: str, reduced: bool,
+) -> None:
+    """Keep failures deferred only until the next accepted reduction."""
+    if reduced:
+        deferred.clear()
+    else:
+        deferred.add(target)
+
+
 @dataclass(frozen = True)
 class FuelLimits:
     # Try at most this many times in total to make the code safe.
     safety_tries: int
-
-    # Bail out if the LLM fails to improve safety of the code for several
-    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
-    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
-    # progress for 3 iterations in a row, on the assumption that the LLM has
-    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
-    max_consecutive_failures: int
 
     # Give the agent this many iterations to fix its current target before
     # switching to a new target.  If it succeeds at fixing the current target,
@@ -368,7 +370,6 @@ def get_fuel_limits(mvir, n_code):
         # B01/B02
         defaults = FuelLimits(
             safety_tries = 8,
-            max_consecutive_failures = 3,
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
             attempt_invocations = 2,
@@ -377,7 +378,6 @@ def get_fuel_limits(mvir, n_code):
         # P01
         defaults = FuelLimits(
             safety_tries = 45,
-            max_consecutive_failures = 5,
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
             attempt_invocations = 2,
@@ -386,7 +386,6 @@ def get_fuel_limits(mvir, n_code):
         # P02 - run forever
         defaults = FuelLimits(
             safety_tries = 9999,
-            max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
             attempt_invocations = 2,
@@ -398,9 +397,6 @@ def get_fuel_limits(mvir, n_code):
         safety_tries = int(
             os.environ.get('LLM_SAFETY_TRIES',
                 defaults.safety_tries)),
-        max_consecutive_failures = int(
-            os.environ.get('LLM_SAFETY_MAX_CONSECUTIVE_FAILURES',
-                defaults.max_consecutive_failures)),
         safety_tries_per_target = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_TARGET',
                 defaults.safety_tries_per_target)),
@@ -413,14 +409,80 @@ def get_fuel_limits(mvir, n_code):
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+    """
+    Drive safety steps until the crate is safe or nothing eligible remains.
+
+    find_unsafe2 supplies the facts, the scheduler decides what gets asked,
+    check-unsafe2 separates the illegal from the reviewable, and the tests
+    decide what is true:
+
+          ┌────────────────────────────────────────────────┐
+          │ find_unsafe2  (the inventory)                  │
+          │ per-function / per-field unsafety records      │
+          └────────┬────────────────────────────────────┬──┘
+             counts & mass                              │  baseline JSON,
+                   │                                    │  pinned at step start
+                   ▼                                    │
+    ┌────────────────────────────────────────────────┐  │
+    │ unsafe count == 0 ────────▶ COMPLETE_SAFE      │  │
+    │      │ else                                    │  │
+    │      ▼                                         │  │
+    │ MENU: per-file mass map, biggest functions,    │  │
+    │       pointer fields, deferred-target line     │  │
+    │   policy filters out: C-header (*_h) ABI       │  │
+    │   types; targets deferred since the last       │  │
+    │   accepted unsafe-count reduction              │  │
+    │      │                                         │  │
+    │      ├─ menu empty ─▶ every live target failed │  │
+    │      │   in this progress epoch ─▶ SATURATED   │  │
+    │      ▼                                         │  │
+    │ ┌─ STEP WINDOW (≤ N invocations, default 2) ─┐ │  │
+    │ │ prompt = plan + menu + checker_rules.md    │ │◀─┘
+    │ │          + past review findings            │ │   the agent’s own
+    │ │ agent edits, declares TARGET, ends with:   │ │   `cargo check-unsafe2`
+    │ │   BLOCKED ─▶ edits discarded, note kept    │ │   compares against the
+    │ │   CONTINUE ─▶ checkpoint must build ──┐    │ │   same pinned baseline,
+    │ │   DONE ─▶ exit window                 │    │ │   so mid-step it always
+    │ │      ▲─────── next invocation ────────┘    │ │   previews the final
+    │ └──────────────┬─────────────────────────────┘ │   judgment
+    │                ▼  judged once, vs step start   │
+    │ GATES, in cost order                           │
+    │  1 check-unsafe2 — hard errors reject:         │
+    │     crate total may not increase; a safe fn    │
+    │     may not gain signature pointers; a new     │
+    │     safe fn needs a direct-pointer-free sig;   │
+    │     an unsafe→safe flip must reach no ptrs     │
+    │     even through struct fields; no int→ptr     │
+    │     casts, no new foreign or FFI uses          │
+    │    warnings tolerate now, queue for review:    │
+    │     relocated ops, false→true qualifiers,      │
+    │     new unsafe impls, entry-point growth       │
+    │  2 full test suite (build + shared + corpus)   │
+    │  3 tolerated-unsafety review (the warnings)    │
+    │  4 FFI-faithfulness review (wrapper diffs)     │
+    │    any gate fails ─▶ step REJECTED             │
+    │    all gates pass ─▶ ACCEPT new tree           │
+    │         │                                      │
+    │         ▼                                      │
+    │ BOOKKEEPING (one in-memory progress epoch)     │
+    │   reduced          ─▶ clear all deferrals      │
+    │   refused/rejected ─▶ defer this target        │
+    │   neutral          ─▶ defer this target        │
+    │      │                                         │
+    │      └──────────▶ next scheduling round        │
+    └────────────────────────────────────────────────┘
+    run end: attempt ledger printed, final gate re-run
+    """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
 
     w.fuel.give(limits.safety_tries)
 
-    best_unsafe_count = None
-    consecutive_failures = 0
-    # Report from the most recent FFI review rejection since the last accepted
+    # Targets that have failed to reduce since the most recent accepted
+    # reduction, plus every attempt's outcome for the exit report.
+    deferred = set()
+    ledger = []
+    # Report from the most recent review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
     # Titles of review findings seen this run and in prior runs.  Unlike
@@ -444,18 +506,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         if unsafe_count == 0:
             break
 
-        # Update consecutive failure count
-        if best_unsafe_count is None or unsafe_count < best_unsafe_count:
-            best_unsafe_count = unsafe_count
-            consecutive_failures = 0
-        else:
-            # The previous iteration failed to make progress.  (Note the LLM
-            # may have run normally and produced working code, but if it didn't
-            # improve the unsafe count, we still consider that to be a failed
-            # iteration.)
-            consecutive_failures += 1
-            if consecutive_failures >= limits.max_consecutive_failures:
-                print(f'stopping due to {consecutive_failures} consecutive failures')
+        if args.llm_mode == 'agent':
+            fn_targets, field_targets = menu_targets(
+                w.fn_records(n_code), w.type_records(n_code), deferred)
+            if not fn_targets and not field_targets:
+                print('stopping: every remaining target failed to reduce '
+                    'unsafe in the current progress epoch')
                 break
 
         # Infinite loop detection
@@ -476,50 +532,34 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             match args.llm_mode:
                 case 'agent':
-                    match consecutive_failures:
-                        case 0 | 1:
-                            suffix = None
-                        case 2 | 3:
-                            # Previous steps failed to make progress on
-                            # `unsafe`.  We've seen the agent sometimes just do
-                            # refactoring or other general cleanup that doesn't
-                            # directly reduce unsafe.  This is actually
-                            # desirable, but if it goes on too long, we add a
-                            # reminder to focus on reducing unsafety.
-                            suffix = (
-                                'Remember, your primary goal is to reduce '
-                                'the amount of unsafe code. '
-                                'Try to remove at least one unsafe operation '
-                                'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code.'
-                            )
-                        case n:
-                            # Last-ditch attempt to get the agent to make
-                            # progress.  This may be too strongly worded, to
-                            # the point of encouraging cheating (such as moving
-                            # unsafe operations into FFI wrappers).
-                            suffix = (
-                                'Remember, your primary goal is to reduce '
-                                'the amount of unsafe code. '
-                                f'Your past {n} attempts failed to remove '
-                                'any unsafe operations. '
-                                'You MUST remove at least one unsafe operation '
-                                'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code '
-                                '(NOT from FFI entry points), '
-                                'or this run will be terminated.'
-                            )
-
-                    if ffi_suffix is not None:
-                        suffix = ffi_suffix if suffix is None \
-                            else f'{suffix}\n\n{ffi_suffix}'
-
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = suffix,
-                        max_invocations = limits.attempt_invocations)
+                        prompt_suffix = ffi_suffix,
+                        max_invocations = limits.attempt_invocations,
+                        suppressed = frozenset(deferred))
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.ffi_report
+
+                    # Book the attempt.  An undeclared target is attributed
+                    # to the largest open one, so a refusal always costs a
+                    # menu entry and repetition stays bounded.
+                    target = outcome.target or \
+                        (fn_targets + field_targets)[0][0]
+                    if outcome.code is None:
+                        update_target_deferrals(deferred, target, reduced=False)
+                        ledger.append((target, 'rejected', ''))
+                    elif outcome.code.node_id() == n_code.node_id():
+                        update_target_deferrals(deferred, target, reduced=False)
+                        ledger.append((target, 'refused', outcome.note))
+                    elif w.count_unsafe2(outcome.code) < unsafe_count:
+                        update_target_deferrals(deferred, target, reduced=True)
+                        ledger.append((target, 'reduced', ''))
+                    else:
+                        # A legal but count-neutral step: accepted, and the
+                        # target deferred until another target reduces, so
+                        # preparation cannot fill an epoch by itself.
+                        update_target_deferrals(deferred, target, reduced=False)
+                        ledger.append((target, 'neutral', ''))
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)
@@ -564,6 +604,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             break
 
     print('\n\n')
+    if ledger:
+        # The run's evidence: what was attempted and what each refusal hit.
+        print('attempt ledger:')
+        for target, kind, note in ledger:
+            print(f'  {kind:8} {target}' + (f' — {note}' if note else ''))
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
     n_op_test = w.test_op(n_code, n_c_code)

@@ -1,8 +1,22 @@
 import tempfile
 import unittest
 
-from crisp.__main__ import prior_review_findings
+from crisp.__main__ import (
+    prior_review_findings,
+    update_target_deferrals,
+)
 from crisp.mvir import CodexReviewOpNode, FileNode, MVIR, TreeNode
+
+
+class TargetDeferralsTest(unittest.TestCase):
+    def test_failures_expire_after_an_accepted_reduction(self):
+        deferred = set()
+        update_target_deferrals(deferred, 'inflate_fast', reduced=False)
+        update_target_deferrals(deferred, 'inflate_table', reduced=False)
+        self.assertEqual(deferred, {'inflate_fast', 'inflate_table'})
+
+        update_target_deferrals(deferred, 'other_target', reduced=True)
+        self.assertEqual(deferred, set())
 
 
 class PersistentSafetyMemoryTest(unittest.TestCase):

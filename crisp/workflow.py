@@ -158,6 +158,8 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
 AGENT_SAFETY_PROMPT = '''
 Consult `SAFETY_PLAN.md` for the crate-wide conventions and the cluster covering your target.  It is read-only reference: notes in it are guidance, not rules — only the rules stated below bind your work.
 
+{menu}
+
 {target_goal}
 
 {after_refactoring_instruction}
@@ -178,8 +180,82 @@ FFI entry points are judged under these binding rules:
 
 Begin your final message with a line `TARGET: <name>` naming the function (or `Type.field`) this step worked on, and end it with one of these lines — or no verdict line, which means DONE: the step's work is complete and is judged against the code as it stood when the step began.
 - `CONTINUE: <what the next invocation must finish>` — the change is sound but needs more than one invocation (an ownership facade, a state-machine conversion). The step then spans several invocations, judged once as a whole. The unsafe baseline in your workspace stays pinned to the step's start, so `cargo check-unsafe2` always shows the exact judgment the whole step will face; failing it mid-step is expected, and it must pass before you declare DONE. Every invocation must still build — one that does not is discarded, and the step resumes from the last good state.
-- `BLOCKED: <target> — <verbatim gate diagnostic or one-line reason>` — no legal reduction exists at that target; your code edits will be discarded. Do not use BLOCKED for work that is merely too large for one invocation — that is what CONTINUE is for.
+- `BLOCKED: <target> — <verbatim gate diagnostic or one-line reason>` — no legal reduction exists at that target; your code edits will be discarded and the target deferred until another target lands an unsafe-count reduction. Do not use BLOCKED for work that is merely too large for one invocation — that is what CONTINUE is for.
 '''
+
+def _abi_header_type(name: str) -> bool:
+    # C-header (`*_h` module) types carry ABI layout; their fields cannot go.
+    return any(seg.endswith('_h') for seg in name.split('::')[1:-1])
+
+def menu_targets(
+    fns: dict, types: dict, suppressed: 'frozenset[str] | set[str]' = frozenset(),
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """
+    The live target lists from merged inventory records: counted non-FFI
+    functions by unsafe operations, and `Type.field` entries by raw-pointer
+    count, both largest first and minus `suppressed`.  Fields name the
+    ownership unit a redesign must change, so they are offered alongside
+    functions rather than hidden behind them.
+    """
+    fn_list = sorted(
+        ((name, r.get('total_unsafe', 0)) for name, r in fns.items()
+            if r.get('ffi_symbol') is None and not r.get('is_ffi_entry_point')
+                and r.get('total_unsafe', 0) > 0
+                and name not in suppressed),
+        key = lambda kv: (-kv[1], kv[0]))
+    field_list = sorted(
+        ((f'{ty}.{field}', n) for ty, r in types.items()
+            for field, n in r.get('field_contains_raw_ptr', {}).items()
+            # A type alias records its target under the pseudo-field "type".
+            if n > 0 and field != 'type'
+                and not _abi_header_type(ty)
+                and f'{ty}.{field}' not in suppressed),
+        key = lambda kv: (-kv[1], kv[0]))
+    return fn_list, field_list
+
+# The menu is the target vocabulary: suppression rotates lower-ranked
+# targets into view.  Per-file totals give the mass map in a line per file.
+MENU_MAX_FNS = 20
+MENU_MAX_FIELDS = 10
+
+def format_menu(
+    fns: dict, types: dict, suppressed: 'frozenset[str] | set[str]' = frozenset(),
+) -> str:
+    """Render the target menu for the step prompt, biggest targets first."""
+    fn_list, field_list = menu_targets(fns, types)
+    live_names = {name for name, _ in fn_list + field_list}
+    live_suppressed = set(suppressed) & live_names
+    fn_list = [(name, mass) for name, mass in fn_list
+        if name not in live_suppressed]
+    field_list = [(name, mass) for name, mass in field_list
+        if name not in live_suppressed]
+    by_file = {}
+    for name, r in fns.items():
+        if (r.get('ffi_symbol') is None and not r.get('is_ffi_entry_point')
+                and r.get('total_unsafe', 0) > 0):
+            f = r.get('filename', '')
+            by_file[f] = by_file.get(f, 0) + r['total_unsafe']
+    lines = ['Where the remaining unsafe operations are — pick one target '
+        'from the lists below and name it in your `TARGET:` line.']
+    lines.append('')
+    lines.append('By file:')
+    lines.extend(f'- {f}: {n}'
+        for f, n in sorted(by_file.items(), key = lambda kv: (-kv[1], kv[0])))
+    lines.append('')
+    lines.append('Largest open functions:')
+    lines.extend(f'- {name}: {n}' for name, n in fn_list[:MENU_MAX_FNS])
+    if field_list:
+        lines.append('')
+        lines.append('Fields still carrying raw pointers '
+            '(name as `Type.field`):')
+        lines.extend(f'- {name}: {n}' for name, n in field_list[:MENU_MAX_FIELDS])
+    if live_suppressed:
+        lines.append('')
+        lines.append('Deferred until another target reduces unsafe '
+            '— do not target: '
+            + ', '.join(f'`{name}`' for name in sorted(live_suppressed)))
+    return '\n'.join(lines)
+
 
 class StepOutcome(typing.NamedTuple):
     """
@@ -242,6 +318,7 @@ Earlier attempts in this run or a prior run were rejected by review. The reviewe
 
 Do not repeat these mistakes.
 '''.strip()
+
 
 def parse_verdict(final_message: str) -> tuple[str, str]:
     """
@@ -1035,6 +1112,20 @@ class Workflow:
             self, n_code: TreeNode, n_unsafe_json: TreeNode) -> CheckUnsafe2AnalysisNode:
         return analysis.check_unsafe2(self.cfg, self.mvir, n_code, n_unsafe_json)
 
+    def fn_records(self, n_code: TreeNode) -> dict:
+        """Merged `fns` records across all crates' unsafety inventories."""
+        out = {}
+        for n_file in self.find_unsafe2_json_files(n_code):
+            out.update(n_file.body_json().get('fns', {}))
+        return out
+
+    def type_records(self, n_code: TreeNode) -> dict:
+        """Merged `types` records across all crates' unsafety inventories."""
+        out = {}
+        for n_file in self.find_unsafe2_json_files(n_code):
+            out.update(n_file.body_json().get('types', {}))
+        return out
+
     @step
     def compare_unsafe2_op(
             self, n_old_code: TreeNode, n_new_code: TreeNode) -> CheckUnsafe2AnalysisNode:
@@ -1339,9 +1430,16 @@ class Workflow:
         # multi-invocation step pins this to the step's start so the check
         # reproduces the judgment the whole step will face.
         baseline_json: TreeNode | None = None,
+        # Pre-rendered target menu; a multi-invocation step pins this to the
+        # step's start alongside the baseline.
+        menu_text: str | None = None,
     ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        if menu_text is None:
+            menu_text = format_menu(
+                self.fn_records(n_code), self.type_records(n_code))
 
         if provide_test_cmd and cfg.test_command is not None:
             after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
@@ -1357,6 +1455,7 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            menu = menu_text,
             checker_rules = CHECKER_RULES,
             tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
@@ -1618,6 +1717,7 @@ class Workflow:
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
         max_invocations: int = 1,
+        suppressed: frozenset[str] = frozenset(),
     ) -> StepOutcome:
         """
         Run one safety step of up to `max_invocations` agent invocations and
@@ -1632,6 +1732,8 @@ class Workflow:
         # `cargo check-unsafe2` then reproduces the final judgment exactly,
         # instead of comparing against its latest checkpoint.
         n_base_json = self.find_unsafe2_json(n_base)
+        menu_text = format_menu(
+            self.fn_records(n_base), self.type_records(n_base), suppressed)
         n_cur = n_code
         target = None
         invocations = 0
@@ -1646,7 +1748,8 @@ class Workflow:
                 n_cur, n_test_code, n_plans,
                 prompt_suffix = '\n\n'.join(parts) if parts else None,
                 target_goal = target_goal,
-                baseline_json = n_base_json)
+                baseline_json = n_base_json,
+                menu_text = menu_text)
             if target is None:
                 target = parse_target(final_message)
             verdict, note = parse_verdict(final_message)

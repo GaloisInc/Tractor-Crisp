@@ -203,11 +203,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         self,
         evaluator: ResponseEvaluator,
         expected_formatted_blocks: dict[str, set[str]],
-        csvwriter: Any | None = None
+        csv_log_path: Path | None = None
     ):
         self.evaluator = evaluator
         self.expected_formatted_blocks = expected_formatted_blocks
-        self.csvwriter = csvwriter
+        self.csv_log_path = csv_log_path
 
     def evaluate(
         self,
@@ -347,8 +347,9 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                 )
 
         # Write candidate record to CSV
-        if self.csvwriter is not None:
-            self.csvwriter.writerow([candidate[k] for k in sorted(candidate.keys())] + [scores])
+        if self.csv_log_path is not None:
+            with open(self.csv_log_path, 'a', encoding='utf-8', newline='') as csvfile:
+                csv.writer(csvfile).writerow([candidate[k] for k in sorted(candidate.keys())] + [scores])
 
         # Return batch
         return EvaluationBatch(
@@ -442,31 +443,31 @@ def run_gepa(
     if response_evaluator is None:
         response_evaluator = ResponseEvaluator()
 
-    # Open CSV file to log run
-    with open(optimized_prompts_folder / 'gepa_record.csv', 'w', encoding='utf-8') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(sorted(prompt_types) + ['scores'])
+    # Initiate CSV file to log run
+    csv_log_path = optimized_prompts_folder / 'gepa_record.csv'
+    with open(csv_log_path, 'w', encoding='utf-8', newline='') as csvfile:
+        csv.writer(csvfile).writerow(sorted(prompt_types) + ['scores'])
 
-        # Instantiate GEPA adapter
-        adapter = RustAdapter(
-            evaluator = response_evaluator,
-            expected_formatted_blocks = expected_formatted_blocks,
-            csvwriter = csvwriter
-        )
+    # Instantiate GEPA adapter
+    adapter = RustAdapter(
+        evaluator = response_evaluator,
+        expected_formatted_blocks = expected_formatted_blocks,
+        csv_log_path = csv_log_path
+    )
 
-        # Run GEPA optimization
-        gepa_optimize_params = {
-            'seed_candidate': seed_prompts,
-            'trainset': trainset,
-            'valset': valset,
-            'adapter': adapter,
-            'max_metric_calls': max_metric_calls,
-            'reflection_lm': reflection_lm,
-            'perfect_score': GEPA_MAX_SCORE
-        }
-        if is_individual_project:
-            gepa_optimize_params['reflection_minibatch_size'] = 1
-        gepa_result = gepa.optimize(**gepa_optimize_params)
+    # Run GEPA optimization
+    gepa_optimize_params = {
+        'seed_candidate': seed_prompts,
+        'trainset': trainset,
+        'valset': valset,
+        'adapter': adapter,
+        'max_metric_calls': max_metric_calls,
+        'reflection_lm': reflection_lm,
+        'perfect_score': GEPA_MAX_SCORE
+    }
+    if is_individual_project:
+        gepa_optimize_params['reflection_minibatch_size'] = 1
+    gepa_result = gepa.optimize(**gepa_optimize_params)
 
     # Save optimization results
     for prompt_type in prompt_types:

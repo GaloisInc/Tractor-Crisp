@@ -77,7 +77,9 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## FFI entry point rules', prompts.AGENT_PLAN)
         self.assertIn('## Conventions', prompts.AGENT_PLAN)
         self.assertIn('## Cluster guide', prompts.AGENT_PLAN)
-        self.assertIn('## Status', prompts.AGENT_PLAN)
+        self.assertIn('{ffi_entry_point_rules}', prompts.AGENT_PLAN)
+        # The plan is read-only reference; it carries no mutable log.
+        self.assertNotIn('## Status', prompts.AGENT_PLAN)
         # The plan must not carry verification commands; the harness does.
         self.assertIn('the harness supplies all validation', prompts.AGENT_PLAN)
 

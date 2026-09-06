@@ -471,7 +471,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │      │                                         │
     │      └──────────▶ next scheduling round        │
     └────────────────────────────────────────────────┘
-    run end: attempt ledger printed, final gate re-run
+    run end: attempt ledger printed, final gate re-run,
+    one status word — FAILED (exits nonzero) /
+    SATURATED / BUDGET_EXHAUSTED / COMPLETE_SAFE
     """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
@@ -482,6 +484,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # reduction, plus every attempt's outcome for the exit report.
     deferred = set()
     ledger = []
+    # Why the loop ended; 'budget' unless a stop condition says otherwise.
+    stop_reason = 'budget'
     # Report from the most recent review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -512,6 +516,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if not fn_targets and not field_targets:
                 print('stopping: every remaining target failed to reduce '
                     'unsafe in the current progress epoch')
+                stop_reason = 'saturated'
                 break
 
         # Infinite loop detection
@@ -615,6 +620,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+    # One status word, claiming only what this run verified.  A failing
+    # final gate also fails the process; today it exits 0 either way.
+    if n_op_test.exit_code != 0:
+        status = 'FAILED'
+    elif unsafe_count == 0:
+        status = 'COMPLETE_SAFE'
+    elif stop_reason == 'saturated':
+        status = 'SATURATED'
+    else:
+        status = 'BUDGET_EXHAUSTED'
+    print('status: %s' % status)
+    if status == 'FAILED':
+        sys.exit(1)
 
 
 class PickTarget:

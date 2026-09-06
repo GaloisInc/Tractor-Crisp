@@ -1251,7 +1251,7 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1378,7 +1378,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
 
 
@@ -1462,7 +1462,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1504,7 +1504,7 @@ class Workflow:
     ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
         self.fuel.use()
 
-        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
+        n_new_code, n_plans, _ = self.agent_safety(n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal)
         # The change must pass tests, must not regress any unsafe count, and
@@ -1534,7 +1534,7 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_new_code, n_plans, _ = self.agent_safety_no_tests(n_code, n_plans)
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):

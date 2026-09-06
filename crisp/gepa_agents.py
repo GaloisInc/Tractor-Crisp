@@ -392,7 +392,7 @@ def run_gepa(
     seed_prompt_paths: dict[str, Path],
     reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
     trainset_frac: float = 0.5,
-    max_metric_calls: int = 4,
+    max_metric_calls: int = 100,
     response_evaluator: ResponseEvaluator | None = None,
     optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
 ):

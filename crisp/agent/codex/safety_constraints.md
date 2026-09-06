@@ -40,8 +40,12 @@ The following FFI rules are mandatory:
   point that still has the old signature.
 
 Do not recommend editing tests or original C code to make validation pass. Do
-not recommend new unsafe or unsafe-adjacent implementation code, including raw
-pointer fields or arguments, int-to-pointer casts, or calls to unsafe FFI APIs.
+not recommend new unsafe-adjacent implementation code: raw pointer fields,
+int-to-pointer casts, or calls to unsafe FFI APIs. The checker compares every
+tracked metric in each non-FFI function against its baseline; reductions in one
+function cannot offset increases in another. New functions have an empty
+baseline, so new unsafe helpers and helpers with raw-pointer signatures fail
+the gate. Plan conversions that satisfy these checks when the step is complete.
 
 Dependency policy: a Rust crate may be recommended as a replacement for a
 dependency of the original C project (for example, a zlib crate where the C

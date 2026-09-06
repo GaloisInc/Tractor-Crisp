@@ -347,6 +347,10 @@ class FuelLimits:
     # new file.
     safety_tries_per_file: int
 
+    # A step that declares `CONTINUE` may span up to this many agent
+    # invocations before it is judged; each invocation consumes fuel.
+    attempt_invocations: int
+
 def total_code_size(mvir, n_code):
     total = 0
     for name, file in n_code.files.items():
@@ -367,6 +371,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 3,
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
+            attempt_invocations = 2,
         )
     elif size < 20000:
         # P01
@@ -375,6 +380,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 5,
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
+            attempt_invocations = 2,
         )
     else:
         # P02 - run forever
@@ -383,6 +389,7 @@ def get_fuel_limits(mvir, n_code):
             max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
+            attempt_invocations = 2,
         )
     print(f'code size = {size}')
     print(f'default limits = {defaults!r}')
@@ -400,6 +407,9 @@ def get_fuel_limits(mvir, n_code):
         safety_tries_per_file = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_FILE',
                 defaults.safety_tries_per_file)),
+        attempt_invocations = int(
+            os.environ.get('LLM_SAFETY_ATTEMPT_INVOCATIONS',
+                defaults.attempt_invocations)),
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
@@ -504,16 +514,21 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         suffix = ffi_suffix if suffix is None \
                             else f'{suffix}\n\n{ffi_suffix}'
 
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = suffix)
+                        prompt_suffix = suffix,
+                        max_invocations = limits.attempt_invocations)
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.ffi_report
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
                         target_goal = target_goal)
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.ffi_report
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(

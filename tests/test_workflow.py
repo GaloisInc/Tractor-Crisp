@@ -1,10 +1,13 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from crisp.workflow import (
     AGENT_SAFETY_PROMPT, AGENT_TOLERATED_REVIEW_PROMPT,
     CHECKER_RULES, FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
     TOLERATED_UNSAFETY_RULES, merge_ffi_finding_titles,
     extract_checker_warnings,
+    parse_verdict, parse_target, Workflow,
 )
 
 
@@ -16,6 +19,27 @@ The diff removes `unsafe` from several exported entry points.
 - [P1] Restore `unsafe` on `zlibVersion_ffi` — /root/work/translated_rust/src/zutil.rs:27-27
 - [P2] Wrapper contains validation logic — /root/work/translated_rust/src/gzlib.rs:100-120
 '''
+
+
+class SafetyBaselineTest(unittest.TestCase):
+    def test_continuation_passes_starting_baseline_to_refactored_agent(self):
+        cfg = SimpleNamespace(
+            transpile=SimpleNamespace(output_dir='crate'),
+            relative_path=lambda path: path,
+            test_command=None,
+            models=SimpleNamespace(agent_loop='test-model'),
+        )
+        workflow = Workflow(cfg, object())
+        workflow.find_unsafe2_json = Mock()
+        baseline = object()
+        code, plans, tests = object(), object(), object()
+        with patch('crisp.workflow.agent.run_rewrite') as rewrite:
+            Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
+                baseline_json=baseline)
+        self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
+        self.assertEqual(rewrite.call_args.kwargs['extra_code'], {'tests': tests})
+        self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
+        workflow.find_unsafe2_json.assert_not_called()
 
 
 class ReviewRuleParityTest(unittest.TestCase):
@@ -98,3 +122,36 @@ class ExtractCheckerWarningsTest(unittest.TestCase):
         # Hard-error diagnostics (no `warning:` prefix) are not extracted.
         self.assertEqual(
             extract_checker_warnings('f: raw pointer derefs increased: 0 -> 1'), [])
+
+
+class ParseVerdictTest(unittest.TestCase):
+    def test_blocked_with_note(self):
+        self.assertEqual(parse_verdict(
+            'Updated the plan.\n\nBLOCKED: gz_read, gz_look — E0277'),
+            ('blocked', 'gz_read, gz_look — E0277'))
+
+    def test_continue_with_handoff(self):
+        self.assertEqual(parse_verdict(
+            'Landed the owner type.\nCONTINUE: migrate the callers next'),
+            ('continue', 'migrate the callers next'))
+
+    def test_done_explicit_and_default(self):
+        self.assertEqual(parse_verdict('All finished.\nDONE'), ('done', ''))
+        self.assertEqual(parse_verdict('No verdict line here.'), ('done', ''))
+        self.assertEqual(parse_verdict(''), ('done', ''))
+
+    def test_prose_mention_is_not_a_verdict(self):
+        self.assertEqual(parse_verdict(
+            'I did not need CONTINUE: the work fit one invocation.\nAll done.'),
+            ('done', ''))
+
+
+class ParseTargetTest(unittest.TestCase):
+    def test_first_declaration_wins(self):
+        msg = 'TARGET: zlib::src::deflate::deflate\nwork...\nTARGET: other'
+        self.assertEqual(parse_target(msg), 'zlib::src::deflate::deflate')
+
+    def test_field_target_and_absence(self):
+        self.assertEqual(parse_target('TARGET: gz_state.path\n...'),
+            'gz_state.path')
+        self.assertIsNone(parse_target('no declaration'))

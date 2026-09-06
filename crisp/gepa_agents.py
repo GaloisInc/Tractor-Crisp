@@ -193,10 +193,12 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
     def __init__(
         self,
         evaluator: ResponseEvaluator,
-        expected_formatted_blocks: dict[str, set[str]]
+        expected_formatted_blocks: dict[str, set[str]],
+        csvwriter: Any | None = None
     ):
         self.evaluator = evaluator
         self.expected_formatted_blocks = expected_formatted_blocks
+        self.csvwriter = csvwriter
 
     def evaluate(
         self,
@@ -335,7 +337,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
                 )
 
-        # After all tasks are done, return batch
+        # Write candidate record to CSV
+        if self.csvwriter is not None:
+            self.csvwriter.writerow([candidate[k] for k in sorted(candidate.keys())] + [scores])
+
+        # Return batch
         return EvaluationBatch(
             outputs = outputs,
             scores = scores,
@@ -423,27 +429,35 @@ def run_gepa(
         valset = [task_input]
         #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes. These can work as different data points instead of just 1 point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can save different unsafety states achieved by GEPA as tagged nodes and then use them as multiple data points.
 
-    # Instantiate GEPA adapter
+    # Instantiate response evaluator
     if response_evaluator is None:
         response_evaluator = ResponseEvaluator()
-    adapter = RustAdapter(
-        evaluator = response_evaluator,
-        expected_formatted_blocks = expected_formatted_blocks
-    )
 
-    # Run GEPA optimization
-    gepa_optimize_params = {
-        'seed_candidate': seed_prompts,
-        'trainset': trainset,
-        'valset': valset,
-        'adapter': adapter,
-        'max_metric_calls': max_metric_calls,
-        'reflection_lm': reflection_lm,
-        'perfect_score': GEPA_MAX_SCORE
-    }
-    if is_individual_project:
-        gepa_optimize_params['reflection_minibatch_size'] = 1
-    gepa_result = gepa.optimize(**gepa_optimize_params)
+    # Open CSV file to log run
+    with open(optimized_prompts_folder / 'gepa_record.csv', 'w', encoding='utf-8') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(sorted(prompt_types) + ['scores'])
+
+        # Instantiate GEPA adapter
+        adapter = RustAdapter(
+            evaluator = response_evaluator,
+            expected_formatted_blocks = expected_formatted_blocks,
+            csvwriter = csvwriter
+        )
+
+        # Run GEPA optimization
+        gepa_optimize_params = {
+            'seed_candidate': seed_prompts,
+            'trainset': trainset,
+            'valset': valset,
+            'adapter': adapter,
+            'max_metric_calls': max_metric_calls,
+            'reflection_lm': reflection_lm,
+            'perfect_score': GEPA_MAX_SCORE
+        }
+        if is_individual_project:
+            gepa_optimize_params['reflection_minibatch_size'] = 1
+        gepa_result = gepa.optimize(**gepa_optimize_params)
 
     # Save optimization results
     for prompt_type in prompt_types:

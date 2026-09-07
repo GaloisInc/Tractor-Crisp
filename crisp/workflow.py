@@ -1445,6 +1445,7 @@ class Workflow:
         # Pre-rendered target menu; a multi-invocation step pins this to the
         # step's start alongside the baseline.
         menu_text: str | None = None,
+        model: str | None = None,
     ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1474,7 +1475,7 @@ class Workflow:
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
-        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
+        return agent.run_rewrite(cfg, mvir, prompt, model or cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
             unsafe_json = (baseline_json if baseline_json is not None
@@ -1730,6 +1731,7 @@ class Workflow:
         target_goal: AgentTarget = AgentTargetOther(),
         max_invocations: int = 1,
         suppressed: frozenset[str] = frozenset(),
+        model: str | None = None,
     ) -> StepOutcome:
         """
         Run one safety step of up to `max_invocations` agent invocations and
@@ -1764,7 +1766,8 @@ class Workflow:
                 prompt_suffix = '\n\n'.join(parts) if parts else None,
                 target_goal = target_goal,
                 baseline_json = n_base_json,
-                menu_text = menu_text)
+                menu_text = menu_text,
+                model = model)
             if target is None:
                 target = parse_target(final_message)
             verdict, note = parse_verdict(final_message)

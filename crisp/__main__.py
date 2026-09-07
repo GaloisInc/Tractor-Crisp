@@ -446,6 +446,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │   policy filters out: C-header (*_h) ABI       │  │
     │   types; targets deferred since the last       │  │
     │   accepted unsafe-count reduction              │  │
+    │   after two attempts without reduction:        │  │
+    │   reopen menu for one Astra rescue attempt     │  │
     │      │                                         │  │
     │      ├─ menu empty ─▶ every live target failed │  │
     │      │   in this progress epoch ─▶ SATURATED   │  │
@@ -482,6 +484,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │   reduced          ─▶ clear all deferrals      │
     │   refused/rejected ─▶ defer this target        │
     │   neutral          ─▶ defer this target        │
+    │   neutral rescue   ─▶ reopen once per epoch   │
+    │   reduction/rescue ─▶ reset failure streak     │
     │      │                                         │
     │      └──────────▶ next scheduling round        │
     └────────────────────────────────────────────────┘
@@ -498,6 +502,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # reduction, plus every attempt's outcome for the exit report.
     deferred = set()
     ledger = []
+    consecutive_failures = 0
+    neutral_rescue_used = False
     # Why the loop ended; 'budget' unless a stop condition says otherwise.
     stop_reason = 'budget'
     # The most recent full review report and the target it describes.  It
@@ -526,8 +532,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             break
 
         if args.llm_mode == 'agent':
+            rescue = consecutive_failures >= 2
+            suppressed = frozenset() if rescue else frozenset(deferred)
             fn_targets, field_targets = menu_targets(
-                w.fn_records(n_code), w.type_records(n_code), deferred)
+                w.fn_records(n_code), w.type_records(n_code), suppressed)
             if not fn_targets and not field_targets:
                 print('stopping: every remaining target failed to reduce '
                     'unsafe in the current progress epoch')
@@ -555,11 +563,27 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             match args.llm_mode:
                 case 'agent':
+                    model = cfg.models.agent_rescue if rescue else cfg.models.agent_loop
+                    if rescue:
+                        print(f'safety rescue after {consecutive_failures} '
+                            f'attempts without reduction: {model}')
+                        rescue_prompt = (
+                            'The previous two safety attempts did not reduce unsafety. '
+                            'Use this rescue attempt to make a coherent refactor that '
+                            'unblocks further reductions. Previously deferred targets '
+                            'are available again. Count-neutral preparation is useful '
+                            'if it enables later reductions; all existing gates still apply.')
+                        ffi_suffix = '\n\n'.join(p for p in (ffi_suffix, rescue_prompt) if p)
+                    # Count a normal attempt as unsuccessful unless an accepted
+                    # reduction clears the streak below. A rescue resets it even
+                    # if it fails, so the next attempt returns to the loop model.
+                    consecutive_failures = 0 if rescue else consecutive_failures + 1
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
                         max_invocations = limits.attempt_invocations,
-                        suppressed = frozenset(deferred))
+                        suppressed = suppressed,
+                        model = model)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.ffi_report
 
@@ -617,6 +641,15 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
+                if args.llm_mode == 'agent':
+                    if ledger[-1][1] == 'reduced':
+                        consecutive_failures = 0
+                        neutral_rescue_used = False
+                    elif rescue and ledger[-1][1] == 'neutral' and not neutral_rescue_used:
+                        # Give Terra one fresh pass after preparation, but
+                        # require a reduction before reopening targets again.
+                        deferred.clear()
+                        neutral_rescue_used = True
                 n_code = n_new_code
             if ffi_report is not None:
                 ffi_seen_findings = merge_ffi_finding_titles(

@@ -39,12 +39,15 @@ class SafetyBaselineTest(unittest.TestCase):
         workflow.find_unsafe2_json = Mock()
         baseline = object()
         code, plans, tests = object(), object(), object()
-        with patch('crisp.workflow.agent.run_rewrite') as rewrite:
-            Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
-                baseline_json=baseline, menu_text='Pinned menu')
-        self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
-        self.assertEqual(rewrite.call_args.kwargs['extra_code'], {'tests': tests})
-        self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
+        for model in (None, 'rescue-model'):
+            with self.subTest(model=model), \
+                    patch('crisp.workflow.agent.run_rewrite') as rewrite:
+                Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
+                    baseline_json=baseline, menu_text='Pinned menu', model=model)
+                self.assertEqual(rewrite.call_args.args[3], model or 'test-model')
+                self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
+                self.assertEqual(rewrite.call_args.kwargs['extra_code'], {'tests': tests})
+                self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
         workflow.find_unsafe2_json.assert_not_called()
 
 
@@ -86,9 +89,9 @@ class SafetyStepTest(unittest.TestCase):
         tree.node_id.return_value = name
         return tree
 
-    def run_step(self, limit=3):
+    def run_step(self, limit=3, model=None):
         return Workflow.do_safety_step_agent.__wrapped__(self.w,
-            self.base, self.c_code, self.plans, max_invocations=limit)
+            self.base, self.c_code, self.plans, max_invocations=limit, model=model)
 
     def test_failed_continuation_retries_last_checkpoint_against_original_baseline(self):
         self.w.agent_safety.side_effect = [
@@ -98,7 +101,7 @@ class SafetyStepTest(unittest.TestCase):
         ]
         self.w.cargo_check_json_op.side_effect = [Mock(passed=True), self.failed_check]
 
-        outcome = self.run_step()
+        outcome = self.run_step(model='rescue-model')
 
         self.assertIs(outcome.code, self.candidate)
         self.assertEqual(outcome.invocations, 3)
@@ -106,6 +109,7 @@ class SafetyStepTest(unittest.TestCase):
         self.assertEqual([call.args[0] for call in calls],
             [self.base, self.checkpoint, self.checkpoint])
         for call in calls:
+            self.assertEqual(call.kwargs['model'], 'rescue-model')
             self.assertIs(call.kwargs['baseline_json'], self.baseline_json)
             self.assertEqual(call.kwargs['menu_text'], calls[0].kwargs['menu_text'])
         self.assertIn('error[E0308]', calls[2].kwargs['prompt_suffix'])

@@ -12,7 +12,8 @@ from crisp.__main__ import (
     safety_loop_common, FuelLimits,
 )
 from crisp.mvir import CodexReviewOpNode, FileNode, MVIR, TreeNode
-from crisp.workflow import FuelCounter, StepOutcome
+from crisp.config import ModelsConfig
+from crisp.workflow import CrispError, FuelCounter, StepOutcome
 
 
 class TargetDeferralsTest(unittest.TestCase):
@@ -55,14 +56,106 @@ class TargetDeferralsTest(unittest.TestCase):
                         patch('crisp.__main__.prior_agent_plans', return_value=plans), \
                         redirect_stdout(output):
                     safety_loop_common(SimpleNamespace(llm_mode='agent'),
-                        object(), object(), w, code, code)
+                        SimpleNamespace(models=ModelsConfig()), object(), w, code, code)
 
                 # Even an initially valid declaration becomes invalid when
                 # that target has already been deferred by the first attempt.
-                self.assertEqual(deferred, [frozenset(), frozenset({'crate::real'})])
-                self.assertEqual(w.fuel.fuel, 1)
+                self.assertEqual(deferred, [
+                    frozenset(), frozenset({'crate::real'}), frozenset()])
+                self.assertEqual(w.fuel.fuel, 0)
+                self.assertEqual([c.kwargs['model'] for c in
+                    w.do_safety_step_agent.call_args_list],
+                    ['gpt-5.6-terra', 'gpt-5.6-terra', 'gpt-6-astra'])
                 self.assertIn('status: SATURATED', output.getvalue())
                 self.assertIn("attributing attempt to 'crate::second'", output.getvalue())
+
+
+class SafetyRescueTest(unittest.TestCase):
+    def run_attempts(self, results):
+        w = Mock()
+        w.fuel = FuelCounter('test')
+        code = Mock(unsafe_count=20)
+        code.node_id.return_value = 'baseline'
+        plans = object()
+        w.count_unsafe2.side_effect = lambda tree: tree.unsafe_count
+        w.fn_records.return_value = {
+            f'crate::{i}': {'total_unsafe': 1} for i in range(10)}
+        w.type_records.return_value = {}
+        w.test_op.return_value.exit_code = 0
+        attempts = []
+
+        def step(current, c_code, current_plans, **kwargs):
+            w.fuel.use()
+            index = len(attempts)
+            attempts.append(kwargs)
+            self.assertIs(current_plans, plans)
+            result = results[index]
+            if result == 'error':
+                raise CrispError('worker failed')
+            candidate = current
+            report = None
+            if result == 'rejected':
+                candidate = None
+                report = 'Review rejected the change'
+            elif isinstance(result, int):
+                candidate = Mock(unsafe_count=current.unsafe_count - result)
+                candidate.node_id.return_value = f'candidate-{index}'
+            return StepOutcome(candidate, plans, report,
+                f'crate::{index}', 'blocked', 1)
+
+        w.do_safety_step_agent.side_effect = step
+        with patch('crisp.__main__.get_fuel_limits',
+                return_value=FuelLimits(len(results), 2, 10, 1)), \
+                patch('crisp.__main__.prior_review_findings', return_value=[]), \
+                patch('crisp.__main__.prior_agent_plans', return_value=plans), \
+                patch('crisp.__main__.traceback.print_exc'), \
+                redirect_stdout(StringIO()):
+            safety_loop_common(SimpleNamespace(llm_mode='agent'),
+                SimpleNamespace(models=ModelsConfig(
+                    agent_loop='loop-model', agent_rescue='rescue-model')),
+                object(), w, code, code)
+        self.assertEqual(len(attempts), len(results))
+        self.assertEqual(w.fuel.fuel, 0)
+        self.assertTrue(all(c['max_invocations'] == 1 for c in attempts))
+        return attempts
+
+    def test_failed_rescue_returns_to_loop_and_preserves_deferrals(self):
+        for rescue_result in ('blocked', 'rejected', 'error'):
+            with self.subTest(rescue_result=rescue_result):
+                calls = self.run_attempts([
+                    'blocked', 'rejected', rescue_result, 'blocked', 'blocked', 'blocked'])
+                self.assertEqual([c['model'] for c in calls],
+                    ['loop-model', 'loop-model', 'rescue-model'] * 2)
+                self.assertEqual(calls[2]['suppressed'], frozenset())
+                self.assertTrue({'crate::0', 'crate::1'} <= calls[3]['suppressed'])
+                self.assertIn('Review rejected the change', calls[2]['prompt_suffix'])
+
+    def test_accepted_neutral_rescue_reopens_targets(self):
+        calls = self.run_attempts(['blocked', 0, 0, 'blocked'])
+        self.assertEqual([c['model'] for c in calls],
+            ['loop-model', 'loop-model', 'rescue-model', 'loop-model'])
+        self.assertEqual(calls[3]['suppressed'], frozenset())
+
+    def test_single_operation_reduction_resets_streak(self):
+        calls = self.run_attempts(['blocked', 1, 'blocked', 'blocked', 1, 'blocked'])
+        self.assertEqual([c['model'] for c in calls],
+            ['loop-model'] * 4 + ['rescue-model', 'loop-model'])
+        self.assertEqual(calls[2]['suppressed'], frozenset())
+        self.assertEqual(calls[5]['suppressed'], frozenset())
+
+    def test_worker_errors_count_toward_rescue(self):
+        calls = self.run_attempts(['error', 'error', 'blocked'])
+        self.assertEqual([c['model'] for c in calls],
+            ['loop-model', 'loop-model', 'rescue-model'])
+
+    def test_neutral_rescue_reopens_only_once_until_a_reduction(self):
+        calls = self.run_attempts([
+            'blocked', 'blocked', 0, 'blocked', 'blocked', 0,
+            1, 'blocked', 'blocked', 0, 'blocked'])
+        self.assertEqual(calls[3]['suppressed'], frozenset())
+        self.assertEqual(calls[6]['suppressed'],
+            frozenset({'crate::3', 'crate::4', 'crate::5'}))
+        self.assertEqual(calls[10]['suppressed'], frozenset())
 
 
 class ReviewFeedbackTest(unittest.TestCase):

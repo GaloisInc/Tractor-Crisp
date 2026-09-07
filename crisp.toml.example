@@ -28,6 +28,8 @@ cargo build --manifest-path rust/Cargo.toml
 agent_plan = "gpt-6-astra"
 # Used by the Codex agent safety-refactoring mode.
 agent_loop = "gpt-5.6-terra"
+# Used for one rescue attempt after two attempts without an accepted reduction.
+agent_rescue = "gpt-6-astra"
 # Used by the c2rust postprocessing pass.
 postprocess = "gpt-5.6-luna"
 # Used by direct LLM rewrite operations.  If omitted, CRISP asks the API for

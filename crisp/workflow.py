@@ -1739,6 +1739,9 @@ class Workflow:
         resumes from.  The judged battery is unchanged from a
         single-invocation step, and only a landing candidate pays for it.
         """
+        if self.fuel.is_empty():
+            raise OutOfFuelError(self.fuel.desc)
+        max_invocations = min(max_invocations, self.fuel.fuel)
         n_base = n_code
         # Pin the checker baseline to the step's start: the agent's own
         # `cargo check-unsafe2` then reproduces the final judgment exactly,
@@ -1754,7 +1757,7 @@ class Workflow:
             self.fuel.use()
             invocations += 1
             parts = [p for p in (prompt_suffix, handoff) if p]
-            if i + 1 == max_invocations and max_invocations > 1:
+            if i + 1 == max_invocations:
                 parts.append(AGENT_FINAL_INVOCATION_NOTE)
             n_next, _, final_message = self.agent_safety(
                 n_cur, n_test_code, n_plans,

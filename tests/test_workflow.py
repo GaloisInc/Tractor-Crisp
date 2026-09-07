@@ -13,7 +13,7 @@ from crisp.workflow import (
     extract_checker_warnings,
     parse_verdict, parse_target,
     menu_targets, format_menu, Workflow,
-    FuelCounter,
+    FuelCounter, OutOfFuelError,
 )
 
 
@@ -142,6 +142,33 @@ class SafetyStepTest(unittest.TestCase):
         self.assertEqual(self.w.agent_safety.call_count, 3)
         self.w.compare_unsafe2_op.assert_not_called()
         self.w.test_op.assert_not_called()
+
+    def test_last_run_fuel_unit_is_announced_and_candidate_is_judged(self):
+        self.w.fuel.fuel = 1
+        self.w.agent_safety.return_value = (self.checkpoint, self.plans, 'CONTINUE: finish')
+        self.w.cargo_check_json_op.return_value.passed = True
+        outcome = self.run_step()
+        self.assertIs(outcome.code, self.checkpoint)
+        self.assertEqual(outcome.invocations, 1)
+        self.assertEqual(self.w.fuel.fuel, 0)
+        self.assertIn('final invocation',
+            self.w.agent_safety.call_args.kwargs['prompt_suffix'])
+        self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.checkpoint)
+        self.w.test_op.assert_called_once_with(self.checkpoint, self.c_code)
+
+    def test_single_invocation_step_is_also_announced_as_final(self):
+        self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+        self.assertIs(self.run_step(limit=1).code, self.candidate)
+        self.assertIn('final invocation',
+            self.w.agent_safety.call_args.kwargs['prompt_suffix'])
+        self.assertEqual(self.w.fuel.fuel, 2)
+
+    def test_no_run_fuel_stops_before_starting_an_invocation(self):
+        self.w.fuel.fuel = 0
+        with self.assertRaises(OutOfFuelError):
+            self.run_step()
+        self.w.agent_safety.assert_not_called()
+        self.w.find_unsafe2_json.assert_not_called()
 
 
 class ReviewRuleParityTest(unittest.TestCase):

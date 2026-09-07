@@ -427,72 +427,70 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     """
     Drive safety steps until the crate is safe or nothing eligible remains.
 
-    find_unsafe2 supplies the facts, the scheduler decides what gets asked,
-    check-unsafe2 separates the illegal from the reviewable, and the tests
-    decide what is true:
+    The normal --llm-mode=agent path:
 
-          ┌────────────────────────────────────────────────┐
-          │ find_unsafe2  (the inventory)                  │
-          │ per-function / per-field unsafety records      │
-          └────────┬────────────────────────────────────┬──┘
-             counts & mass                              │  baseline JSON,
-                   │                                    │  pinned at step start
-                   ▼                                    │
-    ┌────────────────────────────────────────────────┐  │
-    │ unsafe count == 0 ────────▶ COMPLETE_SAFE      │  │
-    │      │ else                                    │  │
-    │      ▼                                         │  │
-    │ MENU: per-file mass map, biggest functions,    │  │
-    │       pointer fields, deferred-target line     │  │
-    │   policy filters out: C-header (*_h) ABI       │  │
-    │   types; targets deferred since the last       │  │
-    │   accepted unsafe-count reduction              │  │
-    │   after two attempts without reduction:        │  │
-    │   reopen menu for one Astra rescue attempt     │  │
-    │      │                                         │  │
-    │      ├─ menu empty ─▶ every live target failed │  │
-    │      │   in this progress epoch ─▶ SATURATED   │  │
-    │      ▼                                         │  │
-    │ ┌─ STEP WINDOW (≤ N invocations, default 2) ─┐ │  │
-    │ │ prompt = plan + menu + checker_rules.md    │ │◀─┘
-    │ │          + past review findings            │ │   the agent’s own
-    │ │ agent edits, declares TARGET, ends with:   │ │   `cargo check-unsafe2`
-    │ │   BLOCKED ─▶ edits discarded, note kept    │ │   compares against the
-    │ │   CONTINUE ─▶ checkpoint must build ──┐    │ │   same pinned baseline,
-    │ │   DONE ─▶ exit window                 │    │ │   so mid-step it always
-    │ │      ▲─────── next invocation ────────┘    │ │   previews the final
-    │ └──────────────┬─────────────────────────────┘ │   judgment
-    │                ▼  judged once, vs step start   │
-    │ GATES, in cost order                           │
-    │  1 check-unsafe2 — hard errors reject:         │
-    │     crate total may not increase; a safe fn    │
-    │     may not gain signature pointers; a new     │
-    │     safe fn needs a direct-pointer-free sig;   │
-    │     an unsafe→safe flip must reach no ptrs     │
-    │     even through struct fields; no int→ptr     │
-    │     casts, no new foreign or FFI uses          │
-    │    warnings tolerate now, queue for review:    │
-    │     relocated ops, false→true qualifiers,      │
-    │     new unsafe impls, entry-point growth       │
-    │  2 full test suite (build + shared + corpus)   │
-    │  3 tolerated-unsafety review (the warnings)    │
-    │  4 FFI-faithfulness review (wrapper diffs)     │
-    │    any gate fails ─▶ step REJECTED             │
-    │    all gates pass ─▶ ACCEPT new tree           │
-    │         │                                      │
-    │         ▼                                      │
-    │ BOOKKEEPING (one in-memory progress epoch)     │
-    │   reduced          ─▶ clear all deferrals      │
-    │   refused/rejected ─▶ defer this target        │
-    │   neutral          ─▶ defer this target        │
-    │   neutral rescue   ─▶ reopen once per epoch   │
-    │   reduction/rescue ─▶ reset failure streak     │
-    │      │                                         │
-    │      └──────────▶ next scheduling round        │
-    └────────────────────────────────────────────────┘
-    run end: attempt ledger printed, final gate re-run,
-    one status word — FAILED (exits nonzero) /
-    SATURATED / BUDGET_EXHAUSTED / COMPLETE_SAFE
+          ┌────────────────────────────────────────────────────┐
+          │ find_unsafe2: per-function / per-field inventory    │
+          └──────────┬─────────────────────────────────────────┘
+                     ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │ unsafe count == 0 ─────────────────────────▶ final checks    │
+    │      │ else                                                  │
+    │      ▼                                                       │
+    │ MENU: per-file mass, biggest functions, pointer fields       │
+    │   exclude C-header (*_h) ABI fields and deferred targets     │
+    │   after two attempts without reduction: reopen menu for     │
+    │   one Astra rescue attempt, then return to the loop model   │
+    │      ├─ no eligible targets ─▶ SATURATED, then final checks  │
+    │      ├─ no run fuel ─▶ BUDGET_EXHAUSTED, then final checks   │
+    │      ▼                                                       │
+    │ ┌─ STEP WINDOW (≤ N invocations, default 2) ───────────────┐ │
+    │ │ Cap N by remaining run fuel; announce final invocation.  │ │
+    │ │ Pin inventory menu and checker baseline at step start.   │ │
+    │ │ Prompt = plan + menu + shared checker/safety/FFI rules   │ │
+    │ │          + review feedback attached to its target.       │ │
+    │ │                                                          │ │
+    │ │ Agent edits, declares TARGET, ends with:                 │ │
+    │ │   BLOCKED ─▶ discard edits; go to bookkeeping            │ │
+    │ │   DONE ─▶ judge candidate                                │ │
+    │ │   CONTINUE ─▶ build checkpoint                           │ │
+    │ │     builds: retain checkpoint and handoff note           │ │
+    │ │     fails: discard edits; retain last building state     │ │
+    │ │            and hand off rendered compiler diagnostics    │ │
+    │ │       │                                                  │ │
+    │ │       ├─ invocations left ─▶ next invocation             │ │
+    │ │       └─ limit reached ─▶ judge last usable checkpoint   │ │
+    │ └──────────────────────┬───────────────────────────────────┘ │
+    │                        ▼                                     │
+    │ No changed candidate ─▶ bookkeeping, without tests/review    │
+    │ Changed candidate: judge once against the step's start       │
+    │                                                              │
+    │ GATES, in cost order                                         │
+    │  1 check-unsafe2 (hard gates in checker_rules.md)            │
+    │  2 configured tests                                          │
+    │  3 one independent safety / behavior / API / FFI review      │
+    │    review covers the full diff, including neutral changes;   │
+    │    original C sources are available at their original paths  │
+    │    any gate fails ─▶ REJECT; keep target's review findings   │
+    │    all gates pass ─▶ ACCEPT new tree                         │
+    │                        │                                     │
+    │                        ▼                                     │
+    │ BOOKKEEPING (one in-memory progress epoch)                   │
+    │   missing/ineligible TARGET ─▶ first eligible target         │
+    │   reduced          ─▶ clear all deferrals                    │
+    │   refused/rejected ─▶ defer this target                      │
+    │   neutral          ─▶ defer this target                      │
+    │   neutral rescue   ─▶ reopen once per epoch                 │
+    │   reduction/rescue ─▶ reset failure streak                   │
+    │      │                                                       │
+    │      └────────────────────────▶ next scheduling round        │
+    └──────────────────────────────────────────────────────────────┘
+
+    The agent's own cargo check-unsafe2 uses the same pinned baseline
+    as the final checker, so it previews the whole step's judgment.
+    Run end: print the attempt ledger, recheck count and configured tests,
+    then report FAILED (exits nonzero), SATURATED, BUDGET_EXHAUSTED, or
+    COMPLETE_SAFE. A failing final test overrides the loop's stop reason.
     """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')

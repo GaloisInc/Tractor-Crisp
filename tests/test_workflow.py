@@ -7,10 +7,10 @@ from crisp.mvir import CargoCheckJsonAnalysisNode, FileNode, MVIR, TreeNode
 
 from crisp.workflow import (
     AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT,
-    AGENT_TOLERATED_REVIEW_PROMPT,
+    AGENT_SAFETY_REVIEW_PROMPT,
     CHECKER_RULES, FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
-    TOLERATED_UNSAFETY_RULES, merge_ffi_finding_titles,
-    extract_checker_warnings,
+    SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
+    review_passed,
     parse_verdict, parse_target,
     menu_targets, format_menu, Workflow,
     FuelCounter, OutOfFuelError,
@@ -92,8 +92,7 @@ class SafetyStepTest(unittest.TestCase):
         self.w.type_records.return_value = {}
         self.w.compare_unsafe2_op.return_value.exit_code = 0
         self.w.test_op.return_value.exit_code = 0
-        self.w.do_tolerated_review.return_value = (True, None)
-        self.w.do_ffi_review.return_value = (True, None)
+        self.w.do_safety_review.return_value = (True, None)
 
     @staticmethod
     def tree(name):
@@ -189,6 +188,119 @@ class SafetyStepTest(unittest.TestCase):
         self.w.agent_safety.assert_not_called()
         self.w.find_unsafe2_json.assert_not_called()
 
+    def test_done_candidate_runs_one_review_after_mechanical_gates(self):
+        self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+        self.assertIs(self.run_step().code, self.candidate)
+        gates = [call[0] for call in self.w.method_calls
+            if call[0] in ('compare_unsafe2_op', 'test_op', 'do_safety_review')]
+        self.assertEqual(gates, ['compare_unsafe2_op', 'test_op', 'do_safety_review'])
+        self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
+            self.c_code, self.w.compare_unsafe2_op.return_value)
+
+    def test_failed_mechanical_gate_skips_review(self):
+        for failed_gate in ('compare_unsafe2_op', 'test_op'):
+            with self.subTest(failed_gate=failed_gate):
+                self.w.reset_mock()
+                self.w.fuel.fuel = 3
+                self.w.compare_unsafe2_op.return_value.exit_code = 0
+                self.w.test_op.return_value.exit_code = 0
+                getattr(self.w, failed_gate).return_value.exit_code = 1
+                self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+                self.assertIsNone(self.run_step().code)
+                self.w.do_safety_review.assert_not_called()
+
+    def test_blocked_or_unchanged_step_skips_review(self):
+        for code, verdict in ((self.candidate, 'BLOCKED: prerequisite'), (self.base, 'DONE')):
+            with self.subTest(verdict=verdict):
+                self.w.agent_safety.return_value = (code, self.plans, verdict)
+                self.assertIs(self.run_step().code, self.base)
+                self.w.do_safety_review.assert_not_called()
+                self.w.test_op.assert_not_called()
+
+    def test_review_failure_returns_report_for_existing_feedback_path(self):
+        self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+        report = 'CRISP_REVIEW: FAIL\n- [P1] Cleanup disappears in release'
+        self.w.do_safety_review.return_value = (False, report)
+        outcome = self.run_step()
+        self.assertIsNone(outcome.code)
+        self.assertEqual(outcome.ffi_report, report)
+
+    def test_simulation_reviewer_does_not_receive_hidden_original_tests(self):
+        self.w.agent_safety_no_tests.return_value = (self.candidate, self.plans, 'DONE')
+        self.w.cargo_check_json_op.return_value.passed = True
+        result = Workflow.do_safety_step_agent_sim_no_tests.__wrapped__(self.w,
+            self.base, self.c_code, self.plans)
+        self.assertEqual(result, (self.candidate, self.plans))
+        self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
+            None, self.w.compare_unsafe2_op.return_value)
+
+
+class SafetyReviewTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.mvir = MVIR(temp.name, temp.name)
+        cfg = SimpleNamespace(
+            transpile=SimpleNamespace(output_dir='crate'),
+            relative_path=lambda path: path,
+            models=SimpleNamespace(agent_review='configured-review-model'),
+        )
+        self.w = Workflow(cfg, self.mvir)
+        self.reference = self.tree('api.h', 'typedef void *(*alloc_fn)(void *context);')
+        self.check = Mock()
+        self.check.body_str.return_value = 'PASS: no diagnostics'
+        self.review = self.enterContext(patch('crisp.workflow.agent.run_review',
+            return_value=('CRISP_REVIEW: PASS\nChecked contracts and callers.', b'log', True)))
+        self.enterContext(patch('builtins.print'))
+
+    def tree(self, path, body):
+        return TreeNode.new(self.mvir,
+            files={path: FileNode.new(self.mvir, body).node_id()})
+
+    def test_callback_and_neutral_cleanup_changes_receive_review_without_warnings(self):
+        for old, new in [
+            ('type Alloc = unsafe extern "C" fn(*mut u8);',
+             'type Alloc = extern "C" fn(*mut u8);'),
+            ('fn cleanup() { let result = release_owner(); debug_assert!(result.is_none()); }',
+             'fn cleanup() { debug_assert!(release_owner().is_none()); }'),
+        ]:
+            with self.subTest(new=new):
+                self.review.reset_mock()
+                baseline = self.tree('crate/src/lib.rs', old)
+                candidate = self.tree('crate/src/lib.rs', new)
+                self.assertEqual(self.w.do_safety_review(baseline, candidate,
+                    self.reference, self.check), (True, None))
+                self.review.assert_called_once()
+                args, kwargs = self.review.call_args
+                self.assertEqual(args[3], 'configured-review-model')
+                self.assertEqual(args[4:6], (baseline, candidate))
+                self.assertEqual(kwargs['extra_code'], {'c_code': self.reference})
+                self.assertEqual(kwargs['effort'], 'xhigh')
+                self.assertIn('at their original paths', args[2])
+                self.assertIn('PASS: no diagnostics', args[2])
+                self.assertIn(SAFETY_REVIEW_RULES, args[2])
+
+    def test_identical_tree_skips_model(self):
+        code = self.tree('crate/src/lib.rs', 'fn example() {}')
+        self.assertEqual(self.w.do_safety_review(code, code, self.reference, self.check),
+            (True, None))
+        self.review.assert_not_called()
+
+    def test_missing_report_and_missing_command_evidence_reject_and_record_reason(self):
+        baseline = self.tree('crate/src/lib.rs', 'fn before() {}')
+        candidate = self.tree('crate/src/lib.rs', 'fn after() {}')
+        for report, inspected in [('', True), ('No findings.', True),
+                ('CRISP_REVIEW: PASS', False), ('CRISP_REVIEW: FAIL\nMissing context.', True)]:
+            with self.subTest(report=report, inspected=inspected):
+                self.review.return_value = report, b'log', inspected
+                passed, reason = self.w.do_safety_review(baseline, candidate,
+                    self.reference, self.check)
+                self.assertFalse(passed)
+                self.assertTrue(reason.startswith('CRISP_REVIEW: FAIL'))
+                entry = next(iter(self.mvir.tag_reflog('op_history')))
+                op = self.mvir.node(entry.node_id)
+                self.assertEqual(op.verdict, 'FAIL')
+
 
 class ReviewRuleParityTest(unittest.TestCase):
     def test_worker_prompt_contains_canonical_review_rules(self):
@@ -198,25 +310,26 @@ class ReviewRuleParityTest(unittest.TestCase):
             target_goal='',
             menu='target menu',
             checker_rules=CHECKER_RULES,
-            tolerated_unsafety_rules=TOLERATED_UNSAFETY_RULES,
+            safety_review_rules=SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=FFI_ENTRY_POINT_RULES,
         )
 
-        self.assertIn(TOLERATED_UNSAFETY_RULES, prompt)
+        self.assertIn(SAFETY_REVIEW_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
         self.assertIn('notes in it are guidance, not rules', prompt)
 
-    def test_tolerated_reviewer_uses_the_same_rules(self):
-        prompt = AGENT_TOLERATED_REVIEW_PROMPT.format(
+    def test_semantic_reviewer_uses_the_same_rules(self):
+        prompt = AGENT_SAFETY_REVIEW_PROMPT.format(
             cargo_dir_path='translated_rust',
-            warnings='warning: moved unsafe operation',
-            tolerated_unsafety_rules=TOLERATED_UNSAFETY_RULES,
+            reference_instruction='Original C is at its original paths.',
+            checker_diagnostics='PASS',
+            safety_review_rules=SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=FFI_ENTRY_POINT_RULES,
         )
-
-        self.assertIn(TOLERATED_UNSAFETY_RULES, prompt)
+        self.assertIn(SAFETY_REVIEW_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
-        self.assertIn('dedicated FFI review', prompt)
+        self.assertIn('overall_explanation', prompt)
+        self.assertIn('CRISP_REVIEW: PASS', prompt)
 
 
 class RejectedReviewPromptTest(unittest.TestCase):
@@ -254,35 +367,32 @@ class MergeFfiFindingTitlesTest(unittest.TestCase):
         self.assertEqual(merge_ffi_finding_titles([], 'No violations found.'), [])
 
 
-# Mixed cargo/rustc/checker output from a check-unsafe2 run.
-CHECK_LOGS = '''
-warning: unused config key `unstable.sparse-registry` in `/w/.cargo/config.toml`
-   Compiling zlib v0.1.0 (/root/work/translated_rust)
-warning: function pointer comparisons do not produce meaningful results since their addresses are not guaranteed to be unique
-  --> src/deflate.rs:1796:40
-warning: zlib::src::inflate::inflate: raw pointer derefs increased: 1 -> 2
-warning: zlib::src::gzlib::gz_open: `unsafe` qualifier changed: false -> true
-warning: zlib::src::inflate::inflate_ffi: 4 unsafe operations now inside count-exempt FFI entry point (baseline 2); entry points must stay thin
-warning: unused variable: `x`
-zlib::src::zutil::helper: int-to-pointer casts increased: 0 -> 1
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.83s
-'''
+class ReviewVerdictTest(unittest.TestCase):
+    def test_completed_explicit_approval_passes(self):
+        for verdict in ('CRISP_REVIEW: PASS', 'CRISP_REVIEW: PASS.',
+                'CRISP_REVIEW: PASS - no defects'):
+            with self.subTest(verdict=verdict):
+                self.assertTrue(review_passed(verdict + '\nChecked the affected callers.', True))
 
-
-class ExtractCheckerWarningsTest(unittest.TestCase):
-    def test_extracts_only_checker_warnings(self):
-        self.assertEqual(extract_checker_warnings(CHECK_LOGS), [
-            'warning: zlib::src::inflate::inflate: raw pointer derefs increased: 1 -> 2',
-            'warning: zlib::src::gzlib::gz_open: `unsafe` qualifier changed: false -> true',
-            'warning: zlib::src::inflate::inflate_ffi: 4 unsafe operations now '
-                'inside count-exempt FFI entry point (baseline 2); '
-                'entry points must stay thin',
-        ])
-
-    def test_error_lines_are_not_warnings(self):
-        # Hard-error diagnostics (no `warning:` prefix) are not extracted.
-        self.assertEqual(
-            extract_checker_warnings('f: raw pointer derefs increased: 0 -> 1'), [])
+    def test_missing_incomplete_ambiguous_and_rejecting_reports_fail(self):
+        for report, ran_commands in [
+            ('', True),
+            ('No findings.', True),
+            ('Review was interrupted.', True),
+            ('Unable to assess the callback lifetime.', True),
+            ('CRISP_REVIEW: FAIL\nMissing API context.', True),
+            ('CRISP_REVIEW: PASS', False),
+            ('CRISP_REVIEW: PASSING', True),
+            ('CRISP_REVIEW: PASS_FAIL', True),
+            ('CRISP_REVIEW: PASS\nCRISP_REVIEW: FAIL', True),
+            ('CRISP_REVIEW: PASS.\nCRISP_REVIEW: FAIL', True),
+            ('CRISP_REVIEW: PASS - no defects', False),
+            ('CRISP_REVIEW: PASS.\n  - [P2] Missed cleanup', True),
+            ('CRISP_REVIEW: PASS\n' + REPORT, True),
+            ('CRISP_REVIEW: PASS\n  - [P2] Missed cleanup', True),
+        ]:
+            with self.subTest(report=report, ran_commands=ran_commands):
+                self.assertFalse(review_passed(report, ran_commands))
 
 
 class ParseVerdictTest(unittest.TestCase):

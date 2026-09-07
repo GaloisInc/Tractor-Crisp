@@ -1,5 +1,7 @@
 from contextlib import nullcontext
 import os
+from pathlib import Path
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -160,6 +162,57 @@ class AgentExecutionTest(unittest.TestCase):
         report, _, _ = agent.run_review(
             object(), self.mvir, 'review', 'test-model', self.code, self.code)
         self.assertEqual(report, '')
+
+    def test_review_reuses_original_paths_without_changing_the_candidate_diff(self):
+        reference = TreeNode.new(self.mvir, files={
+            'api.h': FileNode.new(self.mvir, 'int example(void);').node_id(),
+        })
+        candidate = TreeNode.new(self.mvir, files={
+            'crate/src/lib.rs': FileNode.new(self.mvir, 'fn changed() {}').node_id(),
+        })
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+        def write_file(path, body):
+            dest = root / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+
+        def checkout(tree, rel_path):
+            for path, node_id in tree.files.items():
+                write_file(str(Path(rel_path) / path), self.mvir.node(node_id).body())
+
+        def run(cmd, **kwargs):
+            if cmd[0] == 'codex':
+                def git(*args):
+                    return subprocess.check_output(['git', *args], cwd=root).decode()
+                self.assertEqual(git('show', 'HEAD:api.h'), 'int example(void);')
+                self.assertEqual((root / 'api.h').read_text(), 'int example(void);')
+                self.assertEqual(git('diff', '--name-only', 'HEAD'), 'crate/src/lib.rs\n')
+                self.assertNotIn('api.h',
+                    git('ls-files', '--others', '--exclude-standard').splitlines())
+                self.assertFalse((root / 'crisp_old_code').exists())
+                return 0, b'{"type":"item.completed","item":' \
+                    b'{"type":"command_execution","exit_code":0}}'
+            result = subprocess.run(cmd, cwd=root, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            return result.returncode, result.stdout
+
+        self.sb.checkout.side_effect = checkout
+        self.sb.checkout_file_untracked.side_effect = write_file
+        self.sb.join.side_effect = lambda *paths: str(root.joinpath(*paths))
+        self.sb.run.side_effect = run
+        self.files['.codex/last_message.txt'] = b'CRISP_REVIEW: PASS\nChecked API.'
+        report, _, _ = agent.run_review(object(), self.mvir, 'review',
+            'test-model', self.code, candidate, extra_code={'c_code': reference})
+        self.assertTrue(report.startswith('CRISP_REVIEW: PASS'))
+        self.assertEqual(sum(call.args[0] == reference
+            for call in self.sb.checkout.call_args_list), 1)
+        self.sb.checkout.assert_any_call(reference, rel_path='.')
+
+    def test_review_context_cannot_overwrite_candidate_files(self):
+        with self.assertRaisesRegex(CrispError, 'review context overlaps'):
+            agent.run_review(object(), self.mvir, 'review', 'test-model',
+                self.code, self.code, extra_code={'c_code': self.code})
 
 
 if __name__ == '__main__':

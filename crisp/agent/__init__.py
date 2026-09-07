@@ -468,8 +468,9 @@ def run_review(
     inspected the change rather than answering blind).
 
     `codex exec review` is used rather than a plain `codex exec` prompt
-    because review mode reports findings in a fixed, machine-parseable format
-    (it overrides any output convention requested in the prompt).  Codex's own
+    because review mode reports findings in a fixed, machine-parseable format.
+    Its renderer preserves the overall_explanation field, where CRISP asks
+    for an explicit verdict. Codex's own
     sandbox is bypassed (it cannot start inside the CRISP sandbox).
 
     Review mode can only review a git diff.  The review runs in its own
@@ -506,9 +507,13 @@ def run_review(
     }
     if codex_login:
         inputs['codex_auth'] = _codex_auth_input()
+    extra_paths = set()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
+        if tree.files.keys() & (old_code.files.keys() | new_code.files.keys()):
+            raise CrispError('review context overlaps candidate files')
         inputs[name] = Input(tree)
+        extra_paths.update(tree.files)
 
     setup_cmds = [
         ['git', 'init', '--quiet'],
@@ -521,6 +526,14 @@ def run_review(
         # `$GIT_WORK_TREE` set will compare the committed state against `.`,
         # thus comparing the old code to the new code.
         ['env', 'GIT_WORK_TREE=crisp_old_code', 'git', 'add', '--all'],
+    ]
+    # Keep the original sources/tests at their normal paths, as in the
+    # planner and worker. Include them in the baseline so they are context,
+    # not untracked candidate additions. No second checkout is needed.
+    if extra_paths:
+        setup_cmds.append(
+            ['git', '--literal-pathspecs', 'add', '--force', '--', *sorted(extra_paths)])
+    setup_cmds += [
         ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
         # Old files are no longer needed.
         ['rm', '-rf', 'crisp_old_code'],

@@ -130,18 +130,16 @@ FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()
 
 AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
 
-AGENT_FFI_REVIEW_PROMPT = _prompt('ffi_review.md')
+AGENT_SAFETY_REVIEW_PROMPT = _prompt('safety_review.md')
 
 # Prose statement of the gates `check-unsafe2` enforces; update it
 # alongside any checker gate change.
 CHECKER_RULES = _prompt('checker_rules.md').strip()
 
-TOLERATED_UNSAFETY_RULES = _prompt('tolerated_unsafety_rules.md').strip()
-
-AGENT_TOLERATED_REVIEW_PROMPT = _prompt('tolerated_review.md')
+SAFETY_REVIEW_RULES = _prompt('safety_review_rules.md').strip()
 
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
-# a clean review is prose with no such lines.
+# the prompt places an explicit verdict in its rendered overall explanation.
 AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
@@ -152,9 +150,17 @@ AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
 
 FFI_SEEN_FINDINGS_CAP = 10
 
+def review_passed(report: str, ran_commands: bool) -> bool:
+    """Require inspected code, one explicit approval, and no findings."""
+    lines = report.strip().splitlines()
+    return (ran_commands and bool(lines)
+        and re.match(r'^CRISP_REVIEW: PASS\b', lines[0]) is not None
+        and report.count('CRISP_REVIEW:') == 1
+        and AGENT_FFI_REVIEW_FINDING_RE.search(report) is None)
+
 def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
     """
-    Merge finding titles from a rejecting FFI review `report` into `seen`,
+    Merge finding titles from a rejecting review `report` into `seen`,
     deduplicated and bounded to the most recent `FFI_SEEN_FINDINGS_CAP`.
     """
     for m in AGENT_FFI_REVIEW_FINDING_TITLE_RE.finditer(report):
@@ -178,9 +184,10 @@ cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
 {checker_rules}
 
-Checker-tolerated warnings are judged under these binding rules:
+Every changed candidate receives independent safety and compatibility review
+under these binding rules, including count-neutral preparation:
 
-{tolerated_unsafety_rules}
+{safety_review_rules}
 
 FFI entry points are judged under these binding rules:
 
@@ -276,7 +283,7 @@ class StepOutcome(typing.NamedTuple):
     """
     code: 'TreeNode | None'
     plans: 'TreeNode | None'
-    ffi_report: str | None
+    ffi_report: str | None  # Historical name; now carries any semantic-review report.
     target: str | None
     note: str
     invocations: int
@@ -297,24 +304,6 @@ continuing the step; the unsafe baseline remains pinned to the step's start.
 
 {diagnostics}
 '''.strip()
-
-# Warning lines printed by `check-unsafe2` for tolerated changes.  Anchored on
-# the checker's distinctive suffixes so rustc/cargo warnings don't match.
-CHECK_UNSAFE2_WARNING_RES = [
-    re.compile(r'^warning: .+ increased: \d+ -> \d+$'),
-    re.compile(r'^warning: .+ changed: false -> true$'),
-    re.compile(r'^warning: .+ entry points must stay thin$'),
-]
-
-def extract_checker_warnings(logs: str) -> list[str]:
-    """
-    Extract `check-unsafe2` tolerated-change warnings from a check run's
-    output.
-    """
-    return [
-        line for line in logs.splitlines()
-        if any(r.match(line) for r in CHECK_UNSAFE2_WARNING_RES)
-    ]
 
 AGENT_FFI_REJECTED_PROMPT = '''
 A previous attempt at `{target}` was rejected by review. The reviewer reported:
@@ -1471,7 +1460,7 @@ class Workflow:
             target_goal = target_goal.prompt(),
             menu = menu_text,
             checker_rules = CHECKER_RULES,
-            tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
+            safety_review_rules = SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
         )
         if review_feedback:
@@ -1500,30 +1489,47 @@ class Workflow:
             find_unsafe2_src_dir = cargo_dir,
         )
 
-    def _run_codex_review(
+    @step
+    def safety_review_op(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
-        prompt: str,
+        n_c_code: TreeNode | None,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
     ) -> CodexReviewOpNode:
         cfg, mvir = self.cfg, self.mvir
+        reference_instruction = (
+            'Original C sources, headers, and available tests are checked out '
+            'at their original paths relative to the sandbox root, as in the '
+            'planner and safety worker. Consult the relevant contracts there; '
+            'these unchanged files are included in the Git baseline.'
+            if n_c_code is not None else
+            'Original C sources and tests are unavailable in this mode. '
+            'Use the baseline and available contracts; if essential evidence '
+            'is missing, report an incomplete review with CRISP_REVIEW: FAIL.')
+        prompt = AGENT_SAFETY_REVIEW_PROMPT.format(
+            cargo_dir_path = cfg.relative_path(cfg.transpile.output_dir),
+            reference_instruction = reference_instruction,
+            checker_diagnostics = n_op_unsafe.body_str(),
+            safety_review_rules = SAFETY_REVIEW_RULES,
+            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
 
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
             cfg.models.agent_review, n_old_code, n_new_code,
+            extra_code = {'c_code': n_c_code} if n_c_code is not None else {},
             codex_login = self.codex_login,
             effort = 'xhigh')
 
-        if report.strip() == '':
-            # Fail closed on a missing report.
-            print('warning: review returned an empty report')
-            passed = False
-        elif not ran_commands:
-            # Fail closed when the reviewer never successfully ran a command:
-            # it cannot have inspected the diff, whatever the report says.
-            print('warning: reviewer ran no commands; ignoring its report')
-            passed = False
-        else:
-            passed = AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
+        passed = review_passed(report, ran_commands)
+        if not passed:
+            if not report.strip():
+                report = 'CRISP_REVIEW: FAIL\nReview returned no report.'
+            elif not ran_commands:
+                report = ('CRISP_REVIEW: FAIL\nReviewer did not inspect the code.\n\n'
+                    + report)
+            elif not report.startswith('CRISP_REVIEW: FAIL'):
+                report = ('CRISP_REVIEW: FAIL\nReview did not provide an '
+                    'unambiguous, finding-free approval.\n\n' + report)
 
         n_op = CodexReviewOpNode.new(mvir,
             old_code = n_old_code.node_id(),
@@ -1537,75 +1543,17 @@ class Workflow:
         return n_op
 
     @step
-    def ffi_review_op(
+    def do_safety_review(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
-    ) -> CodexReviewOpNode:
-        cargo_dir = self.cfg.relative_path(self.cfg.transpile.output_dir)
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
-        return self._run_codex_review(n_old_code, n_new_code, prompt)
-
-    @step
-    def tolerated_review_op(
-        self,
-        n_old_code: TreeNode,
-        n_new_code: TreeNode,
-        warnings: str,
-    ) -> CodexReviewOpNode:
-        cargo_dir = self.cfg.relative_path(self.cfg.transpile.output_dir)
-        prompt = AGENT_TOLERATED_REVIEW_PROMPT.format(
-            cargo_dir_path = cargo_dir,
-            warnings = warnings,
-            tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
-        return self._run_codex_review(n_old_code, n_new_code, prompt)
-
-    @step
-    def do_tolerated_review(
-        self,
-        n_old_code: TreeNode,
-        n_new_code: TreeNode,
+        n_c_code: TreeNode | None,
         n_op_unsafe: CheckUnsafe2AnalysisNode,
     ) -> tuple[bool, str | None]:
-        """
-        Review a change that `check-unsafe2` tolerated with warnings: per-
-        function unsafety increases are legal when the global total doesn't
-        grow, but a reviewer must confirm they aren't laundering.  Returns
-        `(passed, report)` like `do_ffi_review`.
-        """
-        warnings = extract_checker_warnings(n_op_unsafe.body_str())
-        if not warnings:
+        """Review every changed candidate that passed the mechanical gates."""
+        if n_old_code.node_id() == n_new_code.node_id():
             return True, None
-
-        n_op = self.tolerated_review_op(
-            n_old_code, n_new_code, '\n'.join(warnings))
-        report = self.mvir.node(n_op.report).body_str()
-        print(report)
-        if n_op.verdict == 'PASS':
-            return True, None
-        return False, report if report.strip() else None
-
-    @step
-    def do_ffi_review(
-        self,
-        n_old_code: TreeNode,
-        n_new_code: TreeNode,
-    ) -> tuple[bool, str | None]:
-        """
-        Diff-triggered FFI review: if the change touched any FFI entry point,
-        have a reviewer agent check it against the FFI entry point rules.
-        Returns `(passed, report)`; `report` is the reviewer's findings when
-        the change is rejected, or `None` if there is no usable report.
-        """
-        old_defs = self.extract_ffi_defs(n_old_code).defs
-        new_defs = self.extract_ffi_defs(n_new_code).defs
-        if old_defs == new_defs:
-            return True, None
-
-        n_op = self.ffi_review_op(n_old_code, n_new_code)
+        n_op = self.safety_review_op(n_old_code, n_new_code, n_c_code, n_op_unsafe)
         report = self.mvir.node(n_op.report).body_str()
         print(report)
         if n_op.verdict == 'PASS':
@@ -1808,9 +1756,9 @@ class Workflow:
             return StepOutcome(n_base, n_plans, None, target, '',
                 invocations)
         # The step must pass tests, must not regress the unsafe counts, must
-        # pass review of any tolerated unsafety moves, and must not break the
-        # FFI entry point rules — all judged against the step's start.  The
-        # cheap unsafe comparison runs first so a regressing attempt doesn't
+        # pass independent safety, behavior and FFI review — all judged
+        # against the step's start. The cheap unsafe comparison runs first
+        # so a regressing attempt doesn't
         # pay for the full test suite.
         n_op_unsafe = self.compare_unsafe2_op(n_base, n_cur)
         if n_op_unsafe.exit_code != 0:
@@ -1818,15 +1766,11 @@ class Workflow:
         n_op_test = self.test_op(n_cur, n_test_code)
         if n_op_test.exit_code != 0:
             return StepOutcome(None, None, None, target, '', invocations)
-        tol_ok, tol_report = self.do_tolerated_review(
-            n_base, n_cur, n_op_unsafe)
-        if not tol_ok:
-            return StepOutcome(None, None, tol_report, target, '', invocations)
-        ffi_ok, ffi_report = self.do_ffi_review(n_base, n_cur)
-        if not ffi_ok:
+        review_ok, report = self.do_safety_review(n_base, n_cur, n_test_code, n_op_unsafe)
+        if not review_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
-            return StepOutcome(None, None, ffi_report, target, '', invocations)
+            return StepOutcome(None, None, report, target, '', invocations)
         return StepOutcome(n_cur, n_plans, None, target, '', invocations)
 
     @step
@@ -1852,9 +1796,8 @@ class Workflow:
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             return None, None
-        if not self.do_tolerated_review(n_code, n_new_code, n_op_unsafe)[0]:
-            return None, None
-        if not self.do_ffi_review(n_code, n_new_code)[0]:
+        # Preserve this mode's deliberate lack of original C/test context.
+        if not self.do_safety_review(n_code, n_new_code, None, n_op_unsafe)[0]:
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

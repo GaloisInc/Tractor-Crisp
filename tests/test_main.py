@@ -1,12 +1,18 @@
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from crisp.__main__ import (
     prior_review_findings,
     update_review_feedback,
     update_target_deferrals,
+    safety_loop_common, FuelLimits,
 )
 from crisp.mvir import CodexReviewOpNode, FileNode, MVIR, TreeNode
+from crisp.workflow import FuelCounter, StepOutcome
 
 
 class TargetDeferralsTest(unittest.TestCase):
@@ -18,6 +24,45 @@ class TargetDeferralsTest(unittest.TestCase):
 
         update_target_deferrals(deferred, 'other_target', reduced=True)
         self.assertEqual(deferred, set())
+
+    def test_invalid_declarations_cannot_bypass_saturation(self):
+        for declared in (None, 'real', 'stale::target', 'crate::real'):
+            with self.subTest(declared=declared):
+                code = Mock()
+                code.node_id.return_value = 'baseline'
+                plans = object()
+                w = Mock()
+                w.fuel = FuelCounter('test')
+                w.count_unsafe2.return_value = 2
+                w.fn_records.return_value = {
+                    'crate::real': {'total_unsafe': 1},
+                    'crate::second': {'total_unsafe': 1},
+                }
+                w.type_records.return_value = {}
+                w.test_op.return_value.exit_code = 0
+                deferred = []
+
+                def refuse(*args, **kwargs):
+                    w.fuel.use()
+                    deferred.append(kwargs['suppressed'])
+                    return StepOutcome(code, plans, None, declared, 'blocked', 1)
+
+                w.do_safety_step_agent.side_effect = refuse
+                output = StringIO()
+                limits = FuelLimits(3, 2, 10, 1)
+                with patch('crisp.__main__.get_fuel_limits', return_value=limits), \
+                        patch('crisp.__main__.prior_review_findings', return_value=[]), \
+                        patch('crisp.__main__.prior_agent_plans', return_value=plans), \
+                        redirect_stdout(output):
+                    safety_loop_common(SimpleNamespace(llm_mode='agent'),
+                        object(), object(), w, code, code)
+
+                # Even an initially valid declaration becomes invalid when
+                # that target has already been deferred by the first attempt.
+                self.assertEqual(deferred, [frozenset(), frozenset({'crate::real'})])
+                self.assertEqual(w.fuel.fuel, 1)
+                self.assertIn('status: SATURATED', output.getvalue())
+                self.assertIn("attributing attempt to 'crate::second'", output.getvalue())
 
 
 class ReviewFeedbackTest(unittest.TestCase):

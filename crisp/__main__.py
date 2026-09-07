@@ -563,11 +563,15 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.ffi_report
 
-                    # Book the attempt.  An undeclared target is attributed
-                    # to the largest open one, so a refusal always costs a
-                    # menu entry and repetition stays bounded.
-                    target = outcome.target or \
-                        (fn_targets + field_targets)[0][0]
+                    # Only eligible inventory identities may enter deferral
+                    # bookkeeping. Missing, stale, or abbreviated names fall
+                    # back to the first eligible target so retries stay bounded.
+                    eligible_targets = [name for name, _ in fn_targets + field_targets]
+                    target = outcome.target
+                    if target not in eligible_targets:
+                        target = eligible_targets[0]
+                        print(f'warning: ineligible TARGET {outcome.target!r}; '
+                            f'attributing attempt to {target!r}')
                     attempted_target = target
                     if outcome.code is None:
                         update_target_deferrals(deferred, target, reduced=False)

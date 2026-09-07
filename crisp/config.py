@@ -40,7 +40,7 @@ class ConfigBase:
 
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
-    agent_plan: str = "gpt-5.6-sol"
+    agent_plan: str = "gpt-6-astra"
     agent_loop: str = "gpt-5.6-terra"
     # Reviews are adversarial reads, not rewrites; luna at xhigh effort is
     # comparable to the bigger tiers there at a fraction of the price.

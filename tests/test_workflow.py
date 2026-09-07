@@ -1,6 +1,9 @@
+import json
 import unittest
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from crisp.mvir import CargoCheckJsonAnalysisNode, FileNode, MVIR, TreeNode
 
 from crisp.workflow import (
     AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT,
@@ -10,6 +13,7 @@ from crisp.workflow import (
     extract_checker_warnings,
     parse_verdict, parse_target,
     menu_targets, format_menu, Workflow,
+    FuelCounter,
 )
 
 
@@ -42,6 +46,102 @@ class SafetyBaselineTest(unittest.TestCase):
         self.assertEqual(rewrite.call_args.kwargs['extra_code'], {'tests': tests})
         self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
         workflow.find_unsafe2_json.assert_not_called()
+
+
+class SafetyStepTest(unittest.TestCase):
+    def setUp(self):
+        self.w = Mock()
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        self.w.mvir = MVIR(temp, temp)
+        messages = [
+            {'reason': 'compiler-artifact', 'fresh': True},
+            {'reason': 'compiler-message', 'message': {
+                'rendered': 'error[E0308]: mismatched types\n --> src/lib.rs:7:5\n'}},
+            {'reason': 'compiler-message', 'message': {
+                'rendered': 'help: convert the argument to the expected type\n'}},
+            {'reason': 'build-finished', 'success': False},
+        ]
+        self.failed_check = CargoCheckJsonAnalysisNode.new(self.w.mvir,
+            code=TreeNode.new(self.w.mvir, files={}).node_id(),
+            exit_code=101,
+            json=FileNode.new(self.w.mvir, json.dumps(messages)).node_id(),
+            body='\n'.join(json.dumps(j) for j in messages))
+        self.w.fuel = FuelCounter('test', fuel=3)
+        self.base = self.tree('baseline')
+        self.checkpoint = self.tree('checkpoint')
+        self.broken = self.tree('broken')
+        self.candidate = self.tree('candidate')
+        self.plans, self.c_code, self.baseline_json = object(), object(), object()
+        self.w.find_unsafe2_json.return_value = self.baseline_json
+        self.w.fn_records.return_value = {'crate::target': {'total_unsafe': 2}}
+        self.w.type_records.return_value = {}
+        self.w.compare_unsafe2_op.return_value.exit_code = 0
+        self.w.test_op.return_value.exit_code = 0
+        self.w.do_tolerated_review.return_value = (True, None)
+        self.w.do_ffi_review.return_value = (True, None)
+
+    @staticmethod
+    def tree(name):
+        tree = Mock()
+        tree.node_id.return_value = name
+        return tree
+
+    def run_step(self, limit=3):
+        return Workflow.do_safety_step_agent.__wrapped__(self.w,
+            self.base, self.c_code, self.plans, max_invocations=limit)
+
+    def test_failed_continuation_retries_last_checkpoint_against_original_baseline(self):
+        self.w.agent_safety.side_effect = [
+            (self.checkpoint, self.plans, 'TARGET: crate::target\nCONTINUE: finish'),
+            (self.broken, self.plans, 'CONTINUE: finish'),
+            (self.candidate, self.plans, 'DONE'),
+        ]
+        self.w.cargo_check_json_op.side_effect = [Mock(passed=True), self.failed_check]
+
+        outcome = self.run_step()
+
+        self.assertIs(outcome.code, self.candidate)
+        self.assertEqual(outcome.invocations, 3)
+        calls = self.w.agent_safety.call_args_list
+        self.assertEqual([call.args[0] for call in calls],
+            [self.base, self.checkpoint, self.checkpoint])
+        for call in calls:
+            self.assertIs(call.kwargs['baseline_json'], self.baseline_json)
+            self.assertEqual(call.kwargs['menu_text'], calls[0].kwargs['menu_text'])
+        self.assertIn('error[E0308]', calls[2].kwargs['prompt_suffix'])
+        self.assertIn(' --> src/lib.rs:7:5\nhelp: convert the argument',
+            calls[2].kwargs['prompt_suffix'])
+        self.assertNotIn('"reason":', calls[2].kwargs['prompt_suffix'])
+        self.assertIn('edits were discarded', calls[2].kwargs['prompt_suffix'])
+        self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.candidate)
+        self.w.test_op.assert_called_once_with(self.candidate, self.c_code)
+
+    def test_last_failed_continuation_judges_prior_checkpoint(self):
+        self.w.agent_safety.side_effect = [
+            (self.checkpoint, self.plans, 'CONTINUE: finish'),
+            (self.broken, self.plans, 'CONTINUE: finish'),
+        ]
+        self.w.cargo_check_json_op.side_effect = [Mock(passed=True), self.failed_check]
+        self.assertIs(self.run_step(limit=2).code, self.checkpoint)
+        self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.checkpoint)
+
+    def test_recovered_checkpoint_must_still_pass_final_checker(self):
+        self.w.agent_safety.side_effect = [
+            (self.checkpoint, self.plans, 'CONTINUE: finish'),
+            (self.broken, self.plans, 'CONTINUE: finish'),
+        ]
+        self.w.cargo_check_json_op.side_effect = [Mock(passed=True), self.failed_check]
+        self.w.compare_unsafe2_op.return_value.exit_code = 1
+        self.assertIsNone(self.run_step(limit=2).code)
+        self.w.test_op.assert_not_called()
+
+    def test_all_nonbuilding_invocations_reject_without_testing_broken_code(self):
+        self.w.agent_safety.return_value = (self.broken, self.plans, 'CONTINUE: finish')
+        self.w.cargo_check_json_op.return_value = self.failed_check
+        self.assertIsNone(self.run_step().code)
+        self.assertEqual(self.w.agent_safety.call_count, 3)
+        self.w.compare_unsafe2_op.assert_not_called()
+        self.w.test_op.assert_not_called()
 
 
 class ReviewRuleParityTest(unittest.TestCase):

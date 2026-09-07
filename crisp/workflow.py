@@ -28,6 +28,14 @@ from .mvir import (
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
+
+def render_compiler_diagnostics(mvir: MVIR, check: CargoCheckJsonAnalysisNode) -> str:
+    """Render Cargo's compiler messages for repair and checkpoint handoffs."""
+    return ''.join(j['message']['rendered']
+        for j in mvir.node(check.json).body_json()
+        if j.get('reason') == 'compiler-message')
+
+
 LLM_SAFETY_PROMPT = '''
 This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
 
@@ -281,6 +289,14 @@ AGENT_FINAL_INVOCATION_NOTE = (
 
 AGENT_CONTINUE_HANDOFF = (
     'This step continues from your previous invocation, which reported: {note}')
+
+AGENT_CHECKPOINT_FAILED_HANDOFF = '''
+Your previous invocation did not build and its edits were discarded. You are
+back at the last building checkpoint. Address the build failure below while
+continuing the step; the unsafe baseline remains pinned to the step's start.
+
+{diagnostics}
+'''.strip()
 
 # Warning lines printed by `check-unsafe2` for tolerated changes.  Anchored on
 # the checker's distinctive suffixes so rustc/cargo warnings don't match.
@@ -1194,14 +1210,10 @@ class Workflow:
         n_code: TreeNode,
         n_op_check: CargoCheckJsonAnalysisNode,
     ) -> tuple[TreeNode, LlmOpNode]:
-        n_json = self.mvir.node(n_op_check.json)
-        json_errors = n_json.body_json()
-        stderr = ''.join(j['message']['rendered']
-            for j in json_errors if j.get('reason') == 'compiler-message')
         return llm.run_rewrite(
                 self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
                 glob_filter = self.cfg.src_globs,
-                format_kwargs = {'stderr': stderr},
+                format_kwargs = {'stderr': render_compiler_diagnostics(self.mvir, n_op_check)},
                 think = True)
 
     @step
@@ -1762,10 +1774,13 @@ class Workflow:
             if verdict == 'done':
                 n_cur = n_next
                 break
-            if not self.cargo_check_json_op(n_next).passed:
-                # A checkpoint that does not build rejects the whole step.
-                return StepOutcome(None, None, None, target, '',
-                    invocations)
+            n_check = self.cargo_check_json_op(n_next)
+            if not n_check.passed:
+                handoff = AGENT_CHECKPOINT_FAILED_HANDOFF.format(
+                    diagnostics = render_compiler_diagnostics(self.mvir, n_check))
+                if i + 1 == max_invocations and n_cur.node_id() == n_base.node_id():
+                    return StepOutcome(None, None, None, target, '', invocations)
+                continue
             n_cur = n_next
             handoff = AGENT_CONTINUE_HANDOFF.format(note = note)
         if n_cur.node_id() == n_base.node_id():

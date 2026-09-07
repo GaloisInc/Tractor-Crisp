@@ -1446,6 +1446,7 @@ class Workflow:
         # step's start alongside the baseline.
         menu_text: str | None = None,
         model: str | None = None,
+        review_feedback: dict[str, str] | None = None,
     ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1473,6 +1474,17 @@ class Workflow:
             tolerated_unsafety_rules = TOLERATED_UNSAFETY_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
         )
+        if review_feedback:
+            reports = '\n\n'.join(
+                f'## {target}\n\n' + AGENT_FFI_REJECTED_PROMPT.format(
+                    target=target, report=report)
+                for target, report in review_feedback.items())
+            extra_code['review_feedback'] = TreeNode.new(mvir, files={
+                'SAFETY_REVIEW_FEEDBACK.md': FileNode.new(mvir, reports).node_id()})
+            prompt += ('\n\nBefore editing your chosen target, read its section in '
+                '`SAFETY_REVIEW_FEEDBACK.md` and address the prior findings. '
+                'Reports are keyed by the exact inventory target name. '
+                'This file is read-only guidance; do not edit it.')
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
         return agent.run_rewrite(cfg, mvir, prompt, model or cfg.models.agent_loop, n_code,
@@ -1732,6 +1744,7 @@ class Workflow:
         max_invocations: int = 1,
         suppressed: frozenset[str] = frozenset(),
         model: str | None = None,
+        review_feedback: dict[str, str] | None = None,
     ) -> StepOutcome:
         """
         Run one safety step of up to `max_invocations` agent invocations and
@@ -1767,7 +1780,8 @@ class Workflow:
                 target_goal = target_goal,
                 baseline_json = n_base_json,
                 menu_text = menu_text,
-                model = model)
+                model = model,
+                review_feedback = review_feedback)
             if target is None:
                 target = parse_target(final_message)
             verdict, note = parse_verdict(final_message)

@@ -35,7 +35,8 @@ class SafetyBaselineTest(unittest.TestCase):
             test_command=None,
             models=SimpleNamespace(agent_loop='test-model'),
         )
-        workflow = Workflow(cfg, object())
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        workflow = Workflow(cfg, MVIR(temp, temp))
         workflow.find_unsafe2_json = Mock()
         baseline = object()
         code, plans, tests = object(), object(), object()
@@ -43,10 +44,21 @@ class SafetyBaselineTest(unittest.TestCase):
             with self.subTest(model=model), \
                     patch('crisp.workflow.agent.run_rewrite') as rewrite:
                 Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
-                    baseline_json=baseline, menu_text='Pinned menu', model=model)
+                    baseline_json=baseline, menu_text='Pinned menu', model=model,
+                    review_feedback={'crate::first': 'FIRST full report',
+                        'crate::second': 'SECOND full report'})
                 self.assertEqual(rewrite.call_args.args[3], model or 'test-model')
                 self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
-                self.assertEqual(rewrite.call_args.kwargs['extra_code'], {'tests': tests})
+                extra = rewrite.call_args.kwargs['extra_code']
+                self.assertIs(extra['tests'], tests)
+                reports = workflow.mvir.node(extra['review_feedback'].files[
+                    'SAFETY_REVIEW_FEEDBACK.md']).body_str()
+                self.assertIn('## crate::first', reports)
+                self.assertIn('FIRST full report', reports)
+                self.assertIn('## crate::second', reports)
+                self.assertIn('SECOND full report', reports)
+                self.assertIn('SAFETY_REVIEW_FEEDBACK.md', rewrite.call_args.args[2])
+                self.assertNotIn('FIRST full report', rewrite.call_args.args[2])
                 self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
         workflow.find_unsafe2_json.assert_not_called()
 
@@ -89,9 +101,10 @@ class SafetyStepTest(unittest.TestCase):
         tree.node_id.return_value = name
         return tree
 
-    def run_step(self, limit=3, model=None):
+    def run_step(self, limit=3, model=None, review_feedback=None):
         return Workflow.do_safety_step_agent.__wrapped__(self.w,
-            self.base, self.c_code, self.plans, max_invocations=limit, model=model)
+            self.base, self.c_code, self.plans, max_invocations=limit, model=model,
+            review_feedback=review_feedback)
 
     def test_failed_continuation_retries_last_checkpoint_against_original_baseline(self):
         self.w.agent_safety.side_effect = [
@@ -101,7 +114,8 @@ class SafetyStepTest(unittest.TestCase):
         ]
         self.w.cargo_check_json_op.side_effect = [Mock(passed=True), self.failed_check]
 
-        outcome = self.run_step(model='rescue-model')
+        feedback = {'crate::target': 'Use initialized storage'}
+        outcome = self.run_step(model='rescue-model', review_feedback=feedback)
 
         self.assertIs(outcome.code, self.candidate)
         self.assertEqual(outcome.invocations, 3)
@@ -110,6 +124,7 @@ class SafetyStepTest(unittest.TestCase):
             [self.base, self.checkpoint, self.checkpoint])
         for call in calls:
             self.assertEqual(call.kwargs['model'], 'rescue-model')
+            self.assertEqual(call.kwargs['review_feedback'], feedback)
             self.assertIs(call.kwargs['baseline_json'], self.baseline_json)
             self.assertEqual(call.kwargs['menu_text'], calls[0].kwargs['menu_text'])
         self.assertIn('error[E0308]', calls[2].kwargs['prompt_suffix'])

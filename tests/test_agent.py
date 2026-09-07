@@ -128,6 +128,19 @@ class AgentExecutionTest(unittest.TestCase):
                     '.codex/last_message.txt')
                 self.assertIn('model_reasoning_effort="medium"', cmd)
 
+    def test_review_feedback_is_input_only_even_if_worker_edits_it(self):
+        path = 'SAFETY_REVIEW_FEEDBACK.md'
+        feedback = TreeNode.new(self.mvir, files={
+            path: FileNode.new(self.mvir, 'original report').node_id()})
+        self.files[path] = b'worker replacement'
+        code, plans, _ = agent.run_rewrite(
+            object(), self.mvir, 'rewrite', 'test-model', self.code,
+            extra_code={'review_feedback': feedback})
+        self.assertNotIn(path, code.files)
+        self.assertNotIn(path, plans.files)
+        self.assertEqual(self.mvir.node(feedback.files[path]).body_str(),
+            'original report')
+
     def test_missing_rewrite_message_is_empty(self):
         del self.files['.codex/last_message.txt']
         _, _, message = agent.run_rewrite(

@@ -71,7 +71,7 @@ class TargetDeferralsTest(unittest.TestCase):
 
 
 class SafetyRescueTest(unittest.TestCase):
-    def run_attempts(self, results):
+    def run_attempts(self, results, targets=None):
         w = Mock()
         w.fuel = FuelCounter('test')
         code = Mock(unsafe_count=20)
@@ -101,7 +101,7 @@ class SafetyRescueTest(unittest.TestCase):
                 candidate = Mock(unsafe_count=current.unsafe_count - result)
                 candidate.node_id.return_value = f'candidate-{index}'
             return StepOutcome(candidate, plans, report,
-                f'crate::{index}', 'blocked', 1)
+                f'crate::{targets[index] if targets else index}', 'blocked', 1)
 
         w.do_safety_step_agent.side_effect = step
         with patch('crisp.__main__.get_fuel_limits',
@@ -128,7 +128,8 @@ class SafetyRescueTest(unittest.TestCase):
                     ['loop-model', 'loop-model', 'rescue-model'] * 2)
                 self.assertEqual(calls[2]['suppressed'], frozenset())
                 self.assertTrue({'crate::0', 'crate::1'} <= calls[3]['suppressed'])
-                self.assertIn('Review rejected the change', calls[2]['prompt_suffix'])
+                self.assertEqual(calls[2]['review_feedback']['crate::1'],
+                    'Review rejected the change')
 
     def test_accepted_neutral_rescue_reopens_targets(self):
         calls = self.run_attempts(['blocked', 0, 0, 'blocked'])
@@ -158,27 +159,37 @@ class SafetyRescueTest(unittest.TestCase):
         self.assertEqual(calls[10]['suppressed'], frozenset())
 
 
+    def test_reports_survive_other_rejections_reductions_and_target_refusal(self):
+        calls = self.run_attempts([
+            'rejected', 'rejected', 'blocked', 'blocked', 1,
+            'blocked', 1, 0, 'blocked'], targets=[0, 1, 2, 3, 4, 0, 5, 0, 1])
+        for i in (2, 5, 6, 7):
+            self.assertEqual(set(calls[i]['review_feedback']), {'crate::0', 'crate::1'})
+        self.assertEqual(set(calls[8]['review_feedback']), {'crate::1'})
+
+
 class ReviewFeedbackTest(unittest.TestCase):
-    def test_unrelated_completed_work_does_not_retire_feedback(self):
-        feedback = ('inflate_fast', 'keep the exported wrapper thin')
-        self.assertEqual(update_review_feedback(
-            feedback, 'inflate_table', report=None, completed=True), feedback)
+    def test_other_targets_keep_their_reports_after_rejection_or_acceptance(self):
+        feedback = {'inflate_fast': 'first report'}
+        feedback = update_review_feedback(feedback, 'inflate_table',
+            report='second report', completed=False)
+        self.assertEqual(feedback, {
+            'inflate_fast': 'first report', 'inflate_table': 'second report'})
+        self.assertEqual(update_review_feedback(feedback, 'unrelated',
+            report=None, completed=True), feedback)
+        self.assertEqual(update_review_feedback(feedback, 'inflate_table',
+            report=None, completed=True), {'inflate_fast': 'first report'})
 
-    def test_target_completion_retires_feedback(self):
-        feedback = ('inflate_fast', 'keep the exported wrapper thin')
-        self.assertIsNone(update_review_feedback(
-            feedback, 'inflate_fast', report=None, completed=True))
+    def test_latest_report_replaces_only_its_target(self):
+        feedback = {'inflate_fast': 'old report', 'inflate_table': 'keep this'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report='new report', completed=False),
+            {'inflate_fast': 'new report', 'inflate_table': 'keep this'})
 
-    def test_new_rejection_replaces_feedback_with_its_target(self):
-        feedback = ('inflate_fast', 'old report')
-        self.assertEqual(update_review_feedback(
-            feedback, 'inflate_table', report='new report', completed=False),
-            ('inflate_table', 'new report'))
-
-    def test_failed_pre_review_attempt_keeps_feedback(self):
-        feedback = ('inflate_fast', 'keep the exported wrapper thin')
-        self.assertEqual(update_review_feedback(
-            feedback, 'inflate_fast', report=None, completed=False), feedback)
+    def test_failed_or_refused_attempt_keeps_feedback(self):
+        feedback = {'inflate_fast': 'first report'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report=None, completed=False), feedback)
 
 
 class PersistentSafetyMemoryTest(unittest.TestCase):

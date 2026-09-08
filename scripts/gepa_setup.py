@@ -95,11 +95,14 @@ def project_setup_rerun(project_dir: Path, initial_setup_crisp_storage_backup_pa
 
 def project_backup_crisp_storage(project_dir: Path, initial_setup_crisp_storage_backup_path: Path):
     original_crisp_storage_dir = project_dir / 'crisp-storage'
-    original_paths = set(path.relative_to(original_crisp_storage_dir) for path in original_crisp_storage_dir.rglob("*"))
-    backup_paths = set(path.relative_to(initial_setup_crisp_storage_backup_path) for path in initial_setup_crisp_storage_backup_path.rglob("*"))
+    original_paths = set(path.relative_to(original_crisp_storage_dir) for path in original_crisp_storage_dir.rglob("*") if path.is_file())
+    backup_paths = set(path.relative_to(initial_setup_crisp_storage_backup_path) for path in initial_setup_crisp_storage_backup_path.rglob("*") if path.is_file())
     extra_original_relpaths = original_paths - backup_paths
-    for relpath in extra_original_relpaths:
-        (original_crisp_storage_dir / relpath).copy(initial_setup_crisp_storage_backup_path / relpath)
+    for extra_original_relpath in extra_original_relpaths:
+        extra_original_path = original_crisp_storage_dir / extra_original_relpath
+        new_backup_path = initial_setup_crisp_storage_backup_path / extra_original_relpath
+        new_backup_path.parent.mkdir(parents=True, exist_ok=True)
+        extra_original_path.copy(new_backup_path)
 
 
 def parse_args() -> argparse.Namespace:

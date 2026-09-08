@@ -133,15 +133,6 @@ class ResponseEvaluator:
         unsafe_removed = prior_unsafe_count - unsafe_count
         score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0)) #TODO ZeroDivError when prior_unsafe_count = 0
 
-        ### Save node if unsafe count is within certain thresholds
-        unsafe_count_rounded_1000 = unsafe_count // 1000
-        if unsafe_count_rounded_1000 < 6:
-            unsafe_node_name = f'unsafe_{unsafe_count_rounded_1000}k'
-            try:
-                _ = workflow.mvir.node(parse_node_id_arg(workflow.mvir, unsafe_node_name))
-            except ValueError:
-                workflow.mvir.set_tag(unsafe_node_name, n_output_code.node_id())
-
         ### Give feedback
         if unsafe_count == 0:
             feedback_components.append(f"The refactored Rust code has no unsafe entities remaining. All of the {prior_unsafe_count} unsafe entities in the original Rust code have been removed in the refactored Rust code. Good job!")
@@ -213,6 +204,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         self.evaluator = evaluator
         self.expected_formatted_blocks = expected_formatted_blocks
         self.csv_log_path = csv_log_path
+        self.least_unsafe_remaining = float('inf')
 
     def evaluate(
         self,
@@ -332,6 +324,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     n_c_code = n_c_code,
                     run_details = run_details
                 )
+
+                # Save output node if unsafe removed is best
+                if eval_result.unsafe_remaining < self.least_unsafe_remaining:
+                    task['workflow'].mvir.set_tag(f'unsafe_{eval_result.unsafe_remaining}', n_output_code.node_id())
+                    self.least_unsafe_remaining = eval_result.unsafe_remaining
 
             # Get everything required for EvaluationBatch
             outputs.append(

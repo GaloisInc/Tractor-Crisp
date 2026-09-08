@@ -108,19 +108,24 @@ def main(args: argparse.Namespace):
 
         initial_setup_backup_path = Path(__file__).resolve().parent.parent.parent / f"{args.dir}_gepaready_backup"
 
-        if args.setup == "initial":
-            assert not initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} already exists. Cannot do initial setup. Aborting."
-            dataset_setup_initial(
-                dataset_dir = dataset_dir,
-                initial_setup_backup_path = initial_setup_backup_path
-            )
+        match args.setup:
 
-        else:
-            assert initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
-            dataset_setup_rerun(
-                dataset_dir = dataset_dir,
-                initial_setup_backup_path = initial_setup_backup_path
-            )
+            case "initial":
+                assert not initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} already exists. Cannot do initial setup. Aborting."
+                dataset_setup_initial(
+                    dataset_dir = dataset_dir,
+                    initial_setup_backup_path = initial_setup_backup_path
+                )
+
+            case "rerun":
+                assert initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
+                dataset_setup_rerun(
+                    dataset_dir = dataset_dir,
+                    initial_setup_backup_path = initial_setup_backup_path
+                )
+
+            case _:
+                raise AssertionError("Unreachable")
 
     # Individual project
     else:
@@ -129,19 +134,24 @@ def main(args: argparse.Namespace):
 
         initial_setup_crisp_storage_backup_path = Path(__file__).resolve().parent.parent.parent / f"{args.dir}_crisp_storage_gepaready_backup"
 
-        if args.setup == "initial":
-            assert not initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} already exists. Cannot do initial setup. Aborting."
-            project_setup_initial(
-                project_dir = project_dir,
-                initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
-            )
+        match args.setup:
 
-        else:
-            assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
-            project_setup_rerun(
-                project_dir = project_dir,
-                initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
-            )
+            case "initial":
+                assert not initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} already exists. Cannot do initial setup. Aborting."
+                project_setup_initial(
+                    project_dir = project_dir,
+                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
+                )
+
+            case "rerun":
+                assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
+                project_setup_rerun(
+                    project_dir = project_dir,
+                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
+                )
+
+            case _:
+                raise AssertionError("Unreachable")
 
 
 if __name__ == "__main__":

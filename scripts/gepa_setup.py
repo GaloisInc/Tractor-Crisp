@@ -43,15 +43,15 @@ from tqdm import tqdm
 
 
 def dataset_setup_initial(dataset_dir: Path, initial_setup_backup_path: Path):
-    projects = [p for p in dataset_dir.iterdir() if p.is_dir()]
-    for project in tqdm(projects):
+    project_dirs = [p for p in dataset_dir.iterdir() if p.is_dir()]
+    for project_dir in tqdm(project_dirs):
         subprocess.run(
-            ["python", "scripts/test_eval.py", project],
+            ["python", "scripts/test_eval.py", project_dir],
             env = {**os.environ, "LLM_SAFETY_TRIES": "0"},
             cwd = str(Path(__file__).resolve().parent.parent), # run from repo root
         )
         subprocess.run(
-            ["python", "scripts/save_plans.py", project],
+            ["python", "scripts/save_plans.py", project_dir],
             cwd = str(Path(__file__).resolve().parent.parent), # run from repo root
         )
     shutil.copytree(dataset_dir, initial_setup_backup_path)

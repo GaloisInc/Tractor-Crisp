@@ -130,24 +130,15 @@ def main(args: argparse.Namespace):
 
             case "initial":
                 assert not initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} already exists. Cannot do initial setup. Aborting."
-                dataset_setup_initial(
-                    dataset_dir = dataset_dir,
-                    initial_setup_backup_path = initial_setup_backup_path
-                )
+                dataset_setup_initial(dataset_dir=dataset_dir, initial_setup_backup_path=initial_setup_backup_path)
 
             case "rerun":
                 assert initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
-                dataset_setup_rerun(
-                    dataset_dir = dataset_dir,
-                    initial_setup_backup_path = initial_setup_backup_path
-                )
+                dataset_setup_rerun(dataset_dir=dataset_dir, initial_setup_backup_path=initial_setup_backup_path)
 
             case "backup":
                 assert initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} doesn't exist. Cannot do backup. Aborting."
-                dataset_backup_crisp_storage(
-                    dataset_dir = dataset_dir,
-                    initial_setup_backup_path = initial_setup_backup_path
-                )
+                dataset_backup_crisp_storage(dataset_dir=dataset_dir, initial_setup_backup_path=initial_setup_backup_path)
 
             case _:
                 raise AssertionError("Unreachable")
@@ -163,24 +154,15 @@ def main(args: argparse.Namespace):
 
             case "initial":
                 assert not initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} already exists. Cannot do initial setup. Aborting."
-                project_setup_initial(
-                    project_dir = project_dir,
-                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
-                )
+                project_setup_initial(project_dir=project_dir, initial_setup_crisp_storage_backup_path=initial_setup_crisp_storage_backup_path)
 
             case "rerun":
                 assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
-                project_setup_rerun(
-                    project_dir = project_dir,
-                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
-                )
+                project_setup_rerun(project_dir=project_dir, initial_setup_crisp_storage_backup_path=initial_setup_crisp_storage_backup_path)
 
             case "backup":
                 assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do backup. Aborting."
-                project_backup_crisp_storage(
-                    project_dir = project_dir,
-                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
-                )
+                project_backup_crisp_storage(project_dir=project_dir, initial_setup_crisp_storage_backup_path=initial_setup_crisp_storage_backup_path)
 
             case _:
                 raise AssertionError("Unreachable")

@@ -61,7 +61,8 @@ class TaskOutput:
 class EvaluationResult:
     score: float
     feedback: str
-    safe: bool | None = None
+    unsafe_removed: int
+    unsafe_remaining: int | None = None
     passtests: bool | None = None
 
 
@@ -89,28 +90,31 @@ class ResponseEvaluator:
     ) -> EvaluationResult:
         score = GEPA_MIN_SCORE
 
+        # Get prior unsafe count as baseline
+        prior_unsafe_count = workflow.count_unsafe2(n_input_code)
+
         # Check if anything changed from input to output; if not, the agent failed
         if n_output_code.node_id() == n_input_code.node_id():
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct."
+                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct.",
+                unsafe_removed = 0,
+                unsafe_remaining = prior_unsafe_count
             )
 
         # Check if all Codex run details make sense; if not, the agent failed
         if any(not agent_run_details.valid for agent_run_details in run_details.values()):
             return EvaluationResult(
                 score = GEPA_MIN_SCORE,
-                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct."
+                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct.",
+                unsafe_removed = 0,
+                unsafe_remaining = prior_unsafe_count
             )
 
         feedback_components = []
-        safe = False
         passtests = False
 
         # Check for un-safety
-
-        ### Get prior unsafe count as baseline
-        prior_unsafe_count = workflow.count_unsafe2(n_input_code)
 
         ### Get current unsafe count and sub-categories
         unsafe_count = 0
@@ -140,7 +144,6 @@ class ResponseEvaluator:
 
         ### Give feedback
         if unsafe_count == 0:
-            safe = True
             feedback_components.append(f"The refactored Rust code has no unsafe entities remaining. All of the {prior_unsafe_count} unsafe entities in the original Rust code have been removed in the refactored Rust code. Good job!")
         else:
             feedback_components.append(f"The refactored Rust code has a total of {unsafe_count} unsafe entities. The original Rust code had {prior_unsafe_count} unsafe entities, so the refactor has {'added' if unsafe_removed < 0 else 'removed'} {unsafe_removed} unsafe entities. Keep trying to achieve the goal of making the Rust code safe by removing as many unsafe entities as possible, while maintaining functional correctness.")
@@ -174,7 +177,8 @@ class ResponseEvaluator:
         return EvaluationResult(
             score = score,
             feedback = feedback,
-            safe = safe,
+            unsafe_removed = unsafe_removed,
+            unsafe_remaining = unsafe_count,
             passtests = passtests
         )
 
@@ -193,7 +197,8 @@ def bad_prompt_evaluator(
     feedback = '\n\n'.join(feedback_components)
     return EvaluationResult(
         score = score,
-        feedback = feedback
+        feedback = feedback,
+        unsafe_removed = 0
     )
 
 
@@ -537,8 +542,9 @@ def eval_gepa_prompt(
             csvwriter.writerow(
                 [
                     'project_folder',
-                    'score', #TODO unsafe remaining
-                    'safe',
+                    'score',
+                    'unsafe_removed',
+                    'unsafe_remaining',
                     'passtests'
                 ] + [
                     f'{prompt_type}_{f.name}' for prompt_type in prompt_types for f in fields(AgentRunDetails)
@@ -599,7 +605,8 @@ def eval_gepa_prompt(
                 [
                     project_folder.name,
                     eval_result.score,
-                    eval_result.safe,
+                    eval_result.unsafe_removed,
+                    eval_result.unsafe_remaining,
                     eval_result.passtests,
                 ] + [
                     getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.

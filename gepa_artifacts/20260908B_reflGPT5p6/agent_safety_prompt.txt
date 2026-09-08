@@ -1,0 +1,45 @@
+Continue the incremental Rust safety refactor described in `SAFETY_PLAN.md`. Read that file first and treat the current repository and tests as the source of truth.
+
+Target goal:
+{target_goal}
+
+After-refactoring requirement:
+{after_refactoring_instruction}
+
+Make a focused, high-value iteration that removes as many unsafe entities as practical without changing observable behavior, C ABI compatibility, exported symbol names, data layout, error codes, null-pointer conventions, checksum/compression results, or supported platform behavior. A historical checkpoint reduced the project from 6604 to 6342 unsafe entities while passing functionality tests; verify the current state rather than assuming those counts are still exact.
+
+Use this prioritization strategy:
+
+1. First convert functions marked `unsafe` that only perform arithmetic, indexing, or other safe operations into ordinary safe functions.
+2. Convert immutable `static mut` lookup tables and constants into immutable `static` or `const` data where ABI permits.
+3. For buffer-processing APIs, create an ordinary safe implementation using slices or references, and keep raw-pointer conversion in a small `unsafe extern "C"` ABI shim.
+4. Prefer a straightforward safe algorithm over a complicated raw-pointer optimization when it preserves required behavior and acceptable performance.
+5. Only tackle large stateful pointer-heavy subsystems when the safety boundary and invariants are clear enough to complete and validate a coherent slice of work.
+
+Keep unsafe code concentrated at genuine FFI or ownership boundaries. An ABI wrapper may remain unsafe because C callers provide raw pointers, but the implementation it delegates to should be safe whenever possible. Check null pointers before constructing slices—even a zero-length slice must not be constructed from a null pointer. Preserve APIs where a null buffer has special sentinel or initialization behavior. Document non-obvious safety assumptions at the boundary.
+
+Do not expose a safe Rust function that accepts unchecked raw pointers. Do not manufacture references with lifetimes unsupported by the underlying storage. Do not casually change the type, representation, mutability, or layout of exported globals or C-compatible structures. Be careful with platform C types such as `c_char`; byte-array substitutions must not alter ABI or platform semantics.
+
+Avoid counterproductive changes:
+
+- Do not hide old unsafe implementations in comments, disabled blocks, or duplicated “temporary comparison” code. Delete dead code; version control is the comparison mechanism.
+- Do not perform broad mechanical rewrites that merely move unsafe operations without reducing or clarifying them.
+- Do not add raw-pointer helper parameters, raw-pointer fields, integer-to-pointer casts, or new unsafe implementation functions to bypass the checker.
+- Do not spend the iteration reformatting or reproducing large unchanged generated sections.
+- Do not weaken tests or alter behavior solely to reduce the unsafe count.
+
+Validate the focused change with the most relevant existing tests, then run the project’s normal build/test commands when feasible. Also run:
+
+cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+
+This checker rejects newly introduced unsafe code in implementation functions and newly added unsafe-adjacent constructs, including integer-to-pointer casts and raw-pointer arguments or fields. Resolve any new findings rather than suppressing them.
+
+Before finishing, update `SAFETY_PLAN.md` concisely with:
+
+- what was actually changed this iteration;
+- what is now complete;
+- validation commands and outcomes;
+- what remains and the next promising category of work;
+- pitfalls, failed approaches, or ABI/semantic constraints future iterations must remember.
+
+Even if blocked, update the plan with the verified blocker and avoid claiming incomplete work as complete. Keep the final response brief: summarize the safety reduction, files/categories changed, and validation results without pasting large code listings.

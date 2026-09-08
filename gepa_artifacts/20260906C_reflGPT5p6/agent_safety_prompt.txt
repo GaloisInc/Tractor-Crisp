@@ -1,0 +1,122 @@
+Continue the incremental Rust safety refactor documented in `SAFETY_PLAN.md`.
+
+{target_goal}
+
+{after_refactoring_instruction}
+
+Perform one focused, high-yield iteration. Do not attempt a broad rewrite or emit unchanged source files. Start by inspecting:
+
+- `SAFETY_PLAN.md`;
+- the current working-tree diff;
+- the latest unsafe-checker output and unsafe-entity count;
+- relevant definitions, direct Rust callers, `extern` declarations, exports, tests, and build configuration.
+
+Choose a coherent change set that removes many unsafe entities with low behavioral and ABI risk. Prefer changes where a small declaration or implementation change also eliminates many unsafe accesses.
+
+## Preferred work
+
+Prioritize, in roughly this order:
+
+1. Read-only data declared `static mut`
+   - Search for all writes, mutable references, exported consumers, and initialization dependencies.
+   - If data is never modified, convert it to immutable `static` or `const`.
+   - This is especially valuable for generated lookup tables because it can eliminate unsafe use at every indexing site without rewriting the table.
+   - Preserve symbol visibility and storage identity when callers return or retain a pointer to the table.
+   - Do not convert externally writable state or tables whose mutation is part of the ABI.
+
+2. Pure arithmetic and bit-manipulation helpers
+   - Convert inherited `unsafe extern "C"` implementation helpers to ordinary safe Rust when they neither cross an ABI boundary nor manipulate unchecked memory.
+   - Preserve fixed-width masks, shifts, signedness, and intentional wrapping.
+   - Do not replace C unsigned wrapping with debug-panicking arithmetic.
+
+3. Pointer loops with clear bounded ownership
+   - Introduce a private safe core using slices, arrays, indexing, chunks, or iterators.
+   - Keep raw-pointer validation and conversion only in the ABI wrapper.
+   - Avoid speculative conversions of stateful compression/decompression loops whose aliasing, allocation, or callback invariants are not locally provable.
+
+4. Redundant translated-C wrapper layers
+   - Where safe, collapse a raw-pointer implementation plus a forwarding export into one thin ABI wrapper and one differently named safe core.
+   - First confirm all direct and cross-module callers. Translated modules often call through an `extern` declaration that resolves by linker symbol rather than through a Rust module path.
+   - Retain exactly one definition of every required external symbol.
+
+## ABI and safety requirements
+
+Keep exported symbol names, calling conventions, argument and return types, integer widths, and all `#[repr(C)]` layouts ABI-compatible. An `extern` declaration is not a symbol definition.
+
+An exported function receiving foreign pointers must remain an `unsafe extern "C"` boundary. Do not expose a safe function that accepts unchecked pointers or requires caller-maintained allocation, lifetime, validity, or aliasing invariants. Safe implementation functions should accept references, slices, arrays, enums, or `Option` only after those invariants have been established.
+
+Before constructing a slice from a foreign pointer:
+
+- handle the API’s null sentinel first;
+- never pass null to `from_raw_parts`, including for zero length;
+- use `&[]` directly for an accepted empty input;
+- reject lengths that exceed Rust’s representable slice bounds, including the `isize::MAX` byte-size constraint;
+- account for element size and alignment where the element type is not a byte;
+- keep the unavoidable conversion in a small, documented unsafe block.
+
+Do not claim that null and length checks prove foreign allocation validity. That remains part of the unsafe ABI contract.
+
+Do not introduce raw-pointer fields, pointer-valued implementation helpers, integer-to-pointer casts, fabricated lifetimes, or checker exemptions merely to reduce the reported count. Do not use pointer subtraction or pointer ordering unless both pointers are known to be within the same live allocation. Prefer tracked lengths and indices.
+
+Preserve all externally observable behavior, including:
+
+- null-pointer sentinels and their precedence over other processing;
+- error codes;
+- output-length and input-consumption updates;
+- partial progress after buffer exhaustion or errors;
+- callback order and arguments;
+- ownership and allocator/free pairing;
+- state transitions;
+- stable pointers returned to static tables;
+- overflow and truncation behavior.
+
+## Codebase-specific compatibility traps
+
+This is a translated zlib implementation, so preserve these established semantics:
+
+- Adler-32 uses modulus 65521 and the 5552-byte reduction bound. The reduction schedule must keep 32-bit `unsigned long` accumulators safe while also working when `unsigned long` is 64 bits.
+- Adler-32’s null-buffer sentinel is `1`; CRC-32’s null-buffer sentinel is `0`, including null with zero length.
+- CRC-32 values are constrained to 32 bits even on platforms where C `unsigned long` is wider; preserve the `0xffffffff` masking in checksum and combination operations.
+- Negative checksum-combination lengths retain their existing sentinel results.
+- Known reference vectors include Adler-32 of `Wikipedia` equal to `0x11e60398` and CRC-32 of `123456789` equal to `0xcbf43926`.
+- Combination helpers should compose checksums across splits, including empty input and boundaries near unrolled-loop or block sizes.
+- Read-only checksum and coding tables are promising immutable-static candidates, but exported tables must retain stable storage and their required external symbol.
+- Compression and decompression entry points have subtle null-output, zero-capacity, partial-progress, and stream cleanup behavior. Do not refactor those boundaries unless the complete behavior can be preserved and tested.
+- Some generated code contains comparisons or pointer differences that are only valid because of internal allocation relationships. Do not generalize those operations to arbitrary foreign pointers.
+- C function-pointer fields and `#[repr(C)]` raw-pointer state are genuine ABI structures; leave them alone unless a layout-compatible design is clearly proven.
+
+## Tests
+
+Add compact tests only for changed behavior. Prefer:
+
+- safe-core versus ABI-wrapper equivalence on valid inputs;
+- empty non-null input;
+- documented null sentinels;
+- known vectors;
+- block and chunk boundaries;
+- checksum split/combine properties;
+- overflow or negative-length sentinels;
+- stable table contents or pointer identity where relevant.
+
+Do not invoke wrappers with fabricated invalid non-null pointers. Tests cannot make such pointers valid merely because a wrapper is expected to reject a length.
+
+## Validation workflow
+
+After each coherent edit, run the smallest relevant build or test target. Before finishing, run the project’s normal functionality tests and:
+
+```sh
+cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+```
+
+Treat checker failures as design feedback. Do not add allowances or disguise unsafe operations. Compare the final unsafe-entity count with the baseline and confirm that functionality still passes. If a candidate requires unverifiable lifetimes, questionable aliasing, large generated rewrites, ABI changes, or extensive unrelated edits, record it as a dead end and select a safer candidate.
+
+Update `SAFETY_PLAN.md` as a concise working scratchpad with:
+
+- the exact category changed this iteration;
+- what is now complete;
+- unsafe-count reduction, if available;
+- validation commands and outcomes;
+- remaining high-value categories;
+- behavioral traps and rejected approaches.
+
+Keep the final response brief: summarize the changes, safety impact, unsafe-count change, and validation results only.

@@ -127,7 +127,7 @@ class ResponseEvaluator:
 
         ### Get unsafe removed and compute score
         unsafe_removed = prior_unsafe_count - unsafe_count
-        score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0))
+        score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0)) #TODO ZeroDivError when prior_unsafe_count = 0
 
         ### Save node if unsafe count is within certain thresholds
         unsafe_count_rounded_1000 = unsafe_count // 1000
@@ -401,6 +401,7 @@ def run_gepa(
 
     Inputs:
     - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
+    - seed_prompt_paths: Paths to the seed prompts to use.
     - reflection_lm: The LM outside the loop for GEPA.
     - trainset_frac: If `is_individual_project` is False, this is the fraction of the data to use for training, with the remaining used for validation. If `is_individual_project` is True, this is ignored.
     - max_metric_calls: Required by GEPA.
@@ -477,20 +478,24 @@ def run_gepa(
 
 def eval_gepa_prompt(
     dataset_path: Path,
+    is_individual_project: bool,
     optimized_prompt_folder: Path,
     optimized_prompt_paths: dict[str, Path],
-    output_csv_path: Path | None = None
+    output_csv_path: Path | None = None,
+    response_evaluator: ResponseEvaluator | None = None
 ):
     """
     Use the GEPA evaluation function(s) to check the performance of any prompt.
 
     Inputs:
-    - dataset_path: Path to a corpus folder, e.g. .../B01_organic.
-    - optimized_prompt_folder: Path to a folder containing the prompt to be used for evaluating inside `prompt.txt`.
+    - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
+    - optimized_prompt_folder: Path to a folder where the results will be stored.
+    - optimized_prompt_paths: Paths to the prompts which will be evaluated.
     - model: The LM to run the prompt on.
     - output_csv_path: Save results to this CSV.
-        - If None, set to `<optimized_prompt_folder> / results_<dataset_name>_<model>.csv`
+        - If None, set to `<optimized_prompt_folder> / results_<dataset_name>.csv`
         - File will be appended to if it already exists
+    - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
     """
 
     # Get prompt types
@@ -502,10 +507,15 @@ def eval_gepa_prompt(
         optimized_prompts[prompt_type] = optimized_prompt_paths[prompt_type].read_text()
 
     # Get project folders
-    project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder, plans_required=True))
+    if not is_individual_project:
+        project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder, plans_required=True))
+    else:
+        assert is_project_gepaready(dataset_path, plans_required=True), f"Project at {dataset_path} is not GEPA-ready."
+        project_folders = [dataset_path]
 
     # Load response evaluator
-    response_evaluator = ResponseEvaluator()
+    if response_evaluator is None:
+        response_evaluator = ResponseEvaluator()
 
     # If it exists, read output CSV and get done files
     if output_csv_path is None:
@@ -527,7 +537,7 @@ def eval_gepa_prompt(
             csvwriter.writerow(
                 [
                     'project_folder',
-                    'score',
+                    'score', #TODO unsafe remaining
                     'safe',
                     'passtests'
                 ] + [

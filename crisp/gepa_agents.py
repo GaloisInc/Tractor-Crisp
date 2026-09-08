@@ -8,7 +8,6 @@ import csv
 from dataclasses import dataclass, fields
 import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
-import math
 import os
 import pandas as pd
 from pathlib import Path
@@ -131,7 +130,10 @@ class ResponseEvaluator:
 
         ### Get unsafe removed and compute score
         unsafe_removed = prior_unsafe_count - unsafe_count
-        score = self.score_safe / math.log(1 + prior_unsafe_count) * math.log(1 + max(unsafe_removed, 0)) #TODO ZeroDivError when prior_unsafe_count = 0
+        if prior_unsafe_count == 0:
+            score += (self.score_safe if unsafe_removed == 0 else 0)
+        else:
+            score += self.score_safe / prior_unsafe_count * unsafe_removed
 
         ### Give feedback
         if unsafe_count == 0:
@@ -163,7 +165,7 @@ class ResponseEvaluator:
         feedback_components.append(f"The refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
 
         # Return final results
-        score = max(score, GEPA_MIN_SCORE)
+        score = min(max(score, GEPA_MIN_SCORE), GEPA_MAX_SCORE)
         feedback = '\n\n'.join(feedback_components)
         return EvaluationResult(
             score = score,

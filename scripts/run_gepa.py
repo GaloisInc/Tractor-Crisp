@@ -7,12 +7,14 @@ from crisp import gepa_llm, gepa_agents, gepa_common
 os.environ['OPENAI_API_KEY'] = os.getenv('CRISP_API_KEY') # required for GEPA
 
 response_evaluator_test_corpus = gepa_agents.ResponseEvaluator(
-    score_safe = gepa_common.GEPA_MAX_SCORE / 2,
-    score_passtests = gepa_common.GEPA_MAX_SCORE / 2
+    score_safe = 0.5 * gepa_common.GEPA_MAX_SCORE,
+    score_passtests = 0.5 * gepa_common.GEPA_MAX_SCORE
 )
 response_evaluator_zlib = gepa_agents.ResponseEvaluator(
-    score_safe = 2/3 * gepa_common.GEPA_MAX_SCORE,
-    score_passtests = 1/3 * gepa_common.GEPA_MAX_SCORE
+    score_safe = 1.0 * gepa_common.GEPA_MAX_SCORE,
+    score_passtests = 0.0 * gepa_common.GEPA_MAX_SCORE,
+    score_penalty_per_output_token = 0.,
+    score_penalty_per_call_duration_sec = 0.
 )
 
 
@@ -82,4 +84,6 @@ if __name__ == '__main__':
     # evaluate_gepa_llm()
 
     # run_gepa_agents()
-    evaluate_gepa_agents()
+    # evaluate_gepa_agents()
+
+    pass

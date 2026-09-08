@@ -1,0 +1,76 @@
+Continue the iterative Rust safety refactor documented in `SAFETY_PLAN.md`.
+
+{target_goal}
+
+{after_refactoring_instruction}
+
+This project is a C-to-Rust translation of zlib with a public C ABI and many generated-looking modules. The historical baseline was 6,604 unsafe entities; a prior checksum refactor reduced that to 6,524 while functionality tests still passed. Treat the current tree and `SAFETY_PLAN.md` as authoritative, but measure the checker count before and after this iteration and aim for a meaningful reduction.
+
+Make one coherent, high-confidence change set. Prefer a batch of closely related, inexpensive reductions over one elaborate pointer-heavy rewrite. Do not rewrite or print entire generated files.
+
+Before editing:
+1. Read `SAFETY_PLAN.md`.
+2. Inspect `git status`, the current diff, crate layout, exports, internal `extern "C"` declarations, call sites, and relevant tests.
+3. Run a practical baseline:
+   - formatting check;
+   - relevant build/tests;
+   - `cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml`.
+4. Record pre-existing failures and the initial unsafe-entity count so they are not attributed to this change.
+
+Target selection, in priority order:
+1. Remove `unsafe` from pointer-free arithmetic, bit manipulation, bounds calculations, state-independent helpers, and scalar-only C ABI entry points.
+   - `extern "C"` does not itself require an `unsafe fn`.
+   - A wrapper taking only integers and calling safe code should normally be a safe `extern "C" fn`.
+2. Convert genuinely read-only `static mut` lookup data to `const` or immutable `static`.
+   - Prefer immutable `static` when callers require one stable address.
+   - Prefer `const` only when object identity/address is irrelevant.
+   - Do not change an externally writable data symbol or silently alter its linkage.
+   - Check all `extern` declarations of exported tables and update mutability consistently without changing the symbol name or layout.
+   - Do not add an `unsafe impl Sync` merely to force a pointer-containing static to compile. Leave such a value for a later design if safe immutability is not straightforward.
+3. Move pointer-free implementation logic into ordinary safe Rust functions.
+4. If a bounded buffer algorithm is selected, implement a safe core using slices, indexing, iterators, or chunks, with only a thin raw-pointer ABI wrapper.
+
+Avoid complex stream-state, allocator, callback, and codec pointer rewrites unless `SAFETY_PLAN.md` identifies one as an already prepared next step. Those areas contain interdependent C layouts, function pointers, raw allocation state, and internal declarations that often resolve directly to exported symbols.
+
+ABI and API constraints:
+- Preserve every exported symbol name, C signature, calling convention, linkage, integer width, `repr(C)` layout, and function-pointer type.
+- Internal `extern "C"` declarations may bind directly to an exported Rust wrapper. Search callers before renaming or changing a Rust-visible signature.
+- Never define the same exported symbol twice. When a safe Rust implementation uses the logical API name, give the ABI wrapper a distinct Rust identifier and use `#[export_name = "..."]`.
+- Do not assume `pub` means a safe Rust API is appropriate. A public function accepting raw pointers must remain unsafe unless its body cannot rely on pointer validity, aliasing, initialization, or lifetime invariants.
+- Keep unavoidable raw-pointer operations at the ABI boundary and add a concise `// SAFETY:` justification to every new or modified unsafe block.
+- Do not create a new raw-pointer helper simply to relocate unsafe code; new implementation helpers must use genuinely safe parameter types.
+
+Behavioral constraints:
+- Preserve null-pointer sentinel and initialization behavior exactly, including the order in which special cases are evaluated.
+- Preserve whether null is accepted with zero length and whether a non-null zero-length pointer is accepted.
+- Never call `slice::from_raw_parts` or `slice::from_raw_parts_mut` with null, including for zero length.
+- Before constructing a slice, reject lengths exceeding `isize::MAX` unless a stronger invariant is proven.
+- For an oversized length, use the API’s established invalid-argument result. Do not map it to an unrelated null-buffer sentinel merely because both avoid slice construction.
+- Preserve wrapping, truncation, modulo timing, checksum chunking, integer promotion, state transitions, output accounting, and error values. Reordering reductions or replacing wrapping arithmetic can change translated C behavior.
+- Ensure safe cores cannot panic for inputs admitted by their safe signatures.
+- Do not “fix” apparent translated-C bugs or undefined behavior as part of a safety refactor unless compatibility tests and the plan explicitly authorize it.
+
+Validation:
+- Add focused tests when they cheaply protect changed behavior, especially scalar edge cases, standard checksum vectors, incremental/combined calculations, table contents, null handling, zero lengths, and chunk boundaries.
+- Run the relevant formatting, build, and functionality tests.
+- Run:
+  `cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml`
+- Compare its before/after unsafe-entity count and inspect all newly reported unsafe or unsafe-adjacent constructs. Integer-to-pointer casts, raw-pointer parameters or fields, new unsafe blocks, and new mutable statics are regressions unless required at an existing ABI boundary.
+- Where practical, inspect produced symbols to confirm that wrappers and data exports remain unique and correctly named.
+- Review the final diff for accidental whole-file formatting, symbol duplication, ABI drift, changed null semantics, table identity changes, and unrelated edits.
+- If a command cannot run, report the exact command and reason; do not claim it passed.
+
+Before finishing, update `SAFETY_PLAN.md` as a short working scratchpad with:
+- the coherent category changed this iteration;
+- the before/after unsafe count and reduction;
+- completed items;
+- validation commands and results;
+- ABI or behavior pitfalls discovered;
+- remaining work and the best next general candidate category.
+
+Final response only:
+- concise change summary;
+- unsafe-entity reduction;
+- validation results;
+- remaining caveats or blocked checks.
+Do not include full files or large code excerpts.

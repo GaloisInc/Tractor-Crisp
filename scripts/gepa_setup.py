@@ -62,6 +62,15 @@ def dataset_setup_rerun(dataset_dir: Path, initial_setup_backup_path: Path):
     shutil.copytree(initial_setup_backup_path, dataset_dir)
 
 
+def dataset_backup_crisp_storage(dataset_dir: Path, initial_setup_backup_path: Path):
+    project_dirs = [p for p in dataset_dir.iterdir() if p.is_dir()]
+    for project_dir in project_dirs:
+        project_backup_crisp_storage(
+            project_dir = project_dir,
+            initial_setup_crisp_storage_backup_path = initial_setup_backup_path / project_dir.name / 'crisp-storage'
+        )
+
+
 def project_setup_initial(project_dir: Path, initial_setup_crisp_storage_backup_path: Path):
     subprocess.run(
         ["crisp", "commit", "-t", "c_code", "."],
@@ -84,12 +93,21 @@ def project_setup_rerun(project_dir: Path, initial_setup_crisp_storage_backup_pa
     shutil.copytree(initial_setup_crisp_storage_backup_path, project_dir / 'crisp-storage')
 
 
+def project_backup_crisp_storage(project_dir: Path, initial_setup_crisp_storage_backup_path: Path):
+    original_crisp_storage_dir = project_dir / 'crisp-storage'
+    original_paths = set(path.relative_to(original_crisp_storage_dir) for path in original_crisp_storage_dir.rglob("*"))
+    backup_paths = set(path.relative_to(initial_setup_crisp_storage_backup_path) for path in initial_setup_crisp_storage_backup_path.rglob("*"))
+    extra_original_relpaths = original_paths - backup_paths
+    for relpath in extra_original_relpaths:
+        (original_crisp_storage_dir / relpath).copy(initial_setup_crisp_storage_backup_path / relpath)
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("dir")
     ap.add_argument(
         "setup",
-        choices = ["initial", "rerun"]
+        choices = ["initial", "rerun", "backup"]
     )
     return ap.parse_args()
 
@@ -124,6 +142,13 @@ def main(args: argparse.Namespace):
                     initial_setup_backup_path = initial_setup_backup_path
                 )
 
+            case "backup":
+                assert initial_setup_backup_path.is_dir(), f"Backup path {initial_setup_backup_path} doesn't exist. Cannot do backup. Aborting."
+                dataset_backup_crisp_storage(
+                    dataset_dir = dataset_dir,
+                    initial_setup_backup_path = initial_setup_backup_path
+                )
+
             case _:
                 raise AssertionError("Unreachable")
 
@@ -146,6 +171,13 @@ def main(args: argparse.Namespace):
             case "rerun":
                 assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do rerun setup. Aborting."
                 project_setup_rerun(
+                    project_dir = project_dir,
+                    initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
+                )
+
+            case "backup":
+                assert initial_setup_crisp_storage_backup_path.is_dir(), f"Backup path {initial_setup_crisp_storage_backup_path} doesn't exist. Cannot do backup. Aborting."
+                project_backup_crisp_storage(
                     project_dir = project_dir,
                     initial_setup_crisp_storage_backup_path = initial_setup_crisp_storage_backup_path
                 )

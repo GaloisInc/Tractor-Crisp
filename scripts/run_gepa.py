@@ -74,7 +74,8 @@ def evaluate_gepa_agents():
             optimized_prompt_paths = {
                 'agent_safety_prompt': Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/agent_safety_prompt.txt'
             },
-            response_evaluator = response_evaluator_zlib
+            response_evaluator = response_evaluator_zlib,
+            attempts = 10
         )
 
 
@@ -84,6 +85,6 @@ if __name__ == '__main__':
     # evaluate_gepa_llm()
 
     # run_gepa_agents()
-    # evaluate_gepa_agents()
+    evaluate_gepa_agents()
 
-    pass
+    # pass

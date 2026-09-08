@@ -486,7 +486,8 @@ def eval_gepa_prompt(
     optimized_prompt_folder: Path,
     optimized_prompt_paths: dict[str, Path],
     output_csv_path: Path | None = None,
-    response_evaluator: ResponseEvaluator | None = None
+    response_evaluator: ResponseEvaluator | None = None,
+    attempts: int = 1
 ):
     """
     Use the GEPA evaluation function(s) to check the performance of any prompt.
@@ -500,6 +501,7 @@ def eval_gepa_prompt(
         - If None, set to `<optimized_prompt_folder> / results_<dataset_name>.csv`
         - File will be appended to if it already exists
     - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
+    - attempts: For each project, run the GEPA prompt this many times. For each attempt, use the output of the previous attempt as input. Each attempt's result gets saved individually.
     """
 
     # Get prompt types
@@ -560,54 +562,62 @@ def eval_gepa_prompt(
             # Create workflow
             workflow = get_workflow_for_project(project_folder)
 
-            # Get relevant nodes
-            n_input_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current'))
+            # Copy the 'current' node over to 'attempts', so that it can be used for multiple attempts
+            n_current = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current'))
+            workflow.mvir.set_tag('attempts', n_current.node_id())
+
+            # Get other relevant nodes
             n_c_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))
             n_plans = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'plans'))
 
             # Run agent
-            try:
-                n_output_code, _ = workflow.agent_safety(
-                    n_code = n_input_code,
-                    n_test_code = n_c_code,
-                    n_plans = n_plans,
-                    agent_safety_prompt = optimized_prompts['agent_safety_prompt']
-                )
-                n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
-                run_details = {
-                    'agent_safety_prompt': AgentRunDetails(
-                        call_duration_sec = n_codex.call_duration_sec,
-                        output_tokens = n_codex.output_tokens
+            for attempt in range(1,attempts+1):
+                n_input_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'attempts'))
+
+                try:
+                    n_output_code, _ = workflow.agent_safety(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code,
+                        n_plans = n_plans,
+                        agent_safety_prompt = optimized_prompts['agent_safety_prompt']
                     )
-                }
-            except CrispError as e:
-                print(f'Safety attempt failed: {e}')
-                traceback.print_exc()
+                    n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails(
+                            call_duration_sec = n_codex.call_duration_sec,
+                            output_tokens = n_codex.output_tokens
+                        )
+                    }
+                    workflow.mvir.set_tag('attempts', n_output_code.node_id())
 
-                # Assign dummy values to required variables
-                n_output_code = TreeNode.new(workflow.mvir, files={})
-                run_details = {
-                    'agent_safety_prompt': AgentRunDetails()
-                }
+                except CrispError as e:
+                    print(f'Safety attempt failed: {e}')
+                    traceback.print_exc()
 
-            # Get evaluation result
-            eval_result = response_evaluator(
-                workflow = workflow,
-                n_output_code = n_output_code,
-                n_input_code = n_input_code,
-                n_c_code = n_c_code,
-                run_details = run_details
-            )
+                    # Assign dummy values to required variables
+                    n_output_code = TreeNode.new(workflow.mvir, files={})
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails()
+                    }
 
-            # Write results
-            csvwriter.writerow(
-                [
-                    project_folder.name,
-                    eval_result.score,
-                    eval_result.unsafe_removed,
-                    eval_result.unsafe_remaining,
-                    eval_result.passtests,
-                ] + [
-                    getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.
-                ]
-            )
+                # Get evaluation result
+                eval_result = response_evaluator(
+                    workflow = workflow,
+                    n_output_code = n_output_code,
+                    n_input_code = n_input_code,
+                    n_c_code = n_c_code,
+                    run_details = run_details
+                )
+
+                # Write results
+                csvwriter.writerow(
+                    [
+                        f"{project_folder.name}_attempt{attempt}",
+                        eval_result.score,
+                        eval_result.unsafe_removed,
+                        eval_result.unsafe_remaining,
+                        eval_result.passtests,
+                    ] + [
+                        getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.
+                    ]
+                )

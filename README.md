@@ -227,50 +227,6 @@ Note: The GEPA optimization process may crash with `OSError: Too many open files
 ulimit -Sn $(ulimit -Hn)
 ```
 
-## Running GEPA for individual prompt optimization of LLMs
-Run as follows. For an example, see `scripts/gepa_run.py::run_gepa_llm()`.
-```python
-from crisp.gepa_llm import run_gepa
-
-run_gepa(
-
-    # dataset_path is the dataset folder on which GEPA will run its optimization
-    dataset_path = <full/path/to/dataset/>,
-
-    # seed_prompt is used to start the optimization
-    # for best results, provide the entire prompt without any {...} blocks to be filled in
-    seed_prompt_path = <full/path/to/seed_prompt.txt>,
-
-    # task_lm is the LLM inside the loop which runs the prompts on the task
-    # (in this case, unsafe Rust to safe Rust conversion)
-    task_lm = <LLM name>,
-
-    # reflection_lm is the LLM outside the loop which reflects on feedback
-    # from the task_lm's performance and suggests better prompts
-    reflection_lm = <LLM name>
-
-)
-```
-
-The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/gepa_run.py::eval_gepa_llm()`.
-```python
-from crisp.gepa_llm import eval_gepa
-
-eval_gepa(
-
-    # dataset_path is the dataset folder on which the prompt will be evaluated
-    dataset_path = <full/path/to/dataset/>,v
-
-    # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
-    # which contains `prompt.txt` containing the actual prompt to be evaluated
-    optimized_prompt_folder = <full/path/to/prompt_folder/>,
-
-    # model is the LLM which will run the prompt on the dataset
-    model = <LLM name>
-
-)
-```
-
 ## Running GEPA for joint prompt optimization of agents
 In the following tables, all calls are referenced w.r.t the `crisp/gepa_agent.py::run_task()::workflow` variable.
 
@@ -348,3 +304,6 @@ eval_gepa(
 
 )
 ```
+
+## Running GEPA for individual prompt optimization of LLMs
+Deprecated. See `scripts/gepa_run.py::run_gepa_llm()` and `scripts/gepa_run.py::eval_gepa_llm()`.

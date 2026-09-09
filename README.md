@@ -228,7 +228,7 @@ ulimit -Sn $(ulimit -Hn)
 ```
 
 ## Running GEPA for individual prompt optimization of LLMs
-Run as follows. For an example, see `scripts/run_gepa.py::run_gepa_llm()`.
+Run as follows. For an example, see `scripts/gepa_run.py::run_gepa_llm()`.
 ```python
 from crisp.gepa_llm import run_gepa
 
@@ -252,11 +252,11 @@ run_gepa(
 )
 ```
 
-The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/run_gepa.py::evaluate_gepa_llm()`.
+The performance of any prompt, whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/gepa_run.py::eval_gepa_llm()`.
 ```python
-from crisp.gepa_llm import eval_gepa_prompt
+from crisp.gepa_llm import eval_gepa
 
-eval_gepa_prompt(
+eval_gepa(
 
     # dataset_path is the dataset folder on which the prompt will be evaluated
     dataset_path = <full/path/to/dataset/>,v
@@ -286,17 +286,19 @@ In future, we may also optimize the following prompts. Currently they are not su
 | `ffi_entry_point_rules` | Part of `SAFETY_PLAN.md` and FFI review instructions | `workflow.do_safety_plan_agent()`, and `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_entry_point_rules.md` |
 | `agent_ffi_review_prompt` | Telling the agent to execute FFI review | `workflow.do_safety_step_agent()` (which calls `self.do_ffi_review()`, which calls `self.ffi_review_op()`) | `crisp/prompts/ffi_review.md` |
 
-Run optimization as follows. For an example, see `scripts/run_gepa.py::run_gepa_agents()`.
+Run optimization as follows. For an example, see `scripts/gepa_run.py::run_gepa_agents()`.
 ```python
 from crisp.gepa_agents import run_gepa
 
 run_gepa(
 
-    # dataset_path is the dataset folder on which GEPA will run its optimization
-    dataset_path = <full/path/to/dataset/>,
+    # dataset_path is the dataset folder or individual project folder on which GEPA will run its optimization
+    dataset_path = <full/path/to/dataset_or_project/>,
 
-    # seed_prompts are used to start the optimization
-    # for best results, provide the entire prompt without any {...} blocks to be filled in
+    # Set is_individual_project to True if dataset_path is a single project folder, else False
+    is_individual_project = <True/False>,
+
+    # seed_prompt_paths are paths to prompts used to start the optimization
     seed_prompt_paths = {
         <prompt_type> : <full/path/to/seed_prompt_of_that_prompt_type.txt>
         # see <prompt_type>s from table above
@@ -304,7 +306,45 @@ run_gepa(
 
     # reflection_lm is the LLM outside the loop which reflects on feedback
     # from the agents' performance and suggests better prompts
-    reflection_lm = <LLM name>
+    reflection_lm = <LLM name>,
+
+    # if desired, pass an instance of gepa_agents.ResponseEvaluator with your choice of scores
+    response_evaluator = <custom instance of gepa_agents.ResponseEvaluator>
+
+)
+```
+
+The performance of any prompt(s), whether seed or GEPA-optimized, can be evaluated as follows. For an example, see `scripts/gepa_run.py::eval_gepa_agents()`.
+```python
+from crisp.gepa_agents import eval_gepa
+
+eval_gepa(
+
+    # dataset_path is the dataset folder or individual project folder on which the prompt(s) will be evaluated
+    dataset_path = <full/path/to/dataset_or_project/>,
+
+    # Set is_individual_project to True if dataset_path is a single project folder, else False
+    is_individual_project = <True/False>,
+
+    # optimized_prompt_folder is a folder (usually inside gepa_artifacts/)
+    # where evaluation results will be stored
+    optimized_prompt_folder = <full/path/to/prompt_folder/>,
+
+    # optimized_prompt_paths are paths to the prompts being evaluated
+    optimized_prompt_paths = {
+        <prompt_type> : <full/path/to/optimized_prompt_of_that_prompt_type.txt>
+        # see <prompt_type>s from table above
+    },
+
+    # if desired, pass an instance of gepa_agents.ResponseEvaluator with your choice of scores
+    response_evaluator = <custom instance of gepa_agents.ResponseEvaluator>,
+
+    # attempts is how many times the prompt(s) will be run
+    # each attempt uses the previous attempt's output as its input
+    attempts = <num_attempts>,
+
+    # can provide save_final_attempt_node_name to save the final attempt's output node with this tag
+    save_final_attempt_node_name = <tag_name>
 
 )
 ```

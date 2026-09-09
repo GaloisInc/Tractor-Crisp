@@ -63,6 +63,7 @@ class TargetDeferralsTest(unittest.TestCase):
                 self.assertEqual(deferred, [
                     frozenset(), frozenset({'crate::real'})])
                 self.assertEqual(w.fuel.fuel, 1)
+                self.assertIn('status: SATURATED', output.getvalue())
                 self.assertIn("attributing attempt to 'crate::second'", output.getvalue())
 
 

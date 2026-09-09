@@ -213,11 +213,13 @@ GEPA is the Genetic Pareto prompt optimization technique ([paper](https://arxiv.
 Setting up:
 - Whenever GEPA is to be run on a new dataset which is present at `Test-Corpus/Public-Tests/<dataset_dir>`, first run:
   ```shell
-  python scripts/gepa_setup.py <dataset_dir> initial
+  python scripts/gepa_setup.py <dataset_dir>
+  # e.g.: python scripts/gepa_setup.py B01_organic
   ```
 - Whenever GEPA is to be run on a new individual project which is present at `../<project_dir>`, first run:
   ```shell
-  python scripts/gepa_setup.py <project_dir> initial
+  python scripts/gepa_setup.py <project_dir>
+  # e.g.: python scripts/gepa_setup.py zlib
   ```
 
 See the docstring of `scripts/gepa_setup.py` for more details.

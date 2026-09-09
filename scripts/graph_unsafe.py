@@ -2,9 +2,7 @@
 Graph unsafe count over time throughout the history of a refactoring run.
 
 Usage:
-    uv run --project /path/to/tractor-crisp --extra graph \
-        /path/to/tractor-crisp/scripts/graph_unsafe.py \
-        INPUTS...
+    python3 /path/to/tractor-crisp/scripts/graph_unsafe.py INPUTS...
 
 `INPUTS` can be any combination of MVIR tags (such as `current`, the default),
 node IDs, and paths to files containing unsafe count data.  Running on an MVIR
@@ -14,11 +12,24 @@ producing the graph.
 The graph is always written to `./graph.png`.
 """
 
+import os
+import sys
+
+# When run directly with `python3 graph_unsafe.py`, dispatch to `uv run`
+# instead, so that CRISP and the necessary dependencies will be available.
+if not os.environ.get('UV'):
+    from pathlib import Path
+    crisp_dir = Path(__file__).parent.parent.absolute()
+    os.execvp('uv', [
+        'uv', 'run',
+        '--project', str(crisp_dir),
+        '--extra', 'graph',
+        str(Path(__file__).absolute()),
+    ] + sys.argv[1:])
+
 import argparse
 from datetime import timedelta
 import itertools
-import os
-import sys
 import toml
 
 import matplotlib

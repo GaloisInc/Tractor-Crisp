@@ -278,7 +278,7 @@ def run_gepa(
         f.write(gepa_result.best_candidate['system_prompt'])
 
 
-def eval_gepa_prompt(
+def eval_gepa(
     dataset_path: Path,
     optimized_prompt_folder: Path,
     model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),

@@ -478,7 +478,7 @@ def run_gepa(
             f.write(gepa_result.best_candidate[prompt_type])
 
 
-def eval_gepa_prompt(
+def eval_gepa(
     dataset_path: Path,
     is_individual_project: bool,
     optimized_prompt_folder: Path,
@@ -489,7 +489,7 @@ def eval_gepa_prompt(
     save_final_attempt_node_name: str | None = None
 ):
     """
-    Use the GEPA evaluation function(s) to check the performance of any prompt.
+    Use the GEPA evaluation function(s) to check the performance of any prompt(s).
 
     Inputs:
     - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.

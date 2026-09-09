@@ -19,7 +19,7 @@ response_evaluator_zlib = gepa_agents.ResponseEvaluator(
 
 
 def run_gepa_llm():
-    """Single prompt GEPA optimization using individual LLMs."""
+    """Wrapper for `gepa_llm.run_gepa()`. See its docstring for more explanation."""
     gepa_llm.run_gepa(
         dataset_path = Path(__file__).resolve().parent.parent / 'Test-Corpus/Public-Tests/B01_organic',
         seed_prompt_path = Path(__file__).resolve().parent.parent / 'gepa_artifacts/seed_prompt_2/prompt.txt',
@@ -27,8 +27,8 @@ def run_gepa_llm():
         reflection_lm = 'gpt-5.5'
     )
 
-def evaluate_gepa_llm():
-    """Use the GEPA evaluation function(s) to check the performance of any prompt using individual LLMs."""
+def eval_gepa_llm():
+    """Wrapper for `gepa_llm.eval_gepa()`. See its docstring for more explanation."""
     for prompt_name in [ # insert prompt names for evaluation here (see examples below)
         # '20260616_taskGPT5p5_reflGPT5p5',
         # 'seed_prompt_2',
@@ -41,7 +41,7 @@ def evaluate_gepa_llm():
             'B02_synthetic',
             # ...
         ]:
-            gepa_llm.eval_gepa_prompt(
+            gepa_llm.eval_gepa(
                 dataset_path = Path(__file__).resolve().parent.parent / f'Test-Corpus/Public-Tests/{dataset_name}',
                 optimized_prompt_folder = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}',
                 model = 'gpt-5.5'
@@ -49,7 +49,7 @@ def evaluate_gepa_llm():
 
 
 def run_gepa_agents():
-    """GEPA optimization using agents."""
+    """Wrapper for `gepa_agents.run_gepa()`. See its docstring for more explanation."""
     gepa_agents.run_gepa(
         dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
         is_individual_project = True,
@@ -61,8 +61,8 @@ def run_gepa_agents():
     )
 
 
-def evaluate_gepa_agents():
-    """Use the GEPA evaluation function(s) to check the performance of a set of prompts using agents."""
+def eval_gepa_agents():
+    """Wrapper for `gepa_agents.eval_gepa()`. See its docstring for more explanation."""
     for prompt_name in [ # insert prompt names for evaluation here (see examples below)
         'seed_prompts_agents',
         '20260906_reflGPT5p6',
@@ -73,7 +73,7 @@ def evaluate_gepa_agents():
         '20260908C_reflGPT5p6',
     ]:
         attempts = 20
-        gepa_agents.eval_gepa_prompt(
+        gepa_agents.eval_gepa(
             dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
             is_individual_project = True,
             optimized_prompt_folder = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}',
@@ -89,9 +89,9 @@ def evaluate_gepa_agents():
 if __name__ == '__main__':
 
     # run_gepa_llm()
-    # evaluate_gepa_llm()
+    # eval_gepa_llm()
 
     # run_gepa_agents()
-    # evaluate_gepa_agents()
+    # eval_gepa_agents()
 
     pass

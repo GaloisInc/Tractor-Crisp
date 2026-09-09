@@ -283,7 +283,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
     matches = [
         ie for ie in mvir.index(n_code.node_id())
-        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
+        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'outputs'
+        and mvir.node(ie.node_id).outputs.get('code') == n_code.node_id()
     ]
 
     match matches:

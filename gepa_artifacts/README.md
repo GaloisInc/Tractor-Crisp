@@ -5,17 +5,10 @@ Documentation in this README is in reverse chronological order.
 
 ---
 
-## Running using agents
-TODO
-
----
-
-## Running using individual LLMs
-
-### Seed prompt 2
+## Seed prompt 2
 Used to start GEPA optimization in the newer code setting where the CRISP workflow was used. Here onwards, the evaluation function includes running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
 
-#### Results of running prompt with GPT-5.5
+### Results of running prompt with GPT-5.5
 | Dataset | Can't compile | Compiles, Tests fail | Compiles, Tests pass, Unsafe | Compiles, Tests pass, Safe | C,TP,S %age |
 | -- | -- | -- | -- | -- | -- |
 | B01 organic | 6 | 2 | 22 | 8 | 21% |
@@ -24,7 +17,7 @@ Used to start GEPA optimization in the newer code setting where the CRISP workfl
 | B02 synthetic | 21 | 4 | 9 | 4 | 11% |
 
 
-### 20260616_taskGPT5p5_reflGPT5p5
+## 20260616_taskGPT5p5_reflGPT5p5
 GEPA optimization done using the CRISP workflow and running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
 - Seed prompt: `seed_prompt_2`
 - Task LM: `'openai/gpt-5.5'`
@@ -34,7 +27,7 @@ GEPA optimization done using the CRISP workflow and running the T&E-provided tes
 - Max metric calls: 150
 - Run on: Godfather
 
-#### Results of running prompt with GPT-5.5
+### Results of running prompt with GPT-5.5
 | Dataset | Can't compile | Compiles, Tests fail | Compiles, Tests pass, Unsafe | Compiles, Tests pass, Safe | C,TP,S %age |
 | -- | -- | -- | -- | -- | -- |
 | B01 organic | 6 | 5 | 0 | 27 | 71% |
@@ -44,17 +37,17 @@ GEPA optimization done using the CRISP workflow and running the T&E-provided tes
 
 ---
 
-### Seed prompt 1
+## Seed prompt 1
 Used to start GEPA optimization in the older code setting where a) the evaluation function **did not** include running the T&E-provided tests, and b) CRISP workflow was not used. Scores were 0 for cannot compile, 0.5 for compiles & unsafe, 1 for compiles & safe.
 
-#### Results of running prompt with GPT-OSS-20b
+### Results of running prompt with GPT-OSS-20b
 | Dataset | Can't compile | Compiles & Unsafe | Compiles & Safe | C&S %age |
 | -- | -- | -- | -- | -- |
 | B01 organic | 16 | 3 | 15 | 44% |
 | B01 synthetic | 28 | 10 | 48 | 56% |
 | CRUST-Bench | 134 | 15 | 25 | 14% |
 
-#### Results of running prompt with GPT-5.4
+### Results of running prompt with GPT-5.4
 | Dataset | Can't compile | Compiles & Unsafe | Compiles & Safe | C&S %age |
 | -- | -- | -- | -- | -- |
 | B01 organic | 22 | 0 | 16 | 42% |
@@ -64,7 +57,7 @@ Used to start GEPA optimization in the older code setting where a) the evaluatio
 | B02 synthetic | 28 | 10 | 27 | 42% |
 
 
-### 20260326_taskGPT5p4_reflGPT5p4
+## 20260326_taskGPT5p4_reflGPT5p4
 GEPA optimization done using older code where a) the evaluation function **did not** include running the T&E-provided tests, and b) CRISP workflow was not used. Scores were 0 for cannot compile, 0.5 for compiles & unsafe, 1 for compiles & safe.
 - Seed prompt: `seed_prompt_1`
 - Task LM: `'openai/gpt-5.4'`
@@ -74,7 +67,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 - Max metric calls: 150
 - Run on: Local Macbook
 
-#### Results of running prompt with GPT-5.4
+### Results of running prompt with GPT-5.4
 | Dataset | Can't compile | Compiles & Unsafe | Compiles & Safe | C&S %age |
 | -- | -- | -- | -- | -- |
 | B01 organic | 1 | 0 | 37 | 97% |
@@ -84,7 +77,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 | B02 synthetic | 3 | 2 | 60 | 92% |
 
 
-### 20260227_taskGPToss20b_reflGPT5
+## 20260227_taskGPToss20b_reflGPT5
 GEPA optimization done using older code where a) the evaluation function **did not** include running the T&E-provided tests, and b) CRISP workflow was not used. Scores were 0 for cannot compile, 0.5 for compiles & unsafe, 1 for compiles & safe.
 - Seed prompt: `seed_prompt_1`
 - Task LM: `'ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf'`
@@ -94,7 +87,7 @@ GEPA optimization done using older code where a) the evaluation function **did n
 - Max metric calls was 150, but script was interrupted after about 100 metric calls
 - Run on: Godfather
 
-#### Results of running prompt with GPT-OSS-20b
+### Results of running prompt with GPT-OSS-20b
 | Dataset | Can't compile | Compiles & Unsafe | Compiles & Safe | C&S %age |
 | -- | -- | -- | -- | -- |
 | B01 organic | 10 | 0 | 24 | 71% |

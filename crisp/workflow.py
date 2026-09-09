@@ -124,6 +124,10 @@ AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
 
 AGENT_SAFETY_REVIEW_PROMPT = _prompt('safety_review.md')
 
+# Prose statement of the gates `check-unsafe2` enforces; update it
+# alongside any checker gate change.
+CHECKER_RULES = _prompt('checker_rules.md').strip()
+
 SAFETY_REVIEW_RULES = _prompt('safety_review_rules.md').strip()
 
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
@@ -165,11 +169,11 @@ Continue the plan from `SAFETY_PLAN.md`.
 
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+Check your work using this command:
 ```sh
 cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
 ```
-This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+{checker_rules}
 
 Every changed candidate receives independent safety and compatibility review
 under these binding rules, including count-neutral preparation:
@@ -1286,6 +1290,7 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            checker_rules = CHECKER_RULES,
             safety_review_rules = SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
         )
@@ -1309,6 +1314,7 @@ class Workflow:
         n_old_code: TreeNode,
         n_new_code: TreeNode,
         n_c_code: TreeNode | None,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
     ) -> CodexReviewOpNode:
         cfg, mvir = self.cfg, self.mvir
         reference_instruction = (
@@ -1323,6 +1329,7 @@ class Workflow:
         prompt = AGENT_SAFETY_REVIEW_PROMPT.format(
             cargo_dir_path = cfg.relative_path(cfg.transpile.output_dir),
             reference_instruction = reference_instruction,
+            checker_diagnostics = n_op_unsafe.body_str(),
             safety_review_rules = SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
 
@@ -1361,11 +1368,12 @@ class Workflow:
         n_old_code: TreeNode,
         n_new_code: TreeNode,
         n_c_code: TreeNode | None,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
     ) -> tuple[bool, str | None]:
         """Review every changed candidate that passed the mechanical gates."""
         if n_old_code.node_id() == n_new_code.node_id():
             return True, None
-        n_op = self.safety_review_op(n_old_code, n_new_code, n_c_code)
+        n_op = self.safety_review_op(n_old_code, n_new_code, n_c_code, n_op_unsafe)
         report = self.mvir.node(n_op.report).body_str()
         print(report)
         if n_op.verdict == 'PASS':
@@ -1517,7 +1525,7 @@ class Workflow:
         n_op_test = self.test_op(n_new_code, n_test_code)
         if n_op_test.exit_code != 0:
             return None, None, None
-        review_ok, report = self.do_safety_review(n_code, n_new_code, n_test_code)
+        review_ok, report = self.do_safety_review(n_code, n_new_code, n_test_code, n_op_unsafe)
         if not review_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
@@ -1544,7 +1552,7 @@ class Workflow:
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             return None, None
         # Preserve this mode's deliberate lack of original C/test context.
-        if not self.do_safety_review(n_code, n_new_code, None)[0]:
+        if not self.do_safety_review(n_code, n_new_code, None, n_op_unsafe)[0]:
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

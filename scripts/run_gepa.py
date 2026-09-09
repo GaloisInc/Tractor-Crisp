@@ -65,8 +65,14 @@ def evaluate_gepa_agents():
     """Use the GEPA evaluation function(s) to check the performance of a set of prompts using agents."""
     for prompt_name in [ # insert prompt names for evaluation here (see examples below)
         'seed_prompts_agents',
-        '20260906_reflGPT5p6'
+        '20260906_reflGPT5p6',
+        '20260906B_reflGPT5p6',
+        '20260906C_reflGPT5p6',
+        '20260908_reflGPT5p6',
+        '20260908B_reflGPT5p6',
+        '20260908C_reflGPT5p6',
     ]:
+        attempts = 20
         gepa_agents.eval_gepa_prompt(
             dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
             is_individual_project = True,
@@ -75,7 +81,8 @@ def evaluate_gepa_agents():
                 'agent_safety_prompt': Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/agent_safety_prompt.txt'
             },
             response_evaluator = response_evaluator_zlib,
-            attempts = 10
+            attempts = attempts,
+            save_final_attempt_node_name = f"attempt{attempts}_{prompt_name}"
         )
 
 

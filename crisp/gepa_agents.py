@@ -487,7 +487,8 @@ def eval_gepa_prompt(
     optimized_prompt_paths: dict[str, Path],
     output_csv_path: Path | None = None,
     response_evaluator: ResponseEvaluator | None = None,
-    attempts: int = 1
+    attempts: int = 1,
+    save_final_attempt_node_name: str | None = None
 ):
     """
     Use the GEPA evaluation function(s) to check the performance of any prompt.
@@ -502,6 +503,7 @@ def eval_gepa_prompt(
         - File will be appended to if it already exists
     - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
     - attempts: For each project, run the GEPA prompt this many times. For each attempt, use the output of the previous attempt as input. Each attempt's result gets saved individually.
+    - save_final_attempt_node_name: If not None, save the node after the final attempt with this name.
     """
 
     # Get prompt types
@@ -621,3 +623,8 @@ def eval_gepa_prompt(
                         getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.
                     ]
                 )
+
+            # Save node after final attempt
+            if save_final_attempt_node_name:
+                n_final_attempt = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'attempts'))
+                workflow.mvir.set_tag(save_final_attempt_node_name, n_final_attempt.node_id())

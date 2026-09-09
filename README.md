@@ -11,8 +11,12 @@ The following features have been implemented in the CRISP transpiler loop:
   and falls back to ordinary c2rust-transpile only if it fails.
 * Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
   unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
-  builds, passes the tests, and does not introduce new unsafety before
-  accepting it.
+  builds, passes the tests, and does not introduce new unsafety. Every changed
+  candidate that passes those checks also receives one independent review of
+  safety, behavior, and FFI compatibility before acceptance, including changes
+  that leave the unsafe count unchanged. Review uses the original C/API
+  reference and requires an explicit passing verdict; missing or incomplete
+  review results are rejected.
 * Automatic detection of unsafe code.  The CRISP transpiler loop stops once
   there is no unsafe code left to make safe.
 * FFI function splitting.  To preserve ABI compatibility when translating

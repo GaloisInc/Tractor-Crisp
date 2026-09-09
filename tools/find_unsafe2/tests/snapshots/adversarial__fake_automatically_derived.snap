@@ -1,5 +1,7 @@
 ---
 source: find_unsafe2/tests/adversarial.rs
+assertion_line: 67
 expression: out.stdout
 ---
-adv_fake_automatically_derived: unsafe impls increased increased: 0 -> 1
+warning: adv_fake_automatically_derived: unsafe impl count increased: 0 -> 1
+total unsafe operations increased: 0 -> 1

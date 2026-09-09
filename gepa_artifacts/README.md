@@ -5,8 +5,74 @@ Documentation in this README is in reverse chronological order.
 
 ---
 
+## Seed prompts agents
+Used to start GEPA optimization for agentic workflows.
+
+For all results, model used: CRISP default in early Sept 2026 (mostly GPT-5.6-sol)
+
+### `results/zlib`
+- Started with 6604 unsafe. Ran for 20 attempts. Final unsafe remaining = 5044.
+- Avg unsafe removed per attempt = 78.
+- Avg call duration = 199 seconds
+- Avg output tokens = 12900
+- All attempts pass tests.
+
+
+## 20260908[_/B/C]_reflGPT5p6
+GEPA optimization done using:
+- Seed prompt: `seed_prompts_agents`
+- Task LM: CRISP defaults (mostly GPT-5.6-sol)
+- Reflection LM: GPT-5.6-sol
+- Dataset: `zlib` (only `zlib` in both trainset and valset)
+- Max metric calls: 100
+- Evaluation function scores:
+    ```python
+    score_safe = 1
+    score_passtests = 0
+    score_penalty_per_output_token = 0
+    score_penalty_per_call_duration_sec = 0
+    ```
+- Run on: Godfather
+
+Best prompt found was `20260908_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260908B_reflGPT5p6` and `20260908C_reflGPT5p6`. Out of these, `20260908B_reflGPT5p6` performed the best on unsafety removal.
+
+### `20260908B_reflGPT5p6/results_zlib`
+- Started with 6604 unsafe. Ran for 20 attempts. **Final unsafe remaining = 3683.**
+- **Avg unsafe removed per attempt = 146.05. This is 87% improvement over `seed_prompts_agents`.**
+- Avg call duration = 453 seconds. This is 127% more than `seed_prompts_agents`.
+- Avg output tokens = 28293. This is 119% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
+
+## 20260906[_/B/C]_reflGPT5p6
+GEPA optimization done using:
+- Seed prompt: `seed_prompts_agents`
+- Task LM: CRISP defaults (mostly GPT-5.6-sol)
+- Reflection LM: GPT-5.6-sol
+- Dataset: `zlib` (only `zlib` in both trainset and valset)
+- Max metric calls: 100
+- Evaluation function scores:
+    ```python
+    score_safe = 2/3
+    score_passtests = 1/3
+    score_penalty_per_output_token = 1e-5
+    score_penalty_per_call_duration_sec = 1e-3
+    ```
+- Run on: Godfather
+
+Best prompt found was `20260906_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260906B_reflGPT5p6` and `20260906C_reflGPT5p6`. Out of these, `20260906C_reflGPT5p6` performed the best on unsafety removal.
+
+### `20260906C_reflGPT5p6/results_zlib`
+- Started with 6604 unsafe. Ran for 20 attempts. **Final unsafe remaining = 4070.**
+- **Avg unsafe removed per attempt = 126.7. This is 62% improvement over `seed_prompts_agents`.**
+- Avg call duration = 310 seconds. This is 56% more than `seed_prompts_agents`.
+- Avg output tokens = 23112. This is 79% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
+---
+
 ## Seed prompt 2
-Used to start GEPA optimization in the newer code setting where the CRISP workflow was used. Here onwards, the evaluation function includes running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
+Used to start GEPA optimization in the updated code setting where the CRISP workflow was used. Here onwards, the evaluation function includes running the T&E-provided tests. Scores are 0 for cannot compile, 0.25 for compiles but doesn't pass tests, 0.5 for compiles and passes tests but is unsafe, and 1 for compiles and passes tests and is safe.
 
 ### Results of running prompt with GPT-5.5
 | Dataset | Can't compile | Compiles, Tests fail | Compiles, Tests pass, Unsafe | Compiles, Tests pass, Safe | C,TP,S %age |

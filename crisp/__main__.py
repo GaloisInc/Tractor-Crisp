@@ -1,6 +1,6 @@
 import argparse
 import ast
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 import glob
 import os
@@ -29,7 +29,7 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther, AGENT_FFI_SEEN_FINDINGS_PROMPT, AGENT_SAFETY_PROGRESS_PROMPT,
-    merge_ffi_finding_titles, menu_targets,
+    merge_ffi_finding_titles, menu_targets, SAFETY_MODELS, review_rejected,
 )
 
 
@@ -415,6 +415,44 @@ def get_fuel_limits(mvir, n_code):
                 defaults.safety_tries_per_file)),
     )
 
+class SafetyModelPolicy:
+    """Escalate on failures or slow progress; retry cheaper tiers. Reset on restart."""
+    def __init__(self, models=SAFETY_MODELS):
+        self.models = models
+        self.level = 0
+        self.consecutive_stalls = 0
+        self.recent_reductions = deque(maxlen=4)
+        self.steps_remaining = 0
+        # Each tier remembers its next visit length: 2, 4, then 8 steps.
+        self.next_stay_steps = [2] * len(models)
+
+    @property
+    def model(self):
+        return self.models[self.level]
+
+    def update(self, removed: int, rejected: bool = False):
+        self.consecutive_stalls = 0 if removed > 0 else self.consecutive_stalls + 1
+        self.recent_reductions.append(removed)
+        # Four steps averaging at most two removals justify a stronger tier.
+        slow = len(self.recent_reductions) == 4 and sum(self.recent_reductions) <= 8
+        if (rejected or self.consecutive_stalls >= 2 or slow) \
+                and self.level < len(self.models) - 1:
+            self.level += 1
+            # Use the current stay length; reserve a longer one for next time.
+            self.steps_remaining = self.next_stay_steps[self.level]
+            self.next_stay_steps[self.level] = min(2 * self.steps_remaining, 8)
+            self.consecutive_stalls = 0
+            self.recent_reductions.clear()
+        elif self.level > 0:
+            self.steps_remaining = max(0, self.steps_remaining - 1)
+            # An expired stay only returns to a cheaper tier after progress.
+            if removed > 0 and self.steps_remaining == 0:
+                self.level -= 1
+                self.steps_remaining = self.next_stay_steps[self.level]
+                self.consecutive_stalls = 0
+                self.recent_reductions.clear()
+
+
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     """
     Drive safety steps until the crate is safe or nothing eligible remains.
@@ -434,7 +472,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │      ├─ no eligible targets ─▶ SATURATED, then final checks  │
     │      ├─ no run fuel ─▶ BUDGET_EXHAUSTED, then final checks   │
     │      ▼                                                       │
-    │ ┌─ ONE WORKER INVOCATION ───────────────────────────────────┐ │
+    │ ┌─ ONE WORKER INVOCATION (selected tier) ───────────────────┐ │
     │ │ Prompt = plan + menu + shared checker/safety/FFI rules   │ │
     │ │ Read the chosen target's retained review feedback.       │ │
     │ │ Edit, build and check repeatedly within this invocation. │ │
@@ -463,6 +501,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │      │                                                       │
     │      └────────────────────────▶ next scheduling round        │
     └──────────────────────────────────────────────────────────────┘
+
+    Workers climb the SAFETY_MODELS ladder after a review finding,
+    two zero-progress attempts, or four steps removing at most eight unsafe
+    operations in total. Stays grow 2 -> 4 -> 8 steps before retrying a cheaper
+    tier after progress. Progress history resets whenever the tier changes.
 
     The agent's own cargo check-unsafe2 uses the same pinned baseline
     as the final checker, so it previews the whole step's judgment.
@@ -498,6 +541,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             n_plans = TreeNode.new(mvir, files={})
 
     pick_target = PickTarget(limits)
+    override = llm.API_MODEL or cfg.models.agent_loop
+    model_policy = SafetyModelPolicy(((override, 'high'),) if override else SAFETY_MODELS)
+    adaptive = args.llm_mode in ('agent', 'agent_rand_target')
 
     prev_fuel = None
     while True:
@@ -520,8 +566,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         assert cur_fuel != prev_fuel, 'safety loop ran without consuming any fuel'
         prev_fuel = cur_fuel
 
+        removed = 0
+        ffi_report = None
+        if adaptive:
+            model, effort = model_policy.model
+            print(f'safety worker: {model}@{effort}')
         try:
-            ffi_report = None
             attempted_target = None
             ffi_parts = []
             if ffi_seen_findings:
@@ -535,6 +585,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_code, n_c_code, n_plans,
                         prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''),
                         review_feedback = ffi_feedback,
+                        worker = model_policy.model,
                         suppressed = suppressed)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
@@ -571,6 +622,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
                         review_feedback = ffi_feedback,
+                        worker = model_policy.model,
                         target_goal = target_goal)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
@@ -596,6 +648,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 and n_new_code.node_id() != n_code.node_id())
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
+                removed = max(0, unsafe_count - w.count_unsafe2(n_new_code))
                 n_code = n_new_code
             if ffi_report is not None:
                 ffi_seen_findings = merge_ffi_finding_titles(
@@ -613,6 +666,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         except OutOfFuelError as e:
             print(f'exiting due to lack of fuel: {e}')
             break
+
+        if adaptive:
+            model_policy.update(removed, review_rejected(ffi_report or ''))
 
     print('\n\n')
     if ledger:

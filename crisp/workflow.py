@@ -142,6 +142,18 @@ AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
 
 FFI_SEEN_FINDINGS_CAP = 10
 
+SAFETY_MODELS = (
+    ('gpt-5.6-sol', 'medium'),
+    ('gpt-5.6-sol', 'xhigh'),
+    ('gpt-6-astra', 'medium'),
+    ('gpt-6-astra', 'xhigh'),
+)
+
+def review_rejected(report: str) -> bool:
+    """A rejecting report has defect findings, not just a review failure."""
+    return (not report.startswith('CRISP_REVIEW: INCOMPLETE')
+        and AGENT_FFI_REVIEW_FINDING_RE.search(report) is not None)
+
 def review_passed(report: str, ran_commands: bool) -> bool:
     """Require inspected code, one explicit approval, and no findings."""
     lines = report.strip().splitlines()
@@ -1415,6 +1427,7 @@ class Workflow:
         target_goal: AgentTarget = AgentTargetOther(),
         suppressed: frozenset[str] = frozenset(),
         review_feedback: dict[str, str] | None = None,
+        worker: tuple[str, str] | None = None,
     ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1454,10 +1467,13 @@ class Workflow:
                 'This file is read-only guidance; do not edit it.')
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
-        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
+        model, effort = worker or ((cfg.models.agent_loop, 'high')
+            if cfg.models.agent_loop else SAFETY_MODELS[0])
+        return agent.run_rewrite(cfg, mvir, prompt, model, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
             unsafe_json = self.find_unsafe2_json(n_code),
+            effort = effort,
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
@@ -1669,6 +1685,7 @@ class Workflow:
         target_goal: AgentTarget = AgentTargetOther(),
         suppressed: frozenset[str] = frozenset(),
         review_feedback: dict[str, str] | None = None,
+        worker: tuple[str, str] | None = None,
     ) -> StepOutcome:
         """Run one worker invocation, then judge its candidate against n_code."""
         self.fuel.use()
@@ -1677,7 +1694,8 @@ class Workflow:
             prompt_suffix = prompt_suffix,
             target_goal = target_goal,
             suppressed = suppressed,
-            review_feedback = review_feedback)
+            review_feedback = review_feedback,
+            worker = worker)
         target = parse_target(final_message)
         verdict, note = parse_verdict(final_message)
         if verdict == 'blocked':

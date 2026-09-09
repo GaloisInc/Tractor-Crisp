@@ -416,8 +416,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     │      ▼                                                       │
     │ MENU: per-file mass, biggest functions, pointer fields       │
     │   exclude C-header (*_h) ABI fields and deferred targets     │
-    │      ├─ no eligible targets ─▶ stop, then final checks       │
-    │      ├─ no run fuel ─▶ stop, then final checks               │
+    │      ├─ no eligible targets ─▶ SATURATED, then final checks  │
+    │      ├─ no run fuel ─▶ BUDGET_EXHAUSTED, then final checks   │
     │      ▼                                                       │
     │ ┌─ ONE WORKER INVOCATION ───────────────────────────────────┐ │
     │ │ Prompt = plan + menu + shared checker/safety/FFI rules   │ │
@@ -450,8 +450,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     The agent's own cargo check-unsafe2 uses the same pinned baseline
     as the final checker, so it previews the whole step's judgment.
-    Run end: print the attempt ledger, then recheck the count and the
-    configured tests.
+    Run end: print the attempt ledger, recheck count and configured tests,
+    then report FAILED (exits nonzero), SATURATED, BUDGET_EXHAUSTED, or
+    COMPLETE_SAFE. A failing final test overrides the loop's stop reason.
     """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
@@ -462,6 +463,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # reduction, plus every attempt's outcome for the exit report.
     deferred = set()
     ledger = []
+    # Why the loop ended; 'budget' unless a stop condition says otherwise.
+    stop_reason = 'budget'
     # Report from the most recent review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -493,6 +496,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if not fn_targets and not field_targets:
                 print('stopping: every remaining target failed to reduce '
                     'unsafe in the current progress epoch')
+                stop_reason = 'saturated'
                 break
 
         # Infinite loop detection
@@ -599,6 +603,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+    # One status word, claiming only what this run verified.  A failing
+    # final gate also fails the process.
+    if n_op_test.exit_code != 0:
+        status = 'FAILED'
+    elif unsafe_count == 0:
+        status = 'COMPLETE_SAFE'
+    elif stop_reason == 'saturated':
+        status = 'SATURATED'
+    else:
+        status = 'BUDGET_EXHAUSTED'
+    print('status: %s' % status)
+    if status == 'FAILED':
+        sys.exit(1)
 
 
 class PickTarget:

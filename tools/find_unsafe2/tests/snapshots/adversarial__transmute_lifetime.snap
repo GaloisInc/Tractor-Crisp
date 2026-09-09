@@ -1,6 +1,8 @@
 ---
 source: find_unsafe2/tests/adversarial.rs
+assertion_line: 67
 expression: out.stdout
 ---
-adv_transmute_lifetime::extend: transmutes increased: 0 -> 1
-adv_transmute_lifetime::mutate: transmutes increased: 0 -> 1
+warning: adv_transmute_lifetime::extend: transmutes increased: 0 -> 1
+warning: adv_transmute_lifetime::mutate: transmutes increased: 0 -> 1
+total unsafe operations increased: 0 -> 2

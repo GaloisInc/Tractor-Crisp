@@ -40,8 +40,22 @@ The following FFI rules are mandatory:
   point that still has the old signature.
 
 Do not recommend editing tests or original C code to make validation pass. Do
-not recommend new unsafe or unsafe-adjacent implementation code, including raw
-pointer fields or arguments, int-to-pointer casts, or calls to unsafe FFI APIs.
+not recommend new unsafe-adjacent implementation code: raw pointer fields,
+int-to-pointer casts, or calls to unsafe FFI APIs.  Decomposing into `unsafe`
+helpers that carry raw-pointer signatures is allowed.
+
+Functions with no unsafe code in the baseline must stay entirely safe, and the
+crate-wide total of unsafe operations must not increase.
+Within functions that already contain unsafe code, unsafe operations may move
+or change kind, and may relocate into a new named implementation function (for
+example an ownership facade or constructor). Such moves are tolerated with a
+warning and will be reviewed; use them when they enable a later removal.
+A safe function may not gain raw pointer types in its signature (`NonNull`
+included), and a function may be created safe only with a signature free of
+direct raw pointers — passing or returning a struct that carries raw-pointer
+fields is fine. A function may lose its `unsafe` qualifier only if its signature
+reaches no raw pointers, struct fields included: flipping a state-carrying
+helper to safe is never a reduction.
 
 Dependency policy: a Rust crate may be recommended as a replacement for a
 dependency of the original C project (for example, a zlib crate where the C
@@ -64,8 +78,9 @@ parent's spawn message may give the concrete path). Each file contains:
   `calls_unsafe`, `inline_asm`, and the maps `uses_static_mut` and
   `uses_union_field` (keyed by the static or field used), plus the progress
   metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
-  `sig_contains_raw_ptr`. Closures inside FFI entry points are attributed to
-  that entry point; other closures have their own inventory records.
+  `sig_contains_raw_ptr` and `sig_reaches_raw_ptr`. Closures inside FFI entry
+  points are attributed to that entry point; other closures have their own
+  inventory records.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field

@@ -7,7 +7,7 @@ from crisp.mvir import FileNode, MVIR, TreeNode
 from crisp.workflow import (
     AGENT_SAFETY_PROMPT, AGENT_SAFETY_REVIEW_PROMPT,
     FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
-    SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
+    CHECKER_RULES, SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
     review_passed, Workflow,
 )
 
@@ -34,6 +34,8 @@ class SafetyReviewTest(unittest.TestCase):
         )
         self.w = Workflow(cfg, self.mvir)
         self.reference = self.tree('api.h', 'typedef void *(*alloc_fn)(void *context);')
+        self.check = Mock()
+        self.check.body_str.return_value = 'PASS: no diagnostics'
         self.review = self.enterContext(patch('crisp.workflow.agent.run_review',
             return_value=('CRISP_REVIEW: PASS\nChecked contracts and callers.', b'log', True)))
         self.enterContext(patch('builtins.print'))
@@ -42,7 +44,7 @@ class SafetyReviewTest(unittest.TestCase):
         return TreeNode.new(self.mvir,
             files={path: FileNode.new(self.mvir, body).node_id()})
 
-    def test_callback_and_neutral_cleanup_changes_receive_review(self):
+    def test_callback_and_neutral_cleanup_changes_receive_review_without_warnings(self):
         for old, new in [
             ('type Alloc = unsafe extern "C" fn(*mut u8);',
              'type Alloc = extern "C" fn(*mut u8);'),
@@ -54,7 +56,7 @@ class SafetyReviewTest(unittest.TestCase):
                 baseline = self.tree('crate/src/lib.rs', old)
                 candidate = self.tree('crate/src/lib.rs', new)
                 self.assertEqual(self.w.do_safety_review(baseline, candidate,
-                    self.reference), (True, None))
+                    self.reference, self.check), (True, None))
                 self.review.assert_called_once()
                 args, kwargs = self.review.call_args
                 self.assertEqual(args[3], 'configured-review-model')
@@ -62,11 +64,12 @@ class SafetyReviewTest(unittest.TestCase):
                 self.assertEqual(kwargs['extra_code'], {'c_code': self.reference})
                 self.assertEqual(kwargs['effort'], 'xhigh')
                 self.assertIn('at their original paths', args[2])
+                self.assertIn('PASS: no diagnostics', args[2])
                 self.assertIn(SAFETY_REVIEW_RULES, args[2])
 
     def test_identical_tree_skips_model(self):
         code = self.tree('crate/src/lib.rs', 'fn example() {}')
-        self.assertEqual(self.w.do_safety_review(code, code, self.reference),
+        self.assertEqual(self.w.do_safety_review(code, code, self.reference, self.check),
             (True, None))
         self.review.assert_not_called()
 
@@ -78,7 +81,7 @@ class SafetyReviewTest(unittest.TestCase):
             with self.subTest(report=report, inspected=inspected):
                 self.review.return_value = report, b'log', inspected
                 passed, reason = self.w.do_safety_review(baseline, candidate,
-                    self.reference)
+                    self.reference, self.check)
                 self.assertFalse(passed)
                 self.assertTrue(reason.startswith('CRISP_REVIEW: '))
                 entry = next(iter(self.mvir.tag_reflog('op_history')))
@@ -92,6 +95,7 @@ class ReviewRuleParityTest(unittest.TestCase):
             cargo_dir_path='translated_rust',
             after_refactoring_instruction='run tests',
             target_goal='',
+            checker_rules=CHECKER_RULES,
             safety_review_rules=SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=FFI_ENTRY_POINT_RULES,
         )
@@ -103,6 +107,7 @@ class ReviewRuleParityTest(unittest.TestCase):
         prompt = AGENT_SAFETY_REVIEW_PROMPT.format(
             cargo_dir_path='translated_rust',
             reference_instruction='Original C is at its original paths.',
+            checker_diagnostics='PASS',
             safety_review_rules=SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=FFI_ENTRY_POINT_RULES,
         )

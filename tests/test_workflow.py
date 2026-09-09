@@ -3,10 +3,10 @@ import io
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from crisp import prompts
-from crisp.analysis import review_passed
+from crisp.analysis import check_unsafe2_findings, review_passed
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
     AGENT_SAFETY_PROMPT, FFI_SEEN_FINDINGS_CAP, Workflow,
@@ -35,6 +35,10 @@ class SafetyReviewTest(unittest.TestCase):
         )
         self.w = Workflow(cfg, self.mvir)
         self.reference = self.tree('api.h', 'typedef void *(*alloc_fn)(void *context);')
+        self.check = Mock()
+        self.check.body_str.return_value = (
+            'warning: unused variable: `x`\n'
+            'warning: crate::f: raw pointer derefs increased: 0 -> 1')
         # Any node stands in for the agent op.
         self.review = self.enterContext(patch('crisp.analysis.agent.run_review_op',
             return_value=FileNode.new(self.mvir, 'agent op')))
@@ -50,7 +54,7 @@ class SafetyReviewTest(unittest.TestCase):
         n_report = FileNode.new(self.mvir, report) if report else None
         self.results.return_value = n_report, b'log', ran_commands
 
-    def test_callback_and_neutral_cleanup_changes_receive_review(self):
+    def test_callback_and_neutral_cleanup_changes_receive_review_without_warnings(self):
         for old, new in [
             ('type Alloc = unsafe extern "C" fn(*mut u8);',
              'type Alloc = extern "C" fn(*mut u8);'),
@@ -62,7 +66,7 @@ class SafetyReviewTest(unittest.TestCase):
                 baseline = self.tree('crate/src/lib.rs', old)
                 candidate = self.tree('crate/src/lib.rs', new)
                 self.assertEqual(self.w.do_safety_review(baseline, candidate,
-                    self.reference), (True, None))
+                    self.reference, self.check), (True, None))
                 self.review.assert_called_once()
                 args, kwargs = self.review.call_args
                 self.assertEqual(args[3], 'configured-review-model')
@@ -70,11 +74,13 @@ class SafetyReviewTest(unittest.TestCase):
                 self.assertEqual(kwargs['extra_code'], {'c_code': self.reference})
                 self.assertEqual(kwargs['effort'], 'xhigh')
                 self.assertIn('at their original paths', args[2])
+                self.assertIn('crate::f: raw pointer derefs increased', args[2])
+                self.assertNotIn('unused variable', args[2])
                 self.assertIn(prompts.SAFETY_REVIEW_RULES, args[2])
 
     def test_identical_tree_skips_model(self):
         code = self.tree('crate/src/lib.rs', 'fn example() {}')
-        self.assertEqual(self.w.do_safety_review(code, code, self.reference),
+        self.assertEqual(self.w.do_safety_review(code, code, self.reference, self.check),
             (True, None))
         self.review.assert_not_called()
 
@@ -87,7 +93,7 @@ class SafetyReviewTest(unittest.TestCase):
                 candidate = self.tree('crate/src/lib.rs', f'fn after{i}() {{}}')
                 self.set_review(report, inspected)
                 passed, reason = self.w.do_safety_review(baseline, candidate,
-                    self.reference)
+                    self.reference, self.check)
                 self.assertFalse(passed)
                 self.assertTrue(reason.startswith('CRISP_REVIEW: '))
                 entry = self.mvir.tag_reflog('op_history')[-1]
@@ -102,6 +108,7 @@ class ReviewRuleParityTest(unittest.TestCase):
             cargo_dir_path='translated_rust',
             after_refactoring_instruction='run tests',
             target_goal='',
+            checker_rules=prompts.CHECKER_RULES,
             safety_review_rules=prompts.SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=prompts.FFI_ENTRY_POINT_RULES,
         )
@@ -113,6 +120,7 @@ class ReviewRuleParityTest(unittest.TestCase):
         prompt = prompts.AGENT_SAFETY_REVIEW.format(
             cargo_dir_path='translated_rust',
             reference_instruction='Original C is at its original paths.',
+            checker_findings='(none)',
             safety_review_rules=prompts.SAFETY_REVIEW_RULES,
             ffi_entry_point_rules=prompts.FFI_ENTRY_POINT_RULES,
         )
@@ -120,6 +128,30 @@ class ReviewRuleParityTest(unittest.TestCase):
         self.assertIn(prompts.FFI_ENTRY_POINT_RULES, prompt)
         self.assertIn('overall_explanation', prompt)
         self.assertIn('CRISP_REVIEW: PASS', prompt)
+
+
+class CheckUnsafe2FindingsTest(unittest.TestCase):
+    def test_keeps_checker_findings_and_drops_rustc_lints(self):
+        findings = [
+            "warning: crate::src::m::f_ffi: 10 unsafe operations now inside "
+            "count-exempt FFI entry point (baseline 2); entry points must stay thin",
+            "warning: crate::src::m::Access::<'a, State>::read: "
+            "raw pointer derefs increased: 0 -> 1",
+            "crate::src::m::g: int-to-pointer casts increased: 0 -> 1",
+        ]
+        logs = '\n'.join([
+            'warning: `sqlite3_step` redeclared with a different signature',
+            '  --> src/m.rs:10:5',
+            findings[0],
+            'warning: unused variable: `x`',
+            findings[1],
+            findings[2],
+            "warning: `crate` (lib) generated 2 warnings",
+        ])
+        n_op = Mock()
+        n_op.body_str.return_value = logs
+
+        self.assertEqual(check_unsafe2_findings(n_op), '\n'.join(findings))
 
 
 class MergeFfiFindingTitlesTest(unittest.TestCase):

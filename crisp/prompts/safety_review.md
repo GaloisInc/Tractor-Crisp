@@ -2,6 +2,12 @@ Review the uncommitted changes to the Rust project in `{cargo_dir_path}` for saf
 
 {reference_instruction}
 
+The candidate passed the mechanical checks applicable to this mode. Checker findings are context, not a substitute for review:
+
+```text
+{checker_findings}
+```
+
 ## Safety and compatibility rules
 
 {safety_review_rules}

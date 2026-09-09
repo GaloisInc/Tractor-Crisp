@@ -2,6 +2,7 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_transmute_lifetime::extend: transmutes increased: 0 -> 1
-adv_transmute_lifetime::mutate: transmutes increased: 0 -> 1
-adv_transmute_lifetime::deref: raw pointer derefs increased: 0 -> 1
+warning: adv_transmute_lifetime::extend: transmutes increased: 0 -> 1
+warning: adv_transmute_lifetime::mutate: transmutes increased: 0 -> 1
+warning: adv_transmute_lifetime::deref: raw pointer derefs increased: 0 -> 1
+total unsafe operations increased: 0 -> 3

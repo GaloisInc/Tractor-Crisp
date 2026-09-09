@@ -13,6 +13,10 @@ AGENT_PLAN = _prompt('agent_plan.md')
 
 AGENT_SAFETY_REVIEW = _prompt('safety_review.md')
 
+# Prose statement of the gates `check-unsafe2` enforces; update it
+# alongside any checker gate change.
+CHECKER_RULES = _prompt('checker_rules.md').strip()
+
 SAFETY_REVIEW_RULES = _prompt('safety_review_rules.md').strip()
 
 FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()

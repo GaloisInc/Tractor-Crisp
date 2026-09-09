@@ -542,6 +542,14 @@ def check_unsafe2(cfg: Config, mvir: MVIR,
         n_op = _check_unsafe2_impl(cfg, mvir, sb, code, unsafe_json, cmd)
     return n_op
 
+# check-unsafe2 starts each finding with an item path; rustc diagnostics never do.
+CHECK_UNSAFE2_FINDING_RE = re.compile(r'^(?:warning: )?[A-Za-z_]\w*::')
+
+def check_unsafe2_findings(n_op: CheckUnsafe2AnalysisNode) -> str:
+    """Give prompts these, not the raw log: on large crates its rustc lints
+       run to megabytes, past what the sandbox can pass to an agent."""
+    return '\n'.join(line for line in n_op.body_str().splitlines()
+        if CHECK_UNSAFE2_FINDING_RE.match(line))
 
 @analysis
 def _split_rust_impl(

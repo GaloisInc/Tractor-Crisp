@@ -2,4 +2,5 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_project_derive: unsafe impls increased increased: 0 -> 1
+warning: adv_project_derive: unsafe impl count increased: 0 -> 1
+total unsafe operations increased: 0 -> 1

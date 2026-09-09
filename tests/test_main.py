@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from crisp.__main__ import (
     prior_agent_plans,
     prior_review_findings,
+    update_review_feedback,
     update_target_deferrals,
     safety_loop_common, FuelLimits,
 )
@@ -121,6 +122,39 @@ class SafetyLoopTest(unittest.TestCase):
         calls = self.run_attempts(['blocked', 0, 1, 'blocked'])
         self.assertEqual(calls[2]['suppressed'], frozenset({'crate::0', 'crate::1'}))
         self.assertEqual(calls[3]['suppressed'], frozenset())
+
+    def test_reports_survive_other_rejections_reductions_and_target_refusal(self):
+        calls = self.run_attempts([
+            'rejected', 'rejected', 'blocked', 'blocked', 1,
+            'blocked', 1, 0, 'blocked'], targets=[0, 1, 2, 3, 4, 0, 5, 0, 1])
+        for i in (2, 5, 6, 7):
+            self.assertEqual(set(calls[i]['review_feedback']), {'crate::0', 'crate::1'})
+        self.assertEqual(set(calls[8]['review_feedback']), {'crate::1'})
+
+
+class ReviewFeedbackTest(unittest.TestCase):
+    def test_other_targets_keep_their_reports_after_rejection_or_acceptance(self):
+        feedback = {'inflate_fast': 'first report'}
+        feedback = update_review_feedback(feedback, 'inflate_table',
+            report='second report', completed=False)
+        self.assertEqual(feedback, {
+            'inflate_fast': 'first report', 'inflate_table': 'second report'})
+        self.assertEqual(update_review_feedback(feedback, 'unrelated',
+            report=None, completed=True), feedback)
+        self.assertEqual(update_review_feedback(feedback, 'inflate_table',
+            report=None, completed=True), {'inflate_fast': 'first report'})
+
+    def test_latest_report_replaces_only_its_target(self):
+        feedback = {'inflate_fast': 'old report', 'inflate_table': 'keep this'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report='new report', completed=False),
+            {'inflate_fast': 'new report', 'inflate_table': 'keep this'})
+
+    def test_failed_or_refused_attempt_keeps_feedback(self):
+        feedback = {'inflate_fast': 'first report'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report=None, completed=False), feedback)
+
 
 class PlanRecoveryTest(unittest.TestCase):
     def test_current_records_recover_latest_producers_plan(self):

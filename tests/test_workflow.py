@@ -6,7 +6,7 @@ from crisp.mvir import FileNode, MVIR, TreeNode
 from crisp.config import ModelsConfig
 
 from crisp.workflow import (
-    AGENT_SAFETY_PROMPT,
+    AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT,
     AGENT_SAFETY_REVIEW_PROMPT,
     CHECKER_RULES, FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
     SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
@@ -28,7 +28,7 @@ The diff removes `unsafe` from several exported entry points.
 
 
 class SafetyWorkerTest(unittest.TestCase):
-    def test_worker_receives_baseline_and_menu(self):
+    def test_worker_receives_baseline_menu_and_feedback(self):
         cfg = SimpleNamespace(
             transpile=SimpleNamespace(output_dir='crate'),
             relative_path=lambda path: path,
@@ -46,15 +46,25 @@ class SafetyWorkerTest(unittest.TestCase):
         code, plans, tests = object(), object(), object()
         with patch('crisp.workflow.agent.run_rewrite') as rewrite:
             Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
-                suppressed=frozenset({'crate::second'}))
+                suppressed=frozenset({'crate::second'}),
+                review_feedback={'crate::first': 'FIRST full report',
+                    'crate::second': 'SECOND full report'})
         self.assertEqual(rewrite.call_args.args[3], ModelsConfig().agent_loop)
         self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
         workflow.find_unsafe2_json.assert_called_once_with(code)
         extra = rewrite.call_args.kwargs['extra_code']
         self.assertIs(extra['tests'], tests)
+        reports = workflow.mvir.node(extra['review_feedback'].files[
+            'SAFETY_REVIEW_FEEDBACK.md']).body_str()
+        self.assertIn('## crate::first', reports)
+        self.assertIn('FIRST full report', reports)
+        self.assertIn('## crate::second', reports)
+        self.assertIn('SECOND full report', reports)
         prompt = rewrite.call_args.args[2]
         self.assertIn('- crate::first: 2', prompt)
+        self.assertIn('SAFETY_REVIEW_FEEDBACK.md', prompt)
         self.assertIn('do not target: `crate::second`', prompt)
+        self.assertNotIn('FIRST full report', prompt)
         self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
 
 
@@ -83,11 +93,13 @@ class SafetyStepTest(unittest.TestCase):
 
     def test_one_invocation_uses_one_fuel_and_runs_gates(self):
         self.w.fuel.fuel = 1
-        outcome = self.run_step(suppressed=frozenset({'other'}))
+        feedback = {'crate::target': 'Use initialized storage'}
+        outcome = self.run_step(review_feedback=feedback, suppressed=frozenset({'other'}))
         self.assertIs(outcome.code, self.candidate)
         self.assertEqual(self.w.fuel.fuel, 0)
         self.w.agent_safety.assert_called_once()
         call = self.w.agent_safety.call_args
+        self.assertEqual(call.kwargs['review_feedback'], feedback)
         self.assertEqual(call.kwargs['suppressed'], frozenset({'other'}))
         self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.candidate)
         self.w.test_op.assert_called_once_with(self.candidate, self.c_code)
@@ -268,6 +280,18 @@ class ReviewRuleParityTest(unittest.TestCase):
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
         self.assertIn('overall_explanation', prompt)
         self.assertIn('CRISP_REVIEW: PASS', prompt)
+
+
+class RejectedReviewPromptTest(unittest.TestCase):
+    def test_report_names_the_target_it_describes(self):
+        prompt = AGENT_FFI_REJECTED_PROMPT.format(
+            target='zlib::src::inffast::inflate_fast',
+            report='Keep the exported wrapper thin.',
+        )
+
+        self.assertIn('attempt at `zlib::src::inffast::inflate_fast`', prompt)
+        self.assertIn('rejection of that unrelated work', prompt)
+        self.assertNotIn('attempt at this step', prompt)
 
 
 class MergeFfiFindingTitlesTest(unittest.TestCase):

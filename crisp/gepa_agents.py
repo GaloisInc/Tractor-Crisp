@@ -234,7 +234,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
 
         # Iterate over tasks
         for task in batch:
-            n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
+            n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #TODO: for single big projects (e.g. zlib), consider starting from a different node which already has some unsafe removed (e.g. the tag `attempt20_20260908B_reflGPT5p6`). We can also use different nodes with varying degrees of unsafe removed as multiple data points in the trainset and valset. Immunant might have more of such nodes saved.
 
             # If any candidate prompt is missing expected formatted blocks
             if bad_prompt_types:
@@ -293,12 +293,11 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
                     )
 
                     # ================== # ================== # ================== # ================== #
-                    #NOTE: The following commented-out line makes the rewritten code the 'current' node
-                    # It is recommended to *not* do this, since this reduces the performance of GEPA
-                    # since the optimization goalposts are being changed by changing the 'current' node
-                    # Hence, keep the following line commented out
-                    # ================== # ================== # ================== # ================== #
-                    # task['workflow'].accept(n_output_code)
+                    #NOTE:
+                    # We may think of assigning the output node of one iteration to the input node for the next iteration, so that we get incremental progress.
+                    # But, it is actually recommended to *not* do this (even for hard cases like zlib) since this changes the optimization goalposts and hence is likely to reduce the performance of GEPA.
+                    # Instead, if we want incremental progress, we can run the eval functions which applies a prompt (or set of prompts) repeatedly, while updating the input of each attempt to be the output of the previous attempt.
+                    # Also, note that the eval functions do not touch the 'current' node. They create a separate node 'attempts' which starts off as a copy of the 'current' node, then gets updated repeatedly. In general, it is best to not touch the 'current' node.
                     # ================== # ================== # ================== # ================== #
 
                     n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
@@ -442,7 +441,6 @@ def run_gepa(
         task_input = {'workflow': workflow}
         trainset = [task_input]
         valset = [task_input]
-        #TODO for single big projects (e.g. zlib), consider getting different checkpoints -- 6000 unsafe remaining, 5000 unsafe remaining, etc -- as different nodes which can be used in trainset and valset instead of just 1 data point for the starting code. Immunant might have these checkpoints saved. Alternatively, the GEPA script can try saving these.
 
     # Instantiate response evaluator
     if response_evaluator is None:

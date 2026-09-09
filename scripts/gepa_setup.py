@@ -23,7 +23,7 @@ or "rerun" to get things back into place for a fresh GEPA run.
 ==================== BEHAVIOR ====================
 
 When running `python scripts/gepa_setup.py <dataset_dir> <initial>`, this does the following on all projects inside the dataset:
-1. Use C2Rust to convert C code to unsafe Rust. Make sure it compiles and passes tests. When done, the 'current' node of all the dataset's projects will point to the unsafe Rust.
+1. Use C2Rust to convert C code to unsafe Rust. Make sure it compiles and passes tests. When done, the 'current' node of all the dataset's projects will point to the unsafe Rust. *This is usually a good starting point for GEPA workflows.*
 2. Use an AI agent to create a safety plan for refactoring the unsafe Rust. When done, the 'plans' node of all the dataset's projects will point to this plan.
 3. Place an entire backup of the dataset directory in the parent location of this repo (e.g. at `../B01_organic_gepaready_backup/`). This can be used for re-running.
 

@@ -29,7 +29,7 @@ def process_project(project_folder: Path, overwrite: bool):
         else:
             print(f"Processing project '{project_folder.name}' ...")
             n_plans = workflow.do_safety_plan_agent(
-                n_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current')), #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
+                n_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current')),
                 n_test_code =  workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))
             )[1]
             workflow.mvir.set_tag('plans', n_plans.node_id())

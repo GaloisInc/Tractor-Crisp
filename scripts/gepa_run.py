@@ -92,6 +92,6 @@ if __name__ == '__main__':
     # evaluate_gepa_llm()
 
     # run_gepa_agents()
-    evaluate_gepa_agents()
+    # evaluate_gepa_agents()
 
-    # pass
+    pass

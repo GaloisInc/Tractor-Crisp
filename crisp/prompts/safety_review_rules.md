@@ -1,5 +1,7 @@
 Preserve the original program's observable behavior and API contracts while making its Rust implementation safer. A lower unsafe count and passing tests are evidence, not a proof of safety or compatibility. These rules apply to every changed candidate, including count-neutral preparation and changes outside exported wrappers.
 
+A checker-tolerated increase is acceptable when it moves or consolidates existing unsafe operations into an already-unsafe function — or into a new named implementation function such as an ownership facade or constructor — so they can be eliminated together, or when a conversion genuinely narrows the unsafe surface.
+
 - Discharge safety preconditions before removing an `unsafe` qualifier or making a foreign declaration or callback type safe. Follow aliases, callback contexts, callers, and affected helpers; paired callbacks alone do not validate their context or lifetime.
 - Preserve ownership, aliasing, pointer provenance, initialization, and lifetimes. Reject invented lifetimes, unverified slice lengths, general-purpose helpers that manufacture references from arbitrary pointers, and pointer-to-integer registries that merely hide unresolved obligations.
 - Preserve allocation/deallocation pairing, caller-supplied allocation policies, caller-owned buffers, callback contracts, and public data layouts. Replacing a caller's resource with independently allocated Rust storage must not change those contracts.

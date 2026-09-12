@@ -17,7 +17,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
-    AggregateKind,
+    AggregateKind, CastKind, Local, StatementKind,
 };
 use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
@@ -54,6 +54,10 @@ struct FunctionVisitor<'a> {
     casts_int_to_ptr: usize,
     /// Number of inline assembly blocks within the current function.
     inline_asm: usize,
+    /// Temps holding a `Box`'s pointer, produced when MIR lowering elaborates a safe `Box`
+    /// deref.  Derefs of these don't count; each must be written exactly once.
+    box_ptr_locals: HashSet<Local>,
+    box_ptr_written: HashSet<Local>,
 }
 
 impl<'a> FunctionVisitor<'a> {
@@ -67,16 +71,38 @@ impl<'a> FunctionVisitor<'a> {
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
             inline_asm: 0,
+            box_ptr_locals: box_ptr_locals(body),
+            box_ptr_written: HashSet::new(),
         }
     }
 }
 
+fn box_ptr_locals(body: &Body) -> HashSet<Local> {
+    let mut out = HashSet::new();
+    for bb in &body.blocks {
+        for stmt in &bb.statements {
+            if let StatementKind::Assign(ref dest, Rvalue::Cast(CastKind::BoxDerefTransmute, ..)) =
+                stmt.kind
+            {
+                assert!(dest.projection.is_empty(), "box deref cast into a projected place");
+                out.insert(dest.local);
+            }
+        }
+    }
+    out
+}
+
 impl MirVisitor for FunctionVisitor<'_> {
     fn visit_place(&mut self, x: &Place, ptx: PlaceContext, loc: Location) {
+        if x.projection.is_empty() && ptx.is_mutating() && self.box_ptr_locals.contains(&x.local) {
+            assert!(self.box_ptr_written.insert(x.local),
+                "box pointer temp _{} written twice", x.local);
+        }
         let mut ty = self.body.local_decl(x.local).unwrap().ty;
-        for proj in &x.projection {
+        for (i, proj) in x.projection.iter().enumerate() {
             if let ProjectionElem::Deref = *proj {
-                if ty.kind().is_raw_ptr() {
+                let is_box_ptr = i == 0 && self.box_ptr_locals.contains(&x.local);
+                if ty.kind().is_raw_ptr() && !is_box_ptr {
                     self.derefs_raw_ptr += 1;
                 }
             } else if let ProjectionElem::Field(idx, _) = *proj {

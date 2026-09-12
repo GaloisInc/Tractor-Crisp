@@ -1039,6 +1039,8 @@ def migrate_codex_agent_op_v2(mvir: MVIR, metadata: dict[str, Any]):
         ('code', metadata.pop('new_code')),
         ('plans', metadata.pop('planning_files')),
     ]
+    # v2 stored the prompt as a file node; v3 keeps it inline in the command.
+    prompt = mvir.node(NodeId(metadata.pop('raw_prompt'))).body().decode()
     metadata['cmds'] = [
-        ['codex', 'dummy-cmd', metadata.pop('prompt')],
+        ['codex', 'dummy-cmd', prompt],
     ]

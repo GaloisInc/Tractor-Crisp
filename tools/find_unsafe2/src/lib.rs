@@ -17,7 +17,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
 use rustc_public::mir::{
     Body, Terminator, TerminatorKind, Place, Rvalue, Operand, Safety, FieldIdx, ProjectionElem,
-    AggregateKind,
+    AggregateKind, CastKind, Local, Statement, StatementKind,
 };
 use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
@@ -54,6 +54,9 @@ struct FunctionVisitor<'a> {
     casts_int_to_ptr: usize,
     /// Number of inline assembly blocks within the current function.
     inline_asm: usize,
+    /// Temps holding a `Box`'s pointer, produced when MIR lowering elaborates a safe `Box`
+    /// deref.  Derefs of these don't count.
+    box_ptr_locals: HashSet<Local>,
 }
 
 impl<'a> FunctionVisitor<'a> {
@@ -67,16 +70,73 @@ impl<'a> FunctionVisitor<'a> {
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
             inline_asm: 0,
+            box_ptr_locals: box_ptr_locals(body),
         }
     }
+}
+
+/// Collects `BoxDerefTransmute` temps and checks the assumptions that make skipping their derefs
+/// sound: each is written exactly once, and nothing takes its address (only the pointee's).
+#[derive(Default)]
+struct BoxPtrScan {
+    locals: HashSet<Local>,
+    writes: HashMap<Local, usize>,
+    addr_taken: HashSet<Local>,
+}
+
+impl MirVisitor for BoxPtrScan {
+    fn visit_statement(&mut self, stmt: &Statement, loc: Location) {
+        if let StatementKind::Assign(ref dest, Rvalue::Cast(CastKind::BoxDerefTransmute, ..)) =
+            stmt.kind
+        {
+            assert!(dest.projection.is_empty(), "box deref cast into a projected place");
+            self.locals.insert(dest.local);
+        }
+        self.super_statement(stmt, loc);
+    }
+
+    fn visit_rvalue(&mut self, x: &Rvalue, loc: Location) {
+        if let Rvalue::Ref(_, _, ref place)
+            | Rvalue::AddressOf(_, ref place)
+            | Rvalue::Reborrow(_, _, ref place) = *x
+        {
+            if place.projection.first() != Some(&ProjectionElem::Deref) {
+                self.addr_taken.insert(place.local);
+            }
+        }
+        self.super_rvalue(x, loc);
+    }
+
+    fn visit_place(&mut self, x: &Place, ptx: PlaceContext, loc: Location) {
+        // Count writes via `visit_place` + `ptx.is_mutating()` to include
+        // `TerminatorKind::Call` destinations and other writes, not just
+        // `StatementKind::Assign`. Scanning statements alone could miss a second
+        // write and incorrectly exempt dereferences of an overwritten box temp.
+        if x.projection.is_empty() && ptx.is_mutating() {
+            *self.writes.entry(x.local).or_insert(0) += 1;
+        }
+        self.super_place(x, ptx, loc);
+    }
+}
+
+fn box_ptr_locals(body: &Body) -> HashSet<Local> {
+    let mut scan = BoxPtrScan::default();
+    scan.visit_body(body);
+    for &local in &scan.locals {
+        assert!(!scan.addr_taken.contains(&local), "box pointer temp _{local} has its address taken");
+        let writes = scan.writes.get(&local).copied().unwrap_or(0);
+        assert!(writes == 1, "box pointer temp _{local} written {writes} times");
+    }
+    scan.locals
 }
 
 impl MirVisitor for FunctionVisitor<'_> {
     fn visit_place(&mut self, x: &Place, ptx: PlaceContext, loc: Location) {
         let mut ty = self.body.local_decl(x.local).unwrap().ty;
-        for proj in &x.projection {
+        for (i, proj) in x.projection.iter().enumerate() {
             if let ProjectionElem::Deref = *proj {
-                if ty.kind().is_raw_ptr() {
+                let is_box_ptr = i == 0 && self.box_ptr_locals.contains(&x.local);
+                if ty.kind().is_raw_ptr() && !is_box_ptr {
                     self.derefs_raw_ptr += 1;
                 }
             } else if let ProjectionElem::Field(idx, _) = *proj {

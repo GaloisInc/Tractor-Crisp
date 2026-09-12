@@ -122,6 +122,8 @@ tests_assert_rejected! {
     entry_point_call_from_impl,
     inline_asm,
     unsafe_impl_send,
+    // Hand-writing `#[automatically_derived]` doesn't make an impl derive-generated.
+    fake_automatically_derived,
     // Tests various methods of converting `usize` to a pointer beyond `x as *mut T`.
     int_to_ptr_laundering,
 
@@ -144,6 +146,8 @@ tests_assert_accepted! {
     closure_reindex,
     // Safe `Box` access is lowered to a raw pointer deref in MIR, which must not be charged.
     box_field_write,
+    // Derive expansions (here `TrivialClone` from `derive(Copy, Clone)`) aren't charged.
+    derive_copy_clone,
 
     // Incorrectly accepted:
 

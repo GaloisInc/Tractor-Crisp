@@ -77,7 +77,8 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, codex_login: bool = False) -> list[str]:
+                   model: str, codex_login: bool = False,
+                   effort: str = 'high') -> list[str]:
     cmd = ['codex', subcmd]
 
     if codex_login:
@@ -114,7 +115,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
     # [0]: https://developers.openai.com/codex/speed
     # [1]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/service_tier_resolution.rs#L18
     cmd += [
-        '-c', 'model_reasoning_effort="high"',
+        '-c', f'model_reasoning_effort="{effort}"',
         '-c', 'features.fast_mode=false',
     ]
 
@@ -312,6 +313,7 @@ def run_agent(
             '.codex/',
             '!.codex/log/',
             '!.codex/sessions/',
+            '!.codex/last_message.txt',
         ]
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
         raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
@@ -384,7 +386,9 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
-) -> tuple[TreeNode, TreeNode]:
+    effort: str = 'high',
+) -> tuple[TreeNode, TreeNode, str]:
+    """Return the edited code, planning files, and final message if available."""
     extra_code, env = _normalize_run_args(extra_code, env)
 
     if find_unsafe2_json_dir is not None:
@@ -410,11 +414,13 @@ def run_rewrite(
         inputs[name] = Input(tree)
         extra_code_files.update(tree.files.keys())
 
+    last_message_path = '.codex/last_message.txt'
     codex_cmd = _codex_command(cfg, 'exec', [
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], codex_login=codex_login, model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,
@@ -425,6 +431,7 @@ def run_rewrite(
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+            'last_message': lambda p: p == last_message_path,
         },
         cwd = cwd,
         clean_cmds = clean_cmds,
@@ -433,8 +440,12 @@ def run_rewrite(
 
     output_code = outputs['code']
     output_plans = outputs['plans']
+    message_files = outputs['last_message'].files
+    final_message = (
+        mvir.node(message_files[last_message_path]).body().decode('utf-8', errors='replace')
+        if last_message_path in message_files else '')
 
-    return (output_code, output_plans)
+    return (output_code, output_plans, final_message)
 
 
 def run_review(
@@ -448,6 +459,7 @@ def run_review(
     cwd: str = '.',
     codex_login: bool = False,
     env: dict | None = None,
+    effort: str = 'high',
 ) -> tuple[str, bytes, bool]:
     """
     Run `codex exec review` over the change from `old_code` to `new_code` and
@@ -456,8 +468,9 @@ def run_review(
     inspected the change rather than answering blind).
 
     `codex exec review` is used rather than a plain `codex exec` prompt
-    because review mode reports findings in a fixed, machine-parseable format
-    (it overrides any output convention requested in the prompt).  Codex's own
+    because review mode reports findings in a fixed, machine-parseable format.
+    Its renderer preserves the overall_explanation field, where CRISP asks
+    for an explicit verdict. Codex's own
     sandbox is bypassed (it cannot start inside the CRISP sandbox).
 
     Review mode can only review a git diff.  The review runs in its own
@@ -494,9 +507,13 @@ def run_review(
     }
     if codex_login:
         inputs['codex_auth'] = _codex_auth_input()
+    extra_paths = set()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
+        if tree.files.keys() & (old_code.files.keys() | new_code.files.keys()):
+            raise CrispError('review context overlaps candidate files')
         inputs[name] = Input(tree)
+        extra_paths.update(tree.files)
 
     setup_cmds = [
         ['git', 'init', '--quiet'],
@@ -509,6 +526,14 @@ def run_review(
         # `$GIT_WORK_TREE` set will compare the committed state against `.`,
         # thus comparing the old code to the new code.
         ['env', 'GIT_WORK_TREE=crisp_old_code', 'git', 'add', '--all'],
+    ]
+    # Keep the original sources/tests at their normal paths, as in the
+    # planner and worker. Include them in the baseline so they are context,
+    # not untracked candidate additions. No second checkout is needed.
+    if extra_paths:
+        setup_cmds.append(
+            ['git', '--literal-pathspecs', 'add', '--force', '--', *sorted(extra_paths)])
+    setup_cmds += [
         ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
         # Old files are no longer needed.
         ['rm', '-rf', 'crisp_old_code'],
@@ -522,9 +547,9 @@ def run_review(
         '--dangerously-bypass-approvals-and-sandbox',
         # Structured events let us verify the reviewer ran commands.
         '--json',
-        '--output-last-message', last_message_path,
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], codex_login=codex_login, model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,
@@ -540,9 +565,10 @@ def run_review(
         env = env,
     )
 
-    n_last_message_tree = mvir.node(n_op.outputs['last_message'])
-    n_last_message = mvir.node(n_last_message_tree.sole_file)
-    report_bytes = n_last_message.body().decode('utf-8', errors='replace')
+    message_files = outputs['last_message'].files
+    report_bytes = (
+        mvir.node(message_files[last_message_path]).body().decode('utf-8', errors='replace')
+        if last_message_path in message_files else '')
     logs = n_op.body()
     ran_commands = _review_ran_commands(logs)
     return report_bytes, logs, ran_commands

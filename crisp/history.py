@@ -9,9 +9,11 @@ from .mvir import MVIR, Node, TreeNode
 # nodes.
 OUTPUT_KEYS = {
     mvir_module.LlmOpNode.KIND: 'new_code',
-    mvir_module.CodexAgentOpNode.KIND: 'new_code',
+    # `CodexAgentOpNode` indexes its output trees under the `outputs` dict.
+    mvir_module.CodexAgentOpNode.KIND: 'outputs',
     # Backward compatibility with unmigrated `CodexAgentOp`s
     'codex_agent_op': 'new_code',
+    'codex_agent_op_v2': 'new_code',
 }
 
 OUTPUT_KEYS_SET = set((k, v) for k, v in OUTPUT_KEYS.items())
@@ -36,6 +38,9 @@ def predecessors(mvir: MVIR, target: TreeNode) -> Iterator[tuple[TreeNode, Node]
         op = mvir.node(ie.node_id)
         input_key = INPUT_KEYS.get(op.kind)
         if input_key is None:
+            continue
+        # A dict-valued key indexes every tree in it, not just the code.
+        if op.new_code != target.node_id():
             continue
         pred = mvir.node(getattr(op, input_key))
         yield (pred, op)

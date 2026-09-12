@@ -13,6 +13,7 @@ OUTPUT_KEYS = {
     mvir_module.CodexAgentOpNode.KIND: 'outputs',
     # Backward compatibility with unmigrated `CodexAgentOp`s
     'codex_agent_op': 'new_code',
+    'codex_agent_op_v2': 'new_code',
 }
 
 OUTPUT_KEYS_SET = set((k, v) for k, v in OUTPUT_KEYS.items())

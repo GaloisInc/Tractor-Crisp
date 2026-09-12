@@ -2,6 +2,7 @@
 extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_public;
+extern crate rustc_span;
 
 // `rustc_driver` is not used directly, but must be present to avoid "error: crate `rustc_middle`
 // required to be available in rlib format, but was not found in this form" when running tests.
@@ -27,6 +28,7 @@ use rustc_public::ty::{
 };
 use serde::{Serialize, Deserialize};
 use rustc_public::mir::visit::{MirVisitor, PlaceContext, Location};
+use rustc_span::hygiene::{ExpnKind, MacroKind};
 
 
 struct FunctionVisitor<'a> {
@@ -690,11 +692,18 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         let it = id.trait_impl();
         let td = it.value.def_id;
         let decl = TraitDef::declaration(&td);
-        if matches!(decl.safety, Safety::Unsafe) {
-            let impl_parent = id.0.parent().unwrap().name();
-            *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
-            out.total_unsafe += 1;
+        if !matches!(decl.safety, Safety::Unsafe) {
+            continue;
         }
+        // Derive-generated impls (e.g. `TrivialClone` from `derive(Copy, Clone)`) aren't charged.
+        let internal_def_id = rustc_internal::internal::<DefId>(tcx, id.0);
+        let expn = tcx.def_span(internal_def_id).ctxt().outer_expn_data();
+        if matches!(expn.kind, ExpnKind::Macro(MacroKind::Derive, _)) {
+            continue;
+        }
+        let impl_parent = id.0.parent().unwrap().name();
+        *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
+        out.total_unsafe += 1;
     }
 
     out

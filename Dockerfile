@@ -90,14 +90,14 @@ RUN ln -s /opt/hayroll/hayroll /usr/local/bin/hayroll
 COPY tools/ /opt/crisp-tools/
 RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
 
-# Install codex-cli
+# Install the complete Codex package, including the code-mode host.
 RUN mkdir /opt/codex-cli \
     && cd /opt/codex-cli \
-    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.145.0/codex-x86_64-unknown-linux-musl.tar.gz \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-x86_64-unknown-linux-musl.tar.gz \
     && wget --quiet "$codex_url" \
     && tar -xzf "$(basename "$codex_url")" \
-    && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex \
-    && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/apply_patch \
+    && ln -s "$PWD/bin/codex" /usr/local/bin/codex \
+    && ln -s "$PWD/bin/codex" /usr/local/bin/apply_patch \
     && rm "$(basename "$codex_url")"
 
 # Verify that the Codex file-editing helper is available and functional.

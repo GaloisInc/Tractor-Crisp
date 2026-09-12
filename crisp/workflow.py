@@ -142,6 +142,18 @@ AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
 
 FFI_SEEN_FINDINGS_CAP = 10
 
+SAFETY_MODELS = (
+    ('gpt-5.6-sol', 'medium'),
+    ('gpt-5.6-sol', 'xhigh'),
+    ('gpt-6-astra', 'medium'),
+    ('gpt-6-astra', 'xhigh'),
+)
+
+def review_rejected(report: str) -> bool:
+    """A rejecting report has defect findings, not just a review failure."""
+    return (not report.startswith('CRISP_REVIEW: INCOMPLETE')
+        and AGENT_FFI_REVIEW_FINDING_RE.search(report) is not None)
+
 def review_passed(report: str, ran_commands: bool) -> bool:
     """Require inspected code, one explicit approval, and no findings."""
     lines = report.strip().splitlines()
@@ -290,16 +302,16 @@ class StepOutcome(typing.NamedTuple):
 
 
 AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected by review. The reviewer reported:
+A previous attempt at `{target}` was rejected by review. The reviewer reported:
 
 {report}
 
-Do not repeat this mistake.
+This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
 # Sticky reminder injected into every attempt after the first review
-# rejection in this or a prior run, built from harvested reviewer finding
-# titles.
+# rejection, built from harvested reviewer finding titles.  Unlike the full
+# latest report, this remains useful after unrelated work lands.
 AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
 Earlier attempts in this run or a prior run were rejected by review. The reviewer's findings included:
 
@@ -1414,6 +1426,8 @@ class Workflow:
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
         suppressed: frozenset[str] = frozenset(),
+        review_feedback: dict[str, str] | None = None,
+        worker: tuple[str, str] | None = None,
     ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1440,12 +1454,26 @@ class Workflow:
             safety_review_rules = SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
         )
+        if review_feedback:
+            reports = '\n\n'.join(
+                f'## {target}\n\n' + AGENT_FFI_REJECTED_PROMPT.format(
+                    target=target, report=report)
+                for target, report in review_feedback.items())
+            extra_code['review_feedback'] = TreeNode.new(mvir, files={
+                'SAFETY_REVIEW_FEEDBACK.md': FileNode.new(mvir, reports).node_id()})
+            prompt += ('\n\nBefore editing your chosen target, read its section in '
+                '`SAFETY_REVIEW_FEEDBACK.md` and address the prior findings. '
+                'Reports are keyed by the exact inventory target name. '
+                'This file is read-only guidance; do not edit it.')
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
-        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
+        model, effort = worker or ((cfg.models.agent_loop, 'high')
+            if cfg.models.agent_loop else SAFETY_MODELS[0])
+        return agent.run_rewrite(cfg, mvir, prompt, model, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
             unsafe_json = self.find_unsafe2_json(n_code),
+            effort = effort,
             codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
@@ -1656,6 +1684,8 @@ class Workflow:
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
         suppressed: frozenset[str] = frozenset(),
+        review_feedback: dict[str, str] | None = None,
+        worker: tuple[str, str] | None = None,
     ) -> StepOutcome:
         """Run one worker invocation, then judge its candidate against n_code."""
         self.fuel.use()
@@ -1663,7 +1693,9 @@ class Workflow:
             n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal,
-            suppressed = suppressed)
+            suppressed = suppressed,
+            review_feedback = review_feedback,
+            worker = worker)
         target = parse_target(final_message)
         verdict, note = parse_verdict(final_message)
         if verdict == 'blocked':

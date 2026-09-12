@@ -41,7 +41,8 @@ class ConfigBase:
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
     agent_plan: str = "gpt-6-astra"
-    agent_loop: str = "gpt-5.6-terra"
+    # None selects the adaptive safety-worker ladder; a model pins it at high effort.
+    agent_loop: str | None = None
     # Used for independent safety and compatibility reviews.
     agent_review: str = "gpt-5.6-luna"
     postprocess: str = "gpt-5.6-luna"

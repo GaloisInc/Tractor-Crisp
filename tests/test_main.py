@@ -6,14 +6,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from crisp.__main__ import (
+    SafetyModelPolicy,
     prior_agent_plans,
     prior_review_findings,
+    update_review_feedback,
     update_target_deferrals,
     safety_loop_common, FuelLimits,
 )
 from crisp.mvir import CodexAgentOpNode, CodexReviewOpNode, FileNode, MVIR, TreeNode
 from crisp.config import ModelsConfig
-from crisp.workflow import CrispError, FuelCounter, StepOutcome
+from crisp.workflow import CrispError, FuelCounter, StepOutcome, SAFETY_MODELS
 
 
 class TargetDeferralsTest(unittest.TestCase):
@@ -63,7 +65,80 @@ class TargetDeferralsTest(unittest.TestCase):
                 self.assertEqual(deferred, [
                     frozenset(), frozenset({'crate::real'})])
                 self.assertEqual(w.fuel.fuel, 1)
+                self.assertIn('status: SATURATED', output.getvalue())
                 self.assertIn("attributing attempt to 'crate::second'", output.getvalue())
+
+
+class SafetyModelPolicyTest(unittest.TestCase):
+    def test_escalation_traverses_every_tier_and_stops_at_the_top(self):
+        policy = SafetyModelPolicy()
+        for level in range(len(SAFETY_MODELS)):
+            self.assertEqual(policy.model, SAFETY_MODELS[level])
+            policy.update(0)
+            self.assertEqual(policy.model, SAFETY_MODELS[level])
+            policy.update(0)
+        self.assertEqual(policy.model, SAFETY_MODELS[-1])
+
+    def test_rejection_escalates_immediately_and_progress_resets_stalls(self):
+        policy = SafetyModelPolicy()
+        policy.update(0)
+        policy.update(3)
+        policy.update(0)
+        self.assertEqual(policy.model, SAFETY_MODELS[0])
+        policy.update(0, rejected=True)
+        self.assertEqual(policy.model, SAFETY_MODELS[1])
+        policy.update(0, rejected=True)
+        self.assertEqual(policy.model, SAFETY_MODELS[2])
+
+    def test_repeated_returns_double_stays_up_to_eight_steps(self):
+        policy = SafetyModelPolicy()
+        for stay in (2, 4, 8, 8):
+            policy.update(0, rejected=True)
+            for _ in range(stay):
+                self.assertEqual(policy.model, SAFETY_MODELS[1])
+                policy.update(3)
+            self.assertEqual(policy.model, SAFETY_MODELS[0])
+
+    def test_slow_progress_requires_a_full_rolling_window(self):
+        for reductions in ((1, 2, 1, 4), (1, 1, 1, 6, 1, 1, 1, 1)):
+            with self.subTest(reductions=reductions):
+                policy = SafetyModelPolicy()
+                for removed in reductions[:-1]:
+                    policy.update(removed)
+                    self.assertEqual(policy.model, SAFETY_MODELS[0])
+                policy.update(reductions[-1])
+                self.assertEqual(policy.model, SAFETY_MODELS[1])
+
+    def test_progress_window_resets_on_escalation_and_return(self):
+        policy = SafetyModelPolicy()
+        for _ in range(3):
+            policy.update(1)
+        policy.update(0, rejected=True)
+        policy.update(1)
+        self.assertEqual(policy.model, SAFETY_MODELS[1])
+        policy.update(3)
+        self.assertEqual(policy.model, SAFETY_MODELS[0])
+        for _ in range(3):
+            policy.update(1)
+            self.assertEqual(policy.model, SAFETY_MODELS[0])
+        policy.update(1)
+        self.assertEqual(policy.model, SAFETY_MODELS[1])
+
+    def test_failed_step_cannot_downshift_when_stay_expires(self):
+        policy = SafetyModelPolicy(SAFETY_MODELS[:2])
+        policy.update(0, rejected=True)
+        for _ in range(10):
+            policy.update(0)
+            self.assertEqual(policy.model, SAFETY_MODELS[1])
+        policy.update(1)
+        self.assertEqual(policy.model, SAFETY_MODELS[0])
+
+    def test_single_model_stays_pinned(self):
+        policy = SafetyModelPolicy((('custom', 'high'),))
+        for _ in range(10):
+            policy.update(0, rejected=True)
+            policy.update(1)
+            self.assertEqual(policy.model, ('custom', 'high'))
 
 
 class SafetyLoopTest(unittest.TestCase):
@@ -116,10 +191,68 @@ class SafetyLoopTest(unittest.TestCase):
         self.assertEqual(w.fuel.fuel, 0)
         return attempts
 
+    def test_selected_models_follow_accepted_results_and_failures(self):
+        for results, levels in [
+            (['rejected', 1], [0, 1]),
+            (['incomplete', 1], [0, 0]),
+            (['error', 'error', 1], [0, 0, 1]),
+            (['blocked', 0, 1], [0, 0, 1]),
+            (['blocked', 1, 'blocked', 'blocked', 1], [0, 0, 0, 0, 1]),
+            ([1, 2, 1, 4, 1], [0, 0, 0, 0, 1]),
+            ([1, 2, 1, 5, 1], [0, 0, 0, 0, 0]),
+        ]:
+            with self.subTest(results=results):
+                calls = self.run_attempts(results)
+                self.assertEqual([c['worker'] for c in calls],
+                    [SAFETY_MODELS[i] for i in levels])
+
+    def test_explicit_model_overrides_disable_the_ladder(self):
+        with patch('crisp.__main__.llm.API_MODEL', None):
+            calls = self.run_attempts(['rejected', 'rejected', 1],
+                models=ModelsConfig(agent_loop='custom'))
+        self.assertEqual([c['worker'] for c in calls], [('custom', 'high')] * 3)
+        with patch('crisp.__main__.llm.API_MODEL', 'environment-model'):
+            calls = self.run_attempts(['rejected', 1])
+        self.assertEqual([c['worker'] for c in calls],
+            [('environment-model', 'high')] * 2)
+
     def test_neutral_changes_defer_and_reductions_reopen_targets(self):
         calls = self.run_attempts(['blocked', 0, 1, 'blocked'])
         self.assertEqual(calls[2]['suppressed'], frozenset({'crate::0', 'crate::1'}))
         self.assertEqual(calls[3]['suppressed'], frozenset())
+
+    def test_reports_survive_other_rejections_reductions_and_target_refusal(self):
+        calls = self.run_attempts([
+            'rejected', 'rejected', 'blocked', 'blocked', 1,
+            'blocked', 1, 0, 'blocked'], targets=[0, 1, 2, 3, 4, 0, 5, 0, 1])
+        for i in (2, 5, 6, 7):
+            self.assertEqual(set(calls[i]['review_feedback']), {'crate::0', 'crate::1'})
+        self.assertEqual(set(calls[8]['review_feedback']), {'crate::1'})
+
+
+class ReviewFeedbackTest(unittest.TestCase):
+    def test_other_targets_keep_their_reports_after_rejection_or_acceptance(self):
+        feedback = {'inflate_fast': 'first report'}
+        feedback = update_review_feedback(feedback, 'inflate_table',
+            report='second report', completed=False)
+        self.assertEqual(feedback, {
+            'inflate_fast': 'first report', 'inflate_table': 'second report'})
+        self.assertEqual(update_review_feedback(feedback, 'unrelated',
+            report=None, completed=True), feedback)
+        self.assertEqual(update_review_feedback(feedback, 'inflate_table',
+            report=None, completed=True), {'inflate_fast': 'first report'})
+
+    def test_latest_report_replaces_only_its_target(self):
+        feedback = {'inflate_fast': 'old report', 'inflate_table': 'keep this'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report='new report', completed=False),
+            {'inflate_fast': 'new report', 'inflate_table': 'keep this'})
+
+    def test_failed_or_refused_attempt_keeps_feedback(self):
+        feedback = {'inflate_fast': 'first report'}
+        self.assertEqual(update_review_feedback(feedback, 'inflate_fast',
+            report=None, completed=False), feedback)
+
 
 class PlanRecoveryTest(unittest.TestCase):
     def test_current_records_recover_latest_producers_plan(self):

@@ -9,7 +9,8 @@ from .mvir import MVIR, Node, TreeNode
 # nodes.
 OUTPUT_KEYS = {
     mvir_module.LlmOpNode.KIND: 'new_code',
-    mvir_module.CodexAgentOpNode.KIND: 'new_code',
+    # For `CodexAgentOpNode`, the new code is in `outputs['code']`.
+    mvir_module.CodexAgentOpNode.KIND: 'outputs',
     # Backward compatibility with unmigrated `CodexAgentOp`s
     'codex_agent_op': 'new_code',
 }
@@ -36,6 +37,10 @@ def predecessors(mvir: MVIR, target: TreeNode) -> Iterator[tuple[TreeNode, Node]
         op = mvir.node(ie.node_id)
         input_key = INPUT_KEYS.get(op.kind)
         if input_key is None:
+            continue
+        # For `codex_agent_op_v3`, we get index entries for all `outputs`, not
+        # just `outputs['code']` a.k.a. `new_code`.  Ignore the other outputs.
+        if op.new_code != target.node_id():
             continue
         pred = mvir.node(getattr(op, input_key))
         yield (pred, op)

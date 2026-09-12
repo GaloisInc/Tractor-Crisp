@@ -151,7 +151,7 @@ impl MirVisitor for FunctionVisitor<'_> {
                 let ty = func.ty(self.body.locals()).unwrap();
                 if let Some(sig) = ty.kind().fn_sig() {
                     if sig.value.safety == Safety::Unsafe {
-                        let filename = x.span.get_filename();
+                        let filename = x.source_info.span.get_filename();
                         let is_allowed_unsafe = filename.ends_with("/std/src/macros.rs")
                             || filename.ends_with("/core/src/macros/mod.rs");
                         if !is_allowed_unsafe {

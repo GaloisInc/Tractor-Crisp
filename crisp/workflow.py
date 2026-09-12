@@ -833,7 +833,7 @@ class Workflow:
             elif path.endswith('rust-toolchain.toml'):
                 file = mvir.node(file_id)
                 OLD_TOOLCHAIN = 'nightly-2023-04-15'
-                NEW_TOOLCHAIN = 'nightly-2026-06-17'
+                NEW_TOOLCHAIN = 'nightly-2026-08-02'
                 old_src = file.body_str()
                 assert OLD_TOOLCHAIN in old_src, f'old toolchain toml = {old_src!r}'
                 new_src = old_src.replace(OLD_TOOLCHAIN, NEW_TOOLCHAIN)

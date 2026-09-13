@@ -128,6 +128,8 @@ tests_assert_rejected! {
     // Calls an exported FFI function from implementation code.
     entry_point_call_from_impl,
     inline_asm,
+    // `transmute` lowers to a MIR cast, and the optimizer deletes it when only lifetimes change.
+    transmute_lifetime,
     unsafe_impl_send,
     // Hand-writing `#[automatically_derived]` doesn't make an impl derive-generated.
     fake_automatically_derived,

@@ -635,6 +635,37 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
         Some(CrateItem(rustc_internal::stable(parent_internal_def_id)))
     };
 
+    // The optimizer erases identity transmutes, so read the MIR it starts from.
+    let pre_opt_body = |item: CrateItem| -> Option<Body> {
+        use rustc_hir::def::DefKind;
+        use rustc_hir::Constness;
+        if !item.has_body() {
+            return None;
+        }
+        let did = rustc_internal::internal::<DefId>(tcx, item.0);
+        let is_ctfe = match tcx.def_kind(did) {
+            DefKind::Const { .. } | DefKind::Static { .. } | DefKind::AssocConst { .. }
+            | DefKind::Ctor(..) | DefKind::AnonConst => true,
+            DefKind::Fn | DefKind::AssocFn =>
+                matches!(tcx.constness(did), Constness::Const { always: true }),
+            _ => false,
+        };
+        let body = if is_ctfe {
+            rustc_internal::stable(tcx.mir_for_ctfe(did))
+        } else {
+            let steal = tcx.mir_drops_elaborated_and_const_checked(did.expect_local());
+            if steal.is_stolen() {
+                // Coroutine layouts are computed from optimized MIR, which steals this body.
+                assert!(tcx.is_coroutine(did), "pre-optimization MIR of {} already stolen",
+                    item.name());
+                rustc_internal::stable(tcx.optimized_mir(did))
+            } else {
+                rustc_internal::stable(&*steal.borrow())
+            }
+        };
+        Some(body)
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -644,7 +675,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
 
     let mut rollup_map = IndexMap::new();
     for item in items {
-        if let Some(body) = item.body() {
+        if let Some(body) = pre_opt_body(item) {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 

@@ -36,6 +36,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
         derefs_raw_ptr: 0,
         calls_unsafe: 0,
         inline_asm: 0,
+        transmutes: 0,
         uses_static_mut: IndexMap::new(),
         uses_union_field: IndexMap::new(),
         uses_foreign_fn: IndexMap::new(),
@@ -96,7 +97,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         // Don't check the total.  Each element that feeds into this total is checked individually.
         total_unsafe: _,
         filename: _,
-        is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
+        is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn, ref uses_ffi_entry_point,
         casts_int_to_ptr, sig_contains_raw_ptr,
         ffi_symbol: _,
@@ -114,6 +115,8 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
         || format!("{name}: unsafe function calls"));
     ok &= check_count(old.inline_asm, inline_asm,
         || format!("{name}: inline asm blocks"));
+    ok &= check_count(old.transmutes, transmutes,
+        || format!("{name}: transmutes"));
 
     ok &= check_count_map(&old.uses_static_mut, uses_static_mut,
         |k| format!("{name}: uses of static mut {k}"));

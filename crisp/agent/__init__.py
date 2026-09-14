@@ -17,7 +17,7 @@ from .. import http_server, llm
 from ..config import Config
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
-from ..sandbox import run_sandbox
+from ..sandbox import run_sandbox, Sandbox
 
 # Repo-side agent assets; installed into the sandbox as `.codex/`, the
 # directory codex-cli searches for project-level agents and instructions.
@@ -181,6 +181,9 @@ def _add_codex_agent_inputs(
             path = f'.codex/agents/{profile.name}',
         )
 
+HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
+KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
+PORT_ENV_VAR = 'CRISP_INTERNAL_API_PORT'
 
 class AgentSandbox:
     def __init__(
@@ -213,13 +216,20 @@ class AgentSandbox:
         return exit_code, logs
 
     def run_all_with_api_port(self, api_port, cmds):
-        port_env_var = 'CRISP_API_PORT'
-        assert port_env_var not in self.env
-        self.env[port_env_var] = str(api_port)
+        assert HOST_ENV_VAR not in self.env
+        self.env[HOST_ENV_VAR] = Sandbox.HOST_ADDR
+
+        assert PORT_ENV_VAR not in self.env
+        self.env[PORT_ENV_VAR] = str(api_port)
+
+        assert KEY_ENV_VAR not in self.env
+        self.env[KEY_ENV_VAR] = ''  # TODO
 
         r = self.run_all(cmds)
 
-        del self.env[port_env_var]
+        del self.env[HOST_ENV_VAR]
+        del self.env[PORT_ENV_VAR]
+        del self.env[KEY_ENV_VAR]
         return r
 
     def commit_raw_output_files(

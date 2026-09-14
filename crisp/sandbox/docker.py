@@ -25,6 +25,10 @@ class WorkContainer:
     inputs by calling `run`, and store the outputs back into MVIR using the
     `commit` methods.
     """
+
+    # Address used to access services on the host machine
+    HOST_ADDR = 'host.docker.internal'
+
     def __init__(self, mvir):
         self.mvir = mvir
         self.client = docker.from_env()

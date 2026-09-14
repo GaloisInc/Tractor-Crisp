@@ -18,6 +18,10 @@ class SudoSandbox:
     Helper for managing a `sudo`-based sandbox.  This uses `sudo` to run
     commands as an unprivileged user.
     """
+
+    # Address used to access services on the host machine
+    HOST_ADDR = '127.0.0.1'
+
     def __init__(self, mvir, user):
         self.mvir = mvir
         self.user = user

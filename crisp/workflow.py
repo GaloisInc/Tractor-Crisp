@@ -1269,6 +1269,26 @@ class Workflow:
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
+
+        def op_response(op):
+            from fastapi import Response
+            return Response(content=op.body(), media_type="text/plain",
+                status_code = 200 if op.passed else 400)
+
+        def build_app(asb, app):
+            @app.post('/crisp/run_tests')
+            async def run_tests():
+                code = asb.get_output('code')
+                op = self.test_op(code, n_test_code)
+                return op_response(op)
+
+            @app.post('/crisp/check_unsafe2')
+            async def check_unsafe2():
+                code = asb.get_output('code')
+                unsafe_json = self.find_unsafe2_json(n_code)
+                op = self.check_unsafe2_op(code, unsafe_json)
+                return op_response(op)
+
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
@@ -1279,6 +1299,7 @@ class Workflow:
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
             find_unsafe2_src_dir = cargo_dir,
+            http_build_app = build_app,
         )
 
     @step

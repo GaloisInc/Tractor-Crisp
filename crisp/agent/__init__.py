@@ -444,6 +444,7 @@ def run_rewrite(
     clean_cmds: list[list[str]] = [],
     codex_login: bool = False,
     env: dict | None = None,
+    http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
@@ -492,6 +493,7 @@ def run_rewrite(
         cwd = cwd,
         clean_cmds = clean_cmds,
         env = env,
+        http_build_app = http_build_app,
     )
 
     output_code = outputs['code']

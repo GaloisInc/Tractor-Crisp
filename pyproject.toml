@@ -17,6 +17,9 @@ gepa = [
     "litellm>=1.83.14",
     "pandas>=3.0.2"
 ]
+graph = [
+    "matplotlib>=3.11.0",
+]
 
 [project.scripts]
 crisp = "crisp.__main__:main"

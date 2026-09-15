@@ -186,11 +186,15 @@ class AgentSandbox:
     def __init__(
         self,
         sb: Sandbox,
+        mvir: MVIR,
+        inputs: dict[str, Input],
         output_filters: dict[str, Callable[[str], bool]],
         cwd: str,
         env: dict,
     ):
         self.sb = sb
+        self.mvir = mvir
+        self.inputs = inputs
         self.output_filters = output_filters
         self.cwd = cwd
         self.env = env.copy()
@@ -235,6 +239,13 @@ class AgentSandbox:
         ]
         ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
         return self.sb.commit_dir('.', ignore_spec=ignore_spec, path_filter=path_filter)
+
+    def get_input(self, name) -> TreeNode:
+        inp = self.inputs[name]
+        if isinstance(inp.item, TreeNode) and inp.path == '.':
+            return inp.item
+        else:
+            raise TypeError('TODO: convert Input to TreeNode')
 
     def get_output(self, name) -> TreeNode:
         path_filter = self.output_filters[name]
@@ -340,7 +351,7 @@ def run_agent(
         codex_dir = sb.join('.codex')
         env.setdefault('CODEX_HOME', codex_dir)
 
-        asb = AgentSandbox(sb, output_filters, cwd, env)
+        asb = AgentSandbox(sb, mvir, inputs, output_filters, cwd, env)
 
         all_cmds = []
         if init_git:

@@ -514,7 +514,7 @@ def run_review(
         ['rm', '-rf', 'crisp_old_code'],
     ]
 
-    last_message_path = '.codex/last_message.txt'
+    last_message_path = 'codex_last_message.txt'
     codex_cmd = _codex_command(cfg, 'exec', [
         'review',
         # Codex's own sandbox (bubblewrap) cannot start inside the CRISP

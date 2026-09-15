@@ -157,7 +157,7 @@ Continue the plan from `SAFETY_PLAN.md`.
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
-curl --fail-with-body http://host.docker.internal:$CRISP_API_PORT/crisp/check_unsafe2
+crisp_check_unsafe2.sh
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
 '''
@@ -183,9 +183,9 @@ Do not repeat these mistakes.
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this command:
 ```sh
-curl --fail-with-body http://host.docker.internal:$CRISP_API_PORT/crisp/run_tests
+crisp_run_tests.sh
 ```
-This will exit zero if the tests passed and nonzero (due to an HTTP 400) if they failed.  In either case, it returns the test logs as the body.
+This will exit zero if the tests passed and nonzero if they failed.  In either case, it returns the test logs as the body.
 
 Note: this uses the current Rust code, but always uses the original version of the tests.  You MUST NOT edit the test code (or the original C code), and doing so will have no effect on the tests run by this command.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()

@@ -8,4 +8,5 @@ set -euo pipefail
 # there's any new unsafe (or unsafe-adjacent) code relative to the baseline.
 
 curl -X POST --fail-with-body \
+    -H "Authorization: Bearer $CRISP_INTERNAL_API_KEY" \
     http://$CRISP_INTERNAL_API_HOST:$CRISP_INTERNAL_API_PORT/crisp/check_unsafe2

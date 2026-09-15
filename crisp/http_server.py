@@ -105,7 +105,7 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
     """
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(('127.0.0.1', 0))
+        listener.bind(('0.0.0.0', 0))
         api_port = listener.getsockname()[1]
 
         with RunnerThread(lambda: f(api_port, *args, **kwargs)) as rt:

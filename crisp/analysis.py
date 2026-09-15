@@ -129,7 +129,10 @@ def run_tests(cfg: Config, mvir: MVIR,
         sb.checkout(code)
         sb.checkout(test_code)
 
-        exit_code, logs = sb.run(cmd, shell=True, stream=True)
+        # Add `-x` option to print each command before running it.  When the
+        # agent is given the test logs, this helps it understand the different
+        # parts of the output.
+        exit_code, logs = sb.run(['sh', '-x', '-c', cmd], stream=True)
 
     n = TestResultNode.new(
             mvir,

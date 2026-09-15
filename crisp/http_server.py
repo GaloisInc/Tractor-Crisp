@@ -1,9 +1,12 @@
 import asyncio
 from contextlib import asynccontextmanager
+import secrets
 import socket
 import threading
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import hypercorn.asyncio
 from hypercorn.config import Config as HypercornConfig
 
@@ -97,18 +100,33 @@ def example_build_app(app: FastAPI):
         return {'time': datetime.now().astimezone().isoformat()}
 
 
+http_bearer = HTTPBearer()
+
+def mk_check_api_key(expect_api_key):
+    def check_api_key(
+        credentials: Annotated[HTTPAuthorizationCredentials, Depends(http_bearer)],
+    ):
+        print(f'check_api_key: got {credentials!r}')
+        if credentials.credentials != expect_api_key:
+            raise HTTPException(status_code=403, detail='bad API key')
+    return check_api_key
+
+
 def run_with_callbacks(build_app, f, *args, **kwargs):
     """
-    Run `f(api_port, *args, **kwargs)` on a background thread, where `api_port`
-    is a port number on `localhost` where the client can access `fa`.  Returns
-    the result of the call to `f`, or propagates any exception `f` raises.
+    Run `f(api_port, api_key, *args, **kwargs)` on a background thread, where
+    `api_port` is a port number on `localhost` where the client can access
+    `fa` and `api_key` is the API key to use in the HTTP `Authorization`
+    header.  Returns the result of the call to `f`, or propagates any exception
+    `f` raises.
     """
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(('0.0.0.0', 0))
         api_port = listener.getsockname()[1]
+        api_key = secrets.token_urlsafe(32)
 
-        with RunnerThread(lambda: f(api_port, *args, **kwargs)) as rt:
+        with RunnerThread(lambda: f(api_port, api_key, *args, **kwargs)) as rt:
             async def async_run():
                 loop = asyncio.get_running_loop()
                 finish_event = asyncio.Event()
@@ -120,7 +138,10 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
                     rt.start(on_finish = on_finish)
                     yield
 
-                app = FastAPI(lifespan=lifespan)
+                app = FastAPI(
+                    lifespan=lifespan,
+                    dependencies=[Depends(mk_check_api_key(api_key))],
+                )
                 build_app(app)
 
                 config = HypercornConfig()
@@ -133,3 +154,14 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
             asyncio.run(async_run())
 
             return rt.result()
+
+if __name__ == '__main__':
+    # For testing the basic server setup, run:
+    #    uv run python3 -m crisp.http_server
+    # This prints the port number and API key, then sleeps.  The server it runs
+    # exposes a `/time` endpoint for testing.
+    import time
+    def wait(*args, **kwargs):
+        print('got:', args, kwargs)
+        time.sleep(1000)
+    run_with_callbacks(example_build_app, wait)

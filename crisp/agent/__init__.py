@@ -215,7 +215,7 @@ class AgentSandbox:
                 break
         return exit_code, logs
 
-    def run_all_with_api_port(self, api_port, cmds):
+    def run_all_with_api_port(self, api_port, api_key, cmds):
         assert HOST_ENV_VAR not in self.env
         self.env[HOST_ENV_VAR] = Sandbox.HOST_ADDR
 
@@ -223,7 +223,7 @@ class AgentSandbox:
         self.env[PORT_ENV_VAR] = str(api_port)
 
         assert KEY_ENV_VAR not in self.env
-        self.env[KEY_ENV_VAR] = ''  # TODO
+        self.env[KEY_ENV_VAR] = api_key
 
         r = self.run_all(cmds)
 

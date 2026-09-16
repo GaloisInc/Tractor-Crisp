@@ -24,7 +24,7 @@ from .config import Config
 from .error import CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
-    CodexAgentOpNode
+    CodexAgentOpNode, CodexReviewOpNode
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
@@ -283,7 +283,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
     matches = [
         ie for ie in mvir.index(n_code.node_id())
-        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
+        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'outputs'
+        and mvir.node(ie.node_id).outputs.get('code') == n_code.node_id()
     ]
 
     match matches:
@@ -305,6 +306,25 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
                 f'no op_history entry found for Codex producers of {n_code.node_id()}: '
                 + ', '.join(str(ie.node_id) for ie in matches)
             )
+
+
+def prior_review_findings(mvir) -> list[str]:
+    """
+    Rebuild the seen-findings reminder list from rejected reviews recorded in
+    the `op_history` reflog, so restarts don't forget past review rejections.
+    """
+    seen: list[str] = []
+    if not mvir.has_tag('op_history'):
+        return seen
+    for entry in mvir.tag_reflog('op_history'):
+        if entry.reason != CodexReviewOpNode.KIND:
+            continue
+        n_op = mvir.node(entry.node_id)
+        if n_op.verdict != 'FAIL':
+            continue
+        seen = merge_ffi_finding_titles(
+            seen, mvir.node(n_op.report).body_str())
+    return seen
 
 
 @dataclass(frozen = True)
@@ -394,9 +414,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
-    # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
-    # never cleared by an accepted step.
-    ffi_seen_findings = []
+    # Titles of review findings seen this run and in prior runs.  Unlike
+    # `ffi_feedback`, never cleared by an accepted step.
+    ffi_seen_findings = prior_review_findings(mvir)
+    if ffi_seen_findings:
+        print(f'recovered {len(ffi_seen_findings)} review findings '
+            'from prior runs')
     n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
@@ -616,7 +639,8 @@ def pick_file_and_list_targets(w, n_code):
     for n_json_file in w.find_unsafe2_json_files(n_code):
         j = n_json_file.body_json()
         for fn_name, j_fn in j['fns'].items():
-            if j_fn['total_unsafe'] == 0 or j_fn['is_ffi_entry_point']:
+            if (j_fn['total_unsafe'] == 0 or j_fn.get('ffi_symbol') is not None
+                    or j_fn.get('is_ffi_entry_point')):
                 continue
             files[j_fn['filename']].functions.append(AgentTargetFunction(fn_name))
         for type_name, j_type in j['types'].items():

@@ -171,9 +171,10 @@ Do not repeat this mistake.
 '''.strip()
 
 # Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
+# rejection in this or a prior run, built from harvested reviewer finding
+# titles.
 AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
+Earlier attempts in this run or a prior run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
 
 {findings}
 

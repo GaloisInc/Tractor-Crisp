@@ -212,7 +212,7 @@ fn main() {
             Outputs::default()
         };
 
-        let new_out = find_unsafe2::process(tcx);
+        let new_out = find_unsafe2::process(tcx, src_dir);
 
         let ok = check_outputs(&old_out, &new_out);
         if !ok {

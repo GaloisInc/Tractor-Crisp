@@ -157,7 +157,7 @@ Continue the plan from `SAFETY_PLAN.md`.
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh
-cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+crisp_check_unsafe2.sh
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
 '''
@@ -181,11 +181,13 @@ Do not repeat these mistakes.
 '''.strip()
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
-After refactoring, make sure the code still passes the tests.  Run the tests using this script:
+After refactoring, make sure the code still passes the tests.  Run the tests using this command:
 ```sh
-{test_cmd}
+crisp_run_tests.sh
 ```
-Note: you MUST NOT edit the tests (or the original C code) to get them to pass.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
+This will exit zero if the tests passed and nonzero if they failed.  In either case, it returns the test logs as the body.
+
+Note: this uses the current Rust code, but always uses the original version of the tests.  You MUST NOT edit the test code (or the original C code), and doing so will have no effect on the tests run by this command.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()
 
 AGENT_AFTER_REFACTORING_BUILD = '''
@@ -1269,6 +1271,26 @@ class Workflow:
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
+
+        def op_response(op):
+            from fastapi import Response
+            return Response(content=op.body(), media_type="text/plain",
+                status_code = 200 if op.passed else 400)
+
+        def build_app(asb, app):
+            @app.post('/crisp/run_tests')
+            async def run_tests():
+                code = asb.get_output('code')
+                op = self.test_op(code, n_test_code)
+                return op_response(op)
+
+            @app.post('/crisp/check_unsafe2')
+            async def check_unsafe2():
+                code = asb.get_output('code')
+                unsafe_json = self.find_unsafe2_json(n_code)
+                op = self.check_unsafe2_op(code, unsafe_json)
+                return op_response(op)
+
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,
             planning_files = n_plans,
@@ -1279,6 +1301,7 @@ class Workflow:
             ],
             find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
             find_unsafe2_src_dir = cargo_dir,
+            http_build_app = build_app,
         )
 
     @step

@@ -64,6 +64,10 @@ class BwrapSandbox:
     to your liking.  The user is responsible for configuring this in a way that
     does not expose sensitive information to untrusted code.
     """
+
+    # Address used to access services on the host machine
+    HOST_ADDR = '127.0.0.1'
+
     def __init__(self, mvir, work_dir):
         self.mvir = mvir
         self.work_dir = work_dir

@@ -44,7 +44,7 @@ fn main() {
             return ControlFlow::<(), ()>::Continue(());
         }
 
-        let out = find_unsafe2::process(tcx);
+        let out = find_unsafe2::process(tcx, src_dir);
 
         let out_path = json_dir.join(format!("{crate_name}.json"));
         serde_json::to_writer(

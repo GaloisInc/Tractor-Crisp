@@ -2,6 +2,7 @@
 extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_public;
+extern crate rustc_span;
 
 // `rustc_driver` is not used directly, but must be present to avoid "error: crate `rustc_middle`
 // required to be available in rlib format, but was not found in this form" when running tests.
@@ -23,10 +24,11 @@ use rustc_public::mir::alloc::GlobalAlloc;
 use rustc_public::mir::mono::StaticDef;
 use rustc_public::rustc_internal;
 use rustc_public::ty::{
-    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder, TraitDef,
+    Ty, RigidTy, ConstantKind, Prov, FnDef, AdtDef, AdtKind, AliasDef, EarlyBinder, TraitDef, Span,
 };
 use serde::{Serialize, Deserialize};
 use rustc_public::mir::visit::{MirVisitor, PlaceContext, Location};
+use rustc_span::hygiene::{ExpnKind, MacroKind};
 
 
 struct FunctionVisitor<'a> {
@@ -530,7 +532,7 @@ fn type_def_field_contains_raw_ptr(td: &TypeDef) -> IndexMap<String, usize> {
 }
 
 
-pub fn process(tcx: TyCtxt) -> Outputs {
+pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
     let items = rustc_public::all_local_items();
 
     let mut is_static_mut = {
@@ -633,6 +635,17 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         Some(CrateItem(rustc_internal::stable(parent_internal_def_id)))
     };
 
+    // If `span` comes from a derive-macro expansion, return the span of the macro's definition.
+    // `rustc_public::Span` doesn't expose expansion data, so this goes through rustc's `Span`.
+    let derive_def_site = move |span: Span| -> Option<Span> {
+        let span = rustc_internal::internal(tcx, span);
+        let expn = span.ctxt().outer_expn_data();
+        if !matches!(expn.kind, ExpnKind::Macro(MacroKind::Derive, _)) {
+            return None;
+        }
+        Some(rustc_internal::stable(expn.def_site))
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -724,11 +737,25 @@ pub fn process(tcx: TyCtxt) -> Outputs {
         let it = id.trait_impl();
         let td = it.value.def_id;
         let decl = TraitDef::declaration(&td);
-        if matches!(decl.safety, Safety::Unsafe) {
-            let impl_parent = id.0.parent().unwrap().name();
-            *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
-            out.total_unsafe += 1;
+        if !matches!(decl.safety, Safety::Unsafe) {
+            continue;
         }
+        // The impl span points to the derive invocation, so inspect the macro's definition
+        // instead.
+        if let Some(def_site) = derive_def_site(id.span()) {
+            let filename = def_site.get_filename();
+            // Use the same project boundary as any_local_item_under. Workspace proc macros
+            // also have external DefIds, so checking the defining crate's is_local isn't enough.
+            // If the definition's path can't be resolved, conservatively charge the impl.
+            if let Ok(file_abs) = Path::new(&filename).canonicalize() {
+                if !file_abs.starts_with(src_dir) {
+                    continue;
+                }
+            }
+        }
+        let impl_parent = id.0.parent().unwrap().name();
+        *out.unsafe_impls.entry(impl_parent).or_insert(0) += 1;
+        out.total_unsafe += 1;
     }
 
     out

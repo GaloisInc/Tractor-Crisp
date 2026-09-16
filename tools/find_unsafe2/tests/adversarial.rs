@@ -77,6 +77,16 @@ fn assert_accepted(name: &str) {
     assert_eq!(out.stdout, "", "{name}: expected no diagnostics");
 }
 
+fn assert_tolerated(name: &str) {
+    let out = run_scenario(name, true);
+    assert!(
+        out.passed,
+        "{name}: expected pass with warnings, got:\n{}",
+        out.stdout
+    );
+    insta::assert_snapshot!(name.to_owned(), out.stdout);
+}
+
 macro_rules! tests_assert_rejected {
     ($($name:ident,)*) => {
         $(
@@ -101,16 +111,9 @@ macro_rules! tests_assert_accepted {
 
 tests_assert_rejected! {
     as_ref_helper,
-    // Similar to as_ref_helper.
-    struct_carried_ptr_sig,
-    hub_conversion,
-    count_compression,
     // Renaming a function containing unsafe looks the same as deleting the original (okay) and
     // adding a new one with the same body (rejected).
     rename_unsafe_fn,
-    // Renaming an exported function (without changing its symbol) is rejected, just like renaming
-    // a non-exported one.
-    export_symbol_moved,
     new_ptr_field,
     // Moves unsafe code into a closure, which counts as a separate function.
     closure_ptr_param,
@@ -137,7 +140,23 @@ tests_assert_rejected! {
     union_construction_charged,
 }
 
+#[test]
+fn hub_conversion() {
+    assert_tolerated("hub_conversion");
+}
+
+#[test]
+fn count_compression() {
+    assert_tolerated("count_compression");
+}
+
+#[test]
+fn struct_carried_ptr_sig() {
+    assert_tolerated("struct_carried_ptr_sig");
+}
+
 tests_assert_accepted! {
+    export_symbol_moved,
     exported_static_removed,
     exported_static_demoted,
     add_closure_ffi,

@@ -262,7 +262,10 @@ pub struct FunctionOutputs {
     /// Progress: function signature contains raw pointers.  This includes every occurrence of
     /// `RigidTy::RawPtr` that appears in the signature, but does not look through type aliases.
     pub sig_contains_raw_ptr: usize,
-    // TODO: Progress: function signature type contains raw pointers.
+    /// Progress: raw pointers reachable through the signature, local struct fields included.
+    /// Zero is required to drop an `unsafe` qualifier; see `ty_reaches_raw_ptr`.
+    #[serde(default)]
+    pub sig_reaches_raw_ptr: usize,
 
     /// The symbol name of this function, if it's an FFI entry point.  For functions that aren't
     /// FFI entry points (which have neither `#[no_mangle]` nor `#[export_name = "..."]`
@@ -292,6 +295,7 @@ impl FunctionOutputs {
             // Progress, not safety
             uses_ffi_entry_point: _,
             uses_foreign_fn: _, casts_int_to_ptr: _, sig_contains_raw_ptr: _,
+            sig_reaches_raw_ptr: _,
             // Other
             ffi_symbol: _,
         } = *self;
@@ -314,6 +318,7 @@ impl FunctionOutputs {
             // Progress, not safety
             ref uses_ffi_entry_point,
             ref uses_foreign_fn, casts_int_to_ptr, sig_contains_raw_ptr,
+            sig_reaches_raw_ptr: _,
             // Other
             ffi_symbol: _,
         } = *src;
@@ -445,6 +450,55 @@ fn sig_contains_raw_ptr(item: CrateItem) -> usize {
             sig.value.inputs_and_output.iter().copied().map(ty_contains_raw_ptr).sum()
         },
         ItemKind::Static | ItemKind::Const => ty_contains_raw_ptr(item.ty()),
+        ItemKind::Ctor(..) => 0,
+    }
+}
+
+fn ty_reaches_raw_ptr(ty: Ty) -> usize {
+    use rustc_public::visitor::{Visitor, Visitable};
+    struct ReachRawPtrsVisitor {
+        count: usize,
+        /// Local Adts already descended into; guards cycles like `struct Node { next: *mut Node }`.
+        visited_adts: HashSet<AdtDef>,
+    }
+    impl Visitor for ReachRawPtrsVisitor {
+        type Break = ();
+        fn visit_ty(&mut self, ty: &Ty) -> ControlFlow<()> {
+            match ty.kind().rigid() {
+                Some(&RigidTy::RawPtr(..)) => {
+                    self.count += 1;
+                },
+                Some(&RigidTy::Adt(adt, _)) => {
+                    if matches!(&*adt.name(), "core::ptr::NonNull" | "std::ptr::NonNull") {
+                        self.count += 1;
+                    } else if adt.krate().is_local && self.visited_adts.insert(adt) {
+                        // A pointer inside a local struct still reaches the caller; std types
+                        // are not descended since their internals reach `NonNull` on their own.
+                        for variant in adt.variants_iter() {
+                            for field in variant.fields() {
+                                let _ = field.ty().visit(self);
+                            }
+                        }
+                    }
+                },
+                _ => {},
+            }
+            ty.super_visit(self)
+        }
+    }
+
+    let mut v = ReachRawPtrsVisitor { count: 0, visited_adts: HashSet::new() };
+    let _ = ty.visit(&mut v);
+    v.count
+}
+
+fn sig_reaches_raw_ptr(item: CrateItem) -> usize {
+    match item.kind() {
+        ItemKind::Fn => {
+            let sig = item.ty().kind().fn_sig().unwrap();
+            sig.value.inputs_and_output.iter().copied().map(ty_reaches_raw_ptr).sum()
+        },
+        ItemKind::Static | ItemKind::Const => ty_reaches_raw_ptr(item.ty()),
         ItemKind::Ctor(..) => 0,
     }
 }
@@ -610,6 +664,7 @@ pub fn process(tcx: TyCtxt) -> Outputs {
                 }).collect(),
                 casts_int_to_ptr: v.casts_int_to_ptr,
                 sig_contains_raw_ptr: sig_contains_raw_ptr(item),
+                sig_reaches_raw_ptr: sig_reaches_raw_ptr(item),
 
                 ffi_symbol: ffi_symbol(item),
             };

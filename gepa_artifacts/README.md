@@ -8,13 +8,18 @@ Documentation in this README is in reverse chronological order.
 ## Seed prompts agents
 Used to start GEPA optimization for agentic workflows.
 
-For all results, model used: CRISP default in early Sept 2026 (mostly GPT-5.6-sol)
-
-### `results/zlib`
-- Started with 6604 unsafe. Ran for 20 attempts. Final unsafe remaining = 5044.
+### `results/zlib_start6604_GPT5p6sol`
+- Started with 6604 unsafe. Ran for 20 attempts using GPT-5.6-sol. Final unsafe remaining = 5044.
 - Avg unsafe removed per attempt = 78.
 - Avg call duration = 199 seconds
 - Avg output tokens = 12900
+- All attempts pass tests.
+
+### `results/zlib_start622_GPT5p6sol`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-sol. Final unsafe remaining = 525.
+- Avg unsafe removed per attempt = 4.85. Barely any unsafe is removed in the last few attempts.
+- Avg call duration = 243 seconds
+- Avg output tokens = 15224
 - All attempts pass tests.
 
 
@@ -34,13 +39,20 @@ GEPA optimization done using:
     ```
 - Run on: Godfather
 
-Best prompt found was `20260908_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260908B_reflGPT5p6` and `20260908C_reflGPT5p6`. Out of these, `20260908B_reflGPT5p6` performed the best on unsafety removal.
+Best prompt found was `20260908_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260908B_reflGPT5p6` and `20260908C_reflGPT5p6`. Only the ones performing the most unsafe removal are reported below.
 
-### `20260908B_reflGPT5p6/results_zlib`
-- Started with 6604 unsafe. Ran for 20 attempts. **Final unsafe remaining = 3683.**
+### `20260908B_reflGPT5p6/results_zlib_start6604_GPT5p6sol`
+- Started with 6604 unsafe. Ran for 20 attempts using GPT-5.6-sol. **Final unsafe remaining = 3683.**
 - **Avg unsafe removed per attempt = 146.05. This is 87% improvement over `seed_prompts_agents`.**
 - Avg call duration = 453 seconds. This is 127% more than `seed_prompts_agents`.
 - Avg output tokens = 28293. This is 119% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
+### `20260908_reflGPT5p6/results/zlib_start622_GPT5p6sol`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-sol. Final unsafe remaining = 396.
+- **Avg unsafe removed per attempt = 11.3. This is 133% improvement over `seed_prompts_agents`.**
+- Avg call duration = 537 seconds. This is 121% more than `seed_prompts_agents`.
+- Avg output tokens = 40310. This is 165% more than `seed_prompts_agents`.
 - All attempts pass tests.
 
 
@@ -60,13 +72,20 @@ GEPA optimization done using:
     ```
 - Run on: Godfather
 
-Best prompt found was `20260906_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260906B_reflGPT5p6` and `20260906C_reflGPT5p6`. Out of these, `20260906C_reflGPT5p6` performed the best on unsafety removal.
+Best prompt found was `20260906_reflGPT5p6`. However, this is only using valset scores. Since trainset and valset are both `zlib`, we inspected `gepa_record.csv` to get a couple of other high performing prompts -- `20260906B_reflGPT5p6` and `20260906C_reflGPT5p6`. Only the ones performing the most unsafe removal are reported below.
 
-### `20260906C_reflGPT5p6/results_zlib`
-- Started with 6604 unsafe. Ran for 20 attempts. **Final unsafe remaining = 4070.**
+### `20260906C_reflGPT5p6/results_zlib_start6604_GPT5p6sol`
+- Started with 6604 unsafe. Ran for 20 attempts using GPT-5.6-sol. **Final unsafe remaining = 4070.**
 - **Avg unsafe removed per attempt = 126.7. This is 62% improvement over `seed_prompts_agents`.**
 - Avg call duration = 310 seconds. This is 56% more than `seed_prompts_agents`.
 - Avg output tokens = 23112. This is 79% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
+### `20260906C_reflGPT5p6/results/zlib_start622_GPT5p6sol`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-sol. Final unsafe remaining = 436.
+- **Avg unsafe removed per attempt = 9.3. This is 92% improvement over `seed_prompts_agents`.**
+- Avg call duration = 411 seconds. This is 69% more than `seed_prompts_agents`.
+- Avg output tokens = 31687. This is 108% more than `seed_prompts_agents`.
 - All attempts pass tests.
 
 ---

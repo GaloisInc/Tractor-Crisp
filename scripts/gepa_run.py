@@ -80,6 +80,7 @@ def eval_gepa_agents():
             optimized_prompt_paths = {
                 'agent_safety_prompt': Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/agent_safety_prompt.txt'
             },
+            output_csv_path = Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/results_zlib_start622_GPT6astra.csv',
             response_evaluator = response_evaluator_zlib,
             attempts = attempts,
             save_final_attempt_node_name = f"attempt{attempts}_{prompt_name}"

@@ -22,6 +22,13 @@ Used to start GEPA optimization for agentic workflows.
 - Avg output tokens = 15224
 - All attempts pass tests.
 
+### `results/zlib_start622_GPT5p6terra`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-terra. Final unsafe remaining = 573.
+- Avg unsafe removed per attempt = 2.45. Most attempts are stuck at 580 unsafe remaining.
+- Avg call duration = 145 seconds
+- Avg output tokens = 11955
+- All attempts pass tests.
+
 
 ## 20260908[_/B/C]_reflGPT5p6
 GEPA optimization done using:
@@ -55,6 +62,13 @@ Best prompt found was `20260908_reflGPT5p6`. However, this is only using valset 
 - Avg output tokens = 40310. This is 165% more than `seed_prompts_agents`.
 - All attempts pass tests.
 
+### `20260908_reflGPT5p6/results/zlib_start622_GPT5p6terra`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-terra. Final unsafe remaining = 477.
+- **Avg unsafe removed per attempt = 7.25. This is 196% improvement over `seed_prompts_agents`.**
+- Avg call duration = 431 seconds. This is 197% more than `seed_prompts_agents`.
+- Avg output tokens = 43760. This is 266% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
 
 ## 20260906[_/B/C]_reflGPT5p6
 GEPA optimization done using:
@@ -86,6 +100,13 @@ Best prompt found was `20260906_reflGPT5p6`. However, this is only using valset 
 - **Avg unsafe removed per attempt = 9.3. This is 92% improvement over `seed_prompts_agents`.**
 - Avg call duration = 411 seconds. This is 69% more than `seed_prompts_agents`.
 - Avg output tokens = 31687. This is 108% more than `seed_prompts_agents`.
+- All attempts pass tests.
+
+### `20260906C_reflGPT5p6/results/zlib_start622_GPT5p6terra`
+- Started with 622 unsafe. Ran for 20 attempts using GPT-5.6-terra. Final unsafe remaining = 436.
+- **Avg unsafe removed per attempt = 9.3. This is 280% improvement over `seed_prompts_agents`.**
+- Avg call duration = 292 seconds. This is 101% more than `seed_prompts_agents`.
+- Avg output tokens = 29784. This is 149% more than `seed_prompts_agents`.
 - All attempts pass tests.
 
 ---

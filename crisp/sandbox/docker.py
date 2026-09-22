@@ -43,7 +43,12 @@ class WorkContainer:
     def start(self):
         self.container = self.client.containers.run(
             # `sleep` is PID 1; its duration caps the lifetime of the container.
-            self.image, ('sleep', '1800'), detach=True, remove=True)
+            self.image,
+            ('sleep', '1800'),
+            detach=True,
+            remove=True,
+            extra_hosts={"host.docker.internal": "host-gateway"},
+        )
 
     def stop(self):
         if self.container is not None:

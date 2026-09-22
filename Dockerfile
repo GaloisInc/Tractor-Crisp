@@ -30,7 +30,12 @@ ENV CARGO_HOME=/usr/local/cargo
 RUN mkdir -p $CARGO_HOME
 COPY .cargo/config.toml $CARGO_HOME/config.toml
 
+# Copy helper script for doing Cargo builds.
 COPY scripts/cargo-docker-clean.sh /usr/local/bin/
+
+# Copy helper scripts for calling the CRISP internal HTTP API.
+COPY scripts/crisp_check_unsafe2.sh /usr/local/bin/
+COPY scripts/crisp_run_tests.sh /usr/local/bin/
 
 # `uv` is required for building `c2rust-refactor` and crisp scripts.
 # Make sure things are installed not under `/root/`
@@ -117,10 +122,6 @@ RUN workdir="$(mktemp -d)" \
 # since `sh -l` overwrites that variable with the value
 # from /etc/profile and Codex uses `bash -lc` a lot
 RUN echo "export PATH=$PATH:${CARGO_HOME}/bin" >>/etc/profile
-
-# Copy helper scripts for calling the CRISP internal HTTP API.
-COPY scripts/crisp_check_unsafe2.sh /usr/local/bin/
-COPY scripts/crisp_run_tests.sh /usr/local/bin/
 
 
 FROM tractor-crisp-user AS tractor-crisp

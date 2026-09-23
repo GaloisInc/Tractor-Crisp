@@ -29,8 +29,8 @@ from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
-    AGENT_SAFETY_PROGRESS_PROMPT, merge_ffi_finding_titles,
+    AgentTargetOther, AGENT_FFI_SEEN_FINDINGS_PROMPT, AGENT_SAFETY_PROGRESS_PROMPT,
+    merge_ffi_finding_titles,
 )
 
 
@@ -308,6 +308,21 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
             )
 
 
+def update_review_feedback(
+    current: dict[str, str],
+    attempted_target: str | None,
+    report: str | None,
+    completed: bool,
+) -> dict[str, str]:
+    """Keep each target's latest report until changed code is accepted for it."""
+    if report is not None and attempted_target is not None:
+        return current | {attempted_target: report}
+    if completed:
+        return {target: text for target, text in current.items()
+            if target != attempted_target}
+    return current
+
+
 @dataclass(frozen = True)
 class FuelLimits:
     # Try at most this many times in total to make the code safe.
@@ -380,9 +395,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     # Every attempt's outcome for the exit report.
     ledger = []
-    # Report from the most recent FFI review rejection since the last accepted
-    # step; fed back into the next attempt's prompt.
-    ffi_feedback = None
+    # Each target keeps its latest full report across unrelated work and
+    # refusals, until a changed candidate for that target is accepted.
+    ffi_feedback: dict[str, str] = {}
     # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
     # never cleared by an accepted step.
     ffi_seen_findings = []
@@ -408,24 +423,24 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
         try:
             ffi_report = None
+            attempted_target = None
             ffi_parts = []
             if ffi_seen_findings:
                 ffi_parts.append(AGENT_FFI_SEEN_FINDINGS_PROMPT.format(
                     findings = '\n'.join(f'- {t}' for t in ffi_seen_findings)))
-            if ffi_feedback is not None:
-                ffi_parts.append(AGENT_FFI_REJECTED_PROMPT.format(
-                    report = ffi_feedback))
             ffi_suffix = '\n\n'.join(ffi_parts) if ffi_parts else None
 
             match args.llm_mode:
                 case 'agent':
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''))
+                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''),
+                        review_feedback = ffi_feedback)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
 
                     target = outcome.target
+                    attempted_target = target
                     if outcome.code is None:
                         ledger.append((target or '<unspecified>', 'rejected', ''))
                     elif outcome.code.node_id() == n_code.node_id():
@@ -440,9 +455,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
+                        review_feedback = ffi_feedback,
                         target_goal = target_goal)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
+                    attempted_target = outcome.target
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
@@ -460,14 +477,19 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     # `--llm-mode agent` should be handled at a higher level.
                     assert False, f'unexpected llm_mode {mode!r}'
 
+            changed = (n_new_code is not None
+                and n_new_code.node_id() != n_code.node_id())
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
-                ffi_feedback = None
-            elif ffi_report is not None:
-                ffi_feedback = ffi_report
+            if ffi_report is not None:
                 ffi_seen_findings = merge_ffi_finding_titles(
                     ffi_seen_findings, ffi_report)
+            ffi_feedback = update_review_feedback(
+                ffi_feedback,
+                attempted_target,
+                ffi_report,
+                completed = changed)
 
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
@@ -489,6 +511,17 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+    # One status word, claiming only what this run verified.  A failing
+    # final gate also fails the process.
+    if n_op_test.exit_code != 0:
+        status = 'FAILED'
+    elif unsafe_count == 0:
+        status = 'COMPLETE_SAFE'
+    else:
+        status = 'BUDGET_EXHAUSTED'
+    print('status: %s' % status)
+    if status == 'FAILED':
+        sys.exit(1)
 
 
 class PickTarget:

@@ -7,11 +7,12 @@ from unittest.mock import Mock, patch
 
 from crisp import prompts
 from crisp.analysis import check_unsafe2_findings, review_passed
+from crisp.config import ModelsConfig
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
-    AGENT_SAFETY_PROMPT, FFI_SEEN_FINDINGS_CAP, FuelCounter, OutOfFuelError,
-    Workflow, merge_ffi_finding_titles, parse_target, parse_verdict,
-    upgrade_toolchain_rust_src,
+    AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT, FFI_SEEN_FINDINGS_CAP,
+    FuelCounter, OutOfFuelError, Workflow, merge_ffi_finding_titles,
+    parse_target, parse_verdict, upgrade_toolchain_rust_src,
 )
 
 # Finding lines as rendered by `codex exec review` (from a real zlib run).
@@ -22,6 +23,39 @@ The diff removes `unsafe` from several exported entry points.
 - [P1] Restore `unsafe` on `zlibVersion_ffi` — /root/work/translated_rust/src/zutil.rs:27-27
 - [P2] Wrapper contains validation logic — /root/work/translated_rust/src/gzlib.rs:100-120
 '''
+
+
+class SafetyWorkerTest(unittest.TestCase):
+    def test_selected_worker_receives_full_inventory_and_feedback(self):
+        cfg = SimpleNamespace(
+            transpile=SimpleNamespace(output_dir='crate'),
+            relative_path=lambda path: path,
+            test_command=None,
+            models=ModelsConfig(),
+        )
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        workflow = Workflow(cfg, MVIR(temp, temp))
+        baseline = object()
+        workflow.find_unsafe2_json = Mock(return_value=baseline)
+        code, plans, tests = object(), object(), object()
+        with patch('crisp.workflow.agent.run_rewrite') as rewrite:
+            Workflow.agent_safety.__wrapped__(workflow, code, tests, plans,
+                review_feedback={'crate::first': 'FIRST full report',
+                    'crate::second': 'SECOND full report'})
+        self.assertIs(rewrite.call_args.kwargs['unsafe_json'], baseline)
+        workflow.find_unsafe2_json.assert_called_once_with(code)
+        extra = rewrite.call_args.kwargs['extra_code']
+        self.assertIs(extra['tests'], tests)
+        reports = workflow.mvir.node(extra['review_feedback'].files[
+            'SAFETY_REVIEW_FEEDBACK.md']).body_str()
+        self.assertIn('## crate::first', reports)
+        self.assertIn('FIRST full report', reports)
+        self.assertIn('## crate::second', reports)
+        self.assertIn('SECOND full report', reports)
+        prompt = rewrite.call_args.args[2]
+        self.assertIn('SAFETY_REVIEW_FEEDBACK.md', prompt)
+        self.assertNotIn('FIRST full report', prompt)
+        self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
 
 
 class SafetyStepTest(unittest.TestCase):
@@ -49,10 +83,13 @@ class SafetyStepTest(unittest.TestCase):
 
     def test_one_invocation_uses_one_fuel_and_runs_gates(self):
         self.w.fuel.fuel = 1
-        outcome = self.run_step()
+        feedback = {'crate::target': 'Use initialized storage'}
+        outcome = self.run_step(review_feedback=feedback)
         self.assertIs(outcome.code, self.candidate)
         self.assertEqual(self.w.fuel.fuel, 0)
         self.w.agent_safety.assert_called_once()
+        call = self.w.agent_safety.call_args
+        self.assertEqual(call.kwargs['review_feedback'], feedback)
         self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.candidate)
         self.w.test_op.assert_called_once_with(self.candidate, self.c_code)
         self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
@@ -270,6 +307,18 @@ class CheckUnsafe2FindingsTest(unittest.TestCase):
         n_op.body_str.return_value = logs
 
         self.assertEqual(check_unsafe2_findings(n_op), '\n'.join(findings))
+
+
+class RejectedReviewPromptTest(unittest.TestCase):
+    def test_report_names_the_target_it_describes(self):
+        prompt = AGENT_FFI_REJECTED_PROMPT.format(
+            target='zlib::src::inffast::inflate_fast',
+            report='Keep the exported wrapper thin.',
+        )
+
+        self.assertIn('attempt at `zlib::src::inffast::inflate_fast`', prompt)
+        self.assertIn('rejection of that unrelated work', prompt)
+        self.assertNotIn('attempt at this step', prompt)
 
 
 class MergeFfiFindingTitlesTest(unittest.TestCase):

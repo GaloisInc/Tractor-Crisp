@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from crisp import agent
 from crisp.error import CrispError
 from crisp.mvir import FileNode, MVIR, TreeNode
-from crisp.workflow import AGENT_PLAN_PROMPT
+from crisp.workflow import AGENT_PLAN_PROMPT, AGENT_REPLAN_PROMPT
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -84,6 +84,24 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('the harness supplies all validation', AGENT_PLAN_PROMPT)
 
 
+class ReplanPromptTest(unittest.TestCase):
+    def test_replan_prompt_combines_progress_analysis_and_revision(self):
+        self.assertIn('single invocation', AGENT_REPLAN_PROMPT)
+        self.assertIn('Do not spawn sub-agents', AGENT_REPLAN_PROMPT)
+        self.assertIn('SAFETY_PROGRESS.json', AGENT_REPLAN_PROMPT)
+        self.assertIn('`{cargo_dir_path}`', AGENT_REPLAN_PROMPT)
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', AGENT_REPLAN_PROMPT)
+        # The required plan sections.
+        self.assertIn('## FFI entry point rules', AGENT_REPLAN_PROMPT)
+        self.assertIn('## Conventions', AGENT_REPLAN_PROMPT)
+        self.assertIn('## Cluster guide', AGENT_REPLAN_PROMPT)
+        self.assertIn('{ffi_entry_point_rules}', AGENT_REPLAN_PROMPT)
+        # The plan is read-only reference; it carries no mutable log.
+        self.assertNotIn('## Status', AGENT_REPLAN_PROMPT)
+        # The plan must not carry verification commands; the harness does.
+        self.assertIn('The harness supplies all', AGENT_REPLAN_PROMPT)
+
+
 class AgentExecutionTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -129,6 +147,44 @@ class AgentExecutionTest(unittest.TestCase):
                 self.assertEqual(os.path.normpath(os.path.join(cwd, output_path)),
                     'codex_last_message.txt')
                 self.assertIn('model_reasoning_effort="medium"', cmd)
+
+    def test_planning_validates_before_publishing_a_recoverable_plan(self):
+        from crisp.__main__ import prior_agent_plans
+        from crisp.history import get_history
+
+        original = ('## FFI entry point rules\nimmutable rules\n\n'
+            '## Conventions\nkeep contracts\n\n## Cluster guide\nold task\n')
+        revised = original.replace('old task', 'new task')
+        plans = TreeNode.new(self.mvir, files={
+            'SAFETY_PLAN.md': FileNode.new(self.mvir, original).node_id(),
+            'PLAN.md': FileNode.new(self.mvir, 'keep other planning files').node_id()})
+        self.files['SAFETY_PLAN.md'] = revised.encode()
+        code, accepted, _ = agent.run_rewrite(
+            object(), self.mvir, 'plan', 'test-model', self.code,
+            planning_files=plans, planning_only=True)
+        self.assertEqual(code.node_id(), self.code.node_id())
+        self.assertEqual(self.mvir.node(accepted.files['SAFETY_PLAN.md']).body_str(), revised)
+        self.assertEqual(accepted.files['PLAN.md'], plans.files['PLAN.md'])
+        self.assertEqual(prior_agent_plans(self.mvir, self.code).node_id(), accepted.node_id())
+
+        for invalid in ('missing', 'source_edit', 'rules_edit', 'empty_queue'):
+            with self.subTest(invalid=invalid):
+                self.files['SAFETY_PLAN.md'] = revised.encode()
+                self.files['crate/src/lib.rs'] = b'fn example() {}'
+                if invalid == 'missing':
+                    del self.files['SAFETY_PLAN.md']
+                elif invalid == 'source_edit':
+                    self.files['crate/src/lib.rs'] = b'fn changed() {}'
+                elif invalid == 'rules_edit':
+                    self.files['SAFETY_PLAN.md'] = revised.replace('immutable rules', 'weakened').encode()
+                else:
+                    self.files['SAFETY_PLAN.md'] = revised.replace('new task', '').encode()
+                with self.assertRaises(CrispError):
+                    agent.run_rewrite(object(), self.mvir, 'plan', 'test-model',
+                        self.code, planning_files=accepted, planning_only=True)
+                # Failed planning artifacts cannot replace the last valid plan.
+                self.assertEqual(prior_agent_plans(self.mvir, self.code).node_id(), accepted.node_id())
+                self.assertEqual(get_history(self.mvir, self.code), [(self.code, None)])
 
     def test_review_feedback_is_input_only_even_if_worker_edits_it(self):
         path = 'SAFETY_REVIEW_FEEDBACK.md'

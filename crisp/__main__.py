@@ -26,6 +26,7 @@ from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
     CodexAgentOpNode
 from .sandbox import run_sandbox
+from .planning import load_progress, save_progress, planning_interval
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
@@ -388,6 +389,17 @@ def get_fuel_limits(mvir, n_code):
     )
 
 def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+    """Run plan-guided transformations within the step budget.
+
+    Workers select work from the plan and inspect the full inventory. TARGET
+    labels key attempt reporting and retained review feedback.
+    Blocked edits are discarded. Changed candidates pass the checker, tests,
+    and independent review before acceptance. The planning analysts write the
+    initial plan; a single-call replan revises it from persisted measured
+    progress every ceil(log2(unsafe_count)) attempts, with a minimum
+    interval of one, or earlier when a worker reports the plan exhausted.
+    Final tests and unsafe count determine the reported status.
+    """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
 
@@ -405,8 +417,13 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     if not n_plans:
         if 'agent' in args.llm_mode:
             n_plans = w.do_safety_plan_agent(n_code, n_c_code)[1]
+            # The initial plan opens the first progress window.
+            save_progress(mvir, n_code, n_plans, {'window': 'Since the initial plan.',
+                'baseline_unsafe_count': w.count_unsafe2(n_code), 'steps': []})
         else:
             n_plans = TreeNode.new(mvir, files={})
+    planning = 'agent' in args.llm_mode
+    progress = load_progress(mvir, n_code, n_plans) if planning else None
 
     pick_target = PickTarget(limits)
 
@@ -415,12 +432,36 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
             break
+        # Do not spend a planning call when no worker can use the result.
+        if w.fuel.is_empty():
+            break
+
+        interval = planning_interval(unsafe_count)
+        if planning and (progress is None or len(progress['steps']) >= interval
+                or (progress['steps']
+                    and progress['steps'][-1]['outcome'] == 'plan_exhausted')):
+            evidence = dict(progress or {
+                'window': 'Unavailable before this loop checkpoint; older attempts are unknown.',
+                'steps': [],
+            }, current_unsafe_count=unsafe_count,
+                outstanding_review_feedback=ffi_feedback)
+            print(f'safety planner: {len(evidence["steps"])} recorded attempts; '
+                f'{unsafe_count} unsafe; interval {interval}')
+            n_plans = w.do_safety_replan_agent(n_code, n_c_code,
+                n_plans=n_plans, progress=evidence)[1]
+            progress = {'window': 'Since the last successful planning step.',
+                'baseline_unsafe_count': unsafe_count, 'steps': []}
+            save_progress(mvir, n_code, n_plans, progress)
 
         # Infinite loop detection
         cur_fuel = w.fuel.fuel
         assert cur_fuel != prev_fuel, 'safety loop ran without consuming any fuel'
         prev_fuel = cur_fuel
 
+        attempt_note = ''
+        attempt_status = 'error'
+        plan_exhausted = False
+        before_code = n_code
         try:
             ffi_report = None
             attempted_target = None
@@ -441,7 +482,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
                     target = outcome.target
                     attempted_target = target
-                    if outcome.code is None:
+                    attempt_note = outcome.note
+                    plan_exhausted = outcome.plan_exhausted
+                    if plan_exhausted:
+                        ledger.append((target or '<unspecified>', 'plan_exhausted', outcome.note))
+                    elif outcome.code is None:
                         ledger.append((target or '<unspecified>', 'rejected', ''))
                     elif outcome.code.node_id() == n_code.node_id():
                         ledger.append((target or '<unspecified>', 'refused', outcome.note))
@@ -460,6 +505,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
                     attempted_target = outcome.target
+                    attempt_note = outcome.note
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
@@ -479,9 +525,15 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             changed = (n_new_code is not None
                 and n_new_code.node_id() != n_code.node_id())
+            attempt_status = 'rejected' if n_new_code is None else 'refused'
+            if plan_exhausted:
+                attempt_status = 'plan_exhausted'
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
+                if changed:
+                    attempt_status = ('reduced' if w.count_unsafe2(n_code) < unsafe_count
+                        else 'neutral')
             if ffi_report is not None:
                 ffi_seen_findings = merge_ffi_finding_titles(
                     ffi_seen_findings, ffi_report)
@@ -492,6 +544,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 completed = changed)
 
         except CrispError as e:
+            attempt_note = str(e)
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
             traceback.print_exc()
 
@@ -499,12 +552,24 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             print(f'exiting due to lack of fuel: {e}')
             break
 
+        if planning:
+            after_count = w.count_unsafe2(n_code)
+            progress['steps'].append({
+                'target': attempted_target, 'outcome': attempt_status,
+                'before_code': str(before_code.node_id()),
+                'accepted_code': str(n_code.node_id()),
+                'unsafe_before': unsafe_count, 'unsafe_after': after_count,
+                'accepted_reduction': unsafe_count - after_count,
+                'note': attempt_note, 'review_report': ffi_report,
+            })
+            save_progress(mvir, n_code, n_plans, progress)
+
     print('\n\n')
     if ledger:
         # The run's evidence: what was attempted and what each refusal hit.
         print('attempt ledger:')
         for target, kind, note in ledger:
-            print(f'  {kind:8} {target}' + (f' — {note}' if note else ''))
+            print(f'  {kind:14} {target}' + (f' — {note}' if note else ''))
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
     n_op_test = w.test_op(n_code, n_c_code)

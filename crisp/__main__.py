@@ -30,8 +30,7 @@ from .planning import load_progress, save_progress, planning_interval
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther, AGENT_FFI_SEEN_FINDINGS_PROMPT, AGENT_SAFETY_PROGRESS_PROMPT,
-    merge_ffi_finding_titles,
+    AgentTargetOther, AGENT_SAFETY_PROGRESS_PROMPT,
 )
 
 
@@ -410,9 +409,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Each target keeps its latest full report across unrelated work and
     # refusals, until a changed candidate for that target is accepted.
     ffi_feedback: dict[str, str] = {}
-    # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
-    # never cleared by an accepted step.
-    ffi_seen_findings = []
     n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
@@ -465,17 +461,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         try:
             ffi_report = None
             attempted_target = None
-            ffi_parts = []
-            if ffi_seen_findings:
-                ffi_parts.append(AGENT_FFI_SEEN_FINDINGS_PROMPT.format(
-                    findings = '\n'.join(f'- {t}' for t in ffi_seen_findings)))
-            ffi_suffix = '\n\n'.join(ffi_parts) if ffi_parts else None
 
             match args.llm_mode:
                 case 'agent':
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''),
+                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT,
                         review_feedback = ffi_feedback)
                     n_new_code, n_new_plans, ffi_report = \
                         outcome.code, outcome.plans, outcome.report
@@ -499,7 +490,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     target_goal = pick_target.current_target_goal(w, n_code)
                     outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = ffi_suffix,
                         review_feedback = ffi_feedback,
                         target_goal = target_goal)
                     n_new_code, n_new_plans, ffi_report = \
@@ -534,9 +524,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 if changed:
                     attempt_status = ('reduced' if w.count_unsafe2(n_code) < unsafe_count
                         else 'neutral')
-            if ffi_report is not None:
-                ffi_seen_findings = merge_ffi_finding_titles(
-                    ffi_seen_findings, ffi_report)
             ffi_feedback = update_review_feedback(
                 ffi_feedback,
                 attempted_target,

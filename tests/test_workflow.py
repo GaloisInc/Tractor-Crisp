@@ -7,8 +7,8 @@ from crisp.config import ModelsConfig
 
 from crisp.workflow import (
     AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT, AGENT_SAFETY_REVIEW_PROMPT,
-    FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
-    CHECKER_RULES, SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
+    FFI_ENTRY_POINT_RULES,
+    CHECKER_RULES, SAFETY_REVIEW_RULES,
     review_passed,
     parse_verdict, parse_target,
     Workflow,
@@ -293,29 +293,6 @@ class RejectedReviewPromptTest(unittest.TestCase):
         self.assertIn('attempt at `zlib::src::inffast::inflate_fast`', prompt)
         self.assertIn('rejection of that unrelated work', prompt)
         self.assertNotIn('attempt at this step', prompt)
-
-
-class MergeFfiFindingTitlesTest(unittest.TestCase):
-    def test_extracts_titles_without_locations(self):
-        self.assertEqual(merge_ffi_finding_titles([], REPORT), [
-            'Restore `unsafe` on `gz_intmax_ffi`',
-            'Restore `unsafe` on `zlibVersion_ffi`',
-            'Wrapper contains validation logic',
-        ])
-
-    def test_merge_deduplicates(self):
-        seen = merge_ffi_finding_titles([], REPORT)
-        self.assertEqual(merge_ffi_finding_titles(list(seen), REPORT), seen)
-
-    def test_bounded_keeps_most_recent(self):
-        report = '\n'.join(
-            f'- [P1] finding {i} — src/a.rs:{i}-{i}' for i in range(20))
-        seen = merge_ffi_finding_titles([], report)
-        self.assertEqual(len(seen), FFI_SEEN_FINDINGS_CAP)
-        self.assertEqual(seen[-1], 'finding 19')
-
-    def test_clean_report_adds_nothing(self):
-        self.assertEqual(merge_ffi_finding_titles([], 'No violations found.'), [])
 
 
 class ReviewVerdictTest(unittest.TestCase):

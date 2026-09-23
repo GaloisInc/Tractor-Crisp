@@ -161,6 +161,13 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
             seen.append(title)
     return seen[-FFI_SEEN_FINDINGS_CAP:]
 
+AGENT_SAFETY_PROGRESS_PROMPT = '''
+Aim for substantial, coherent progress toward safe representations. Use the chosen transformation as the unit of work; complete its related representation changes, caller migrations, and obsolete-code removal together. Your `TARGET:` line is a tracking label, not a limit on the scope of the transformation.
+
+When a transformation applies to several related sites, complete those sites in this invocation where the same safety argument holds. Before returning, check for remaining occurrences of that transformation; a first small reduction alone is not a reason to stop. Preserve all safety and compatibility obligations.
+
+'''
+
 AGENT_SAFETY_PROMPT = '''
 Consult `SAFETY_PLAN.md` for the crate-wide conventions and the cluster covering your target.  It is read-only reference: notes in it are guidance, not rules — only the rules stated below bind your work.
 
@@ -182,7 +189,29 @@ under these binding rules, including count-neutral preparation:
 FFI entry points are judged under these binding rules:
 
 {ffi_entry_point_rules}
+
+Each step uses one agent invocation. Complete a coherent change within this invocation; you may edit, build, and check repeatedly before returning.
+
+Begin your final message with a line `TARGET: <name>` naming one representative inventory function (or `Type.field`) involved in the transformation. That name identifies the work; it does not restrict the work to that symbol. End with one of these lines:
+- `DONE` — the step's work is complete and is judged against the code as it stood when the step began. Omitting the verdict also means DONE.
+- `BLOCKED: <target> — <verbatim gate diagnostic or one-line reason>` — no legal reduction exists at that target; your code edits will be discarded.
 '''
+
+class StepOutcome(typing.NamedTuple):
+    """
+    Result of one judged safety step.  `code` is the accepted tree, the
+    unchanged input tree for a blocked step, or `None` when a gate or
+    review rejected the step.
+
+    A tuple, so the step logger prints indexed `result[N]` lines; log
+    tooling keys on `result[0]` and `result[2]`, with new fields appended.
+    """
+    code: 'TreeNode | None'
+    plans: 'TreeNode | None'
+    report: str | None
+    target: str | None
+    note: str
+
 
 AGENT_FFI_REJECTED_PROMPT = '''
 A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
@@ -202,11 +231,33 @@ Earlier attempts in this run were rejected for violating the FFI entry point rul
 Do not repeat these mistakes.
 '''.strip()
 
+def parse_verdict(final_message: str) -> tuple[str, str]:
+    """
+    The step verdict from the agent's final message: `('blocked', note)`,
+    or `('done', '')`.  The verdict must be the
+    last non-empty line; anything else — including no verdict at all —
+    reads as `done` and is judged by the normal gates.
+    """
+    lines = [l.strip() for l in final_message.splitlines() if l.strip()]
+    if lines:
+        last = lines[-1]
+        if last.startswith('BLOCKED:'):
+            return 'blocked', last[len('BLOCKED:'):].strip()
+    return 'done', ''
+
+TARGET_LINE_RE = re.compile(r'^TARGET:\s*(\S+)\s*$', re.MULTILINE)
+
+def parse_target(final_message: str) -> str | None:
+    """The first `TARGET:` declaration in the agent's final message."""
+    m = TARGET_LINE_RE.search(final_message)
+    return m.group(1) if m else None
+
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this script:
 ```sh
 {test_cmd}
 ```
+Run the full script once, before you declare DONE.  While work is in progress, `cargo build` and `cargo check-unsafe2` are the checks worth their cost; the full suite mid-step mostly re-proves what the build already shows.
 Note: you MUST NOT edit the tests (or the original C code) to get them to pass.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
 '''.strip()
 
@@ -1507,28 +1558,36 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
+    ) -> StepOutcome:
+        """Run one worker invocation, then judge its candidate against n_code."""
         self.fuel.use()
-
-        n_new_code, n_plans, _ = self.agent_safety(n_code, n_test_code, n_plans,
+        n_cur, _, final_message = self.agent_safety(
+            n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal)
+        target = parse_target(final_message)
+        verdict, note = parse_verdict(final_message)
+        if verdict == 'blocked':
+            print(f'agent declared blocked: {note}')
+            return StepOutcome(n_code, n_plans, None, target, note)
+        if n_cur.node_id() == n_code.node_id():
+            return StepOutcome(n_code, n_plans, None, target, '')
         # The step must pass tests, must not regress the unsafe counts, and
-        # must pass independent safety, behavior and FFI review.  The cheap
-        # unsafe comparison runs first so a regressing attempt doesn't pay
-        # for the full test suite.
-        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
+        # must pass independent safety, behavior and FFI review, all judged
+        # against the step's start.  The cheap unsafe comparison runs first
+        # so a regressing attempt doesn't pay for the full test suite.
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_cur)
         if n_op_unsafe.exit_code != 0:
-            return None, None, None
-        n_op_test = self.test_op(n_new_code, n_test_code)
+            return StepOutcome(None, None, None, target, '')
+        n_op_test = self.test_op(n_cur, n_test_code)
         if n_op_test.exit_code != 0:
-            return None, None, None
-        review_ok, report = self.do_safety_review(n_code, n_new_code, n_test_code, n_op_unsafe)
+            return StepOutcome(None, None, None, target, '')
+        review_ok, report = self.do_safety_review(n_code, n_cur, n_test_code, n_op_unsafe)
         if not review_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
-            return None, None, report
-        return n_new_code, n_plans, None
+            return StepOutcome(None, None, report, target, '')
+        return StepOutcome(n_cur, n_plans, None, target, '')
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1544,7 +1603,11 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans, _ = self.agent_safety_no_tests(n_code, n_plans)
+        n_new_code, _, final_message = self.agent_safety_no_tests(
+            n_code, n_plans)
+        if parse_verdict(final_message)[0] == 'blocked':
+            print(f'agent declared blocked: {final_message.strip()}')
+            return n_code, n_plans
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):

@@ -30,7 +30,7 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
-    merge_ffi_finding_titles,
+    AGENT_SAFETY_PROGRESS_PROMPT, merge_ffi_finding_titles,
 )
 
 
@@ -378,6 +378,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     w.fuel.give(limits.safety_tries)
 
+    # Every attempt's outcome for the exit report.
+    ledger = []
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -417,16 +419,30 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             match args.llm_mode:
                 case 'agent':
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = ffi_suffix)
+                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''))
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.report
+
+                    target = outcome.target
+                    if outcome.code is None:
+                        ledger.append((target or '<unspecified>', 'rejected', ''))
+                    elif outcome.code.node_id() == n_code.node_id():
+                        ledger.append((target or '<unspecified>', 'refused', outcome.note))
+                    elif w.count_unsafe2(outcome.code) < unsafe_count:
+                        ledger.append((target or '<unspecified>', 'reduced', ''))
+                    else:
+                        ledger.append((target or '<unspecified>', 'neutral', ''))
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
                         target_goal = target_goal)
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.report
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
@@ -462,6 +478,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             break
 
     print('\n\n')
+    if ledger:
+        # The run's evidence: what was attempted and what each refusal hit.
+        print('attempt ledger:')
+        for target, kind, note in ledger:
+            print(f'  {kind:8} {target}' + (f' — {note}' if note else ''))
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
     n_op_test = w.test_op(n_code, n_c_code)

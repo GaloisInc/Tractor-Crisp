@@ -136,14 +136,6 @@ SAFETY_REVIEW_RULES = _prompt('safety_review_rules.md').strip()
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
 # the prompt places an explicit verdict in its rendered overall explanation.
 AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
-# Same format, capturing the title for `merge_ffi_finding_titles`.
-AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
-    r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
-# Trailing `— file:line` location; stripped because locations go stale.
-AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
-    r'\s+(?:—|--)\s+\S+:\d+(?:[-:]\d+)*$')
-
-FFI_SEEN_FINDINGS_CAP = 10
 
 def review_passed(report: str, ran_commands: bool) -> bool:
     """Require inspected code, one explicit approval, and no findings."""
@@ -152,17 +144,6 @@ def review_passed(report: str, ran_commands: bool) -> bool:
         and re.match(r'^CRISP_REVIEW: PASS\b', lines[0]) is not None
         and report.count('CRISP_REVIEW:') == 1
         and AGENT_FFI_REVIEW_FINDING_RE.search(report) is None)
-
-def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
-    """
-    Merge finding titles from a rejecting FFI review `report` into `seen`,
-    deduplicated and bounded to the most recent `FFI_SEEN_FINDINGS_CAP`.
-    """
-    for m in AGENT_FFI_REVIEW_FINDING_TITLE_RE.finditer(report):
-        title = AGENT_FFI_REVIEW_FINDING_LOCATION_RE.sub('', m.group(1)).strip()
-        if title and title not in seen:
-            seen.append(title)
-    return seen[-FFI_SEEN_FINDINGS_CAP:]
 
 AGENT_SAFETY_PROGRESS_PROMPT = '''
 Aim for substantial, coherent progress toward safe representations. Use the chosen transformation as the unit of work; complete its related representation changes, caller migrations, and obsolete-code removal together. Your `TARGET:` line is a tracking label, not a limit on the scope of the transformation.
@@ -229,15 +210,6 @@ A previous attempt at `{target}` was rejected by review. The reviewer reported:
 This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
-AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
-
-{findings}
-
-Do not repeat these mistakes.
-'''.strip()
 
 def parse_verdict(final_message: str) -> tuple[str, str]:
     """

@@ -489,6 +489,17 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+    # One status word, claiming only what this run verified.  A failing
+    # final gate also fails the process.
+    if n_op_test.exit_code != 0:
+        status = 'FAILED'
+    elif unsafe_count == 0:
+        status = 'COMPLETE_SAFE'
+    else:
+        status = 'BUDGET_EXHAUSTED'
+    print('status: %s' % status)
+    if status == 'FAILED':
+        sys.exit(1)
 
 
 class PickTarget:

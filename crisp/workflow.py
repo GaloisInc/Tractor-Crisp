@@ -111,26 +111,6 @@ New signatures:
 {input_files}
 '''
 
-# Same format, capturing the title for `merge_ffi_finding_titles`.
-AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
-    r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
-# Trailing `— file:line` location; stripped because locations go stale.
-AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
-    r'\s+(?:—|--)\s+\S+:\d+(?:[-:]\d+)*$')
-
-FFI_SEEN_FINDINGS_CAP = 10
-
-def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
-    """
-    Merge finding titles from a rejecting FFI review `report` into `seen`,
-    deduplicated and bounded to the most recent `FFI_SEEN_FINDINGS_CAP`.
-    """
-    for m in AGENT_FFI_REVIEW_FINDING_TITLE_RE.finditer(report):
-        title = AGENT_FFI_REVIEW_FINDING_LOCATION_RE.sub('', m.group(1)).strip()
-        if title and title not in seen:
-            seen.append(title)
-    return seen[-FFI_SEEN_FINDINGS_CAP:]
-
 VA_LIST_IMPL_RE = re.compile(r'\bVaListImpl\b')
 
 def upgrade_toolchain_rust_src(src: str) -> str:
@@ -220,15 +200,6 @@ A previous attempt at `{target}` was rejected by review. The reviewer reported:
 This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
-AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
-
-{findings}
-
-Do not repeat these mistakes.
-'''.strip()
 
 def parse_verdict(final_message: str) -> tuple[str, str]:
     """

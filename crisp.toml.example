@@ -24,8 +24,10 @@ cargo build --manifest-path rust/Cargo.toml
 
 # Choose the models used by the different CRISP operations.
 [models]
+# Coordinates the planning analysts and writes the initial SAFETY_PLAN.md.
+agent_plan = "gpt-6-astra"
 # Used by the Codex agent safety-refactoring mode.
-agent = "gpt-5.6-terra"
+agent_loop = "gpt-5.6-terra"
 # Used by the c2rust postprocessing pass.
 postprocess = "gpt-5.6-luna"
 # Used by direct LLM rewrite operations.  If omitted, CRISP asks the API for

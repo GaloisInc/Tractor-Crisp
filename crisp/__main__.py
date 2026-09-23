@@ -30,7 +30,7 @@ from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
     AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
-    merge_ffi_finding_titles,
+    AGENT_SAFETY_PROGRESS_PROMPT, merge_ffi_finding_titles,
 )
 
 
@@ -313,13 +313,6 @@ class FuelLimits:
     # Try at most this many times in total to make the code safe.
     safety_tries: int
 
-    # Bail out if the LLM fails to improve safety of the code for several
-    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
-    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
-    # progress for 3 iterations in a row, on the assumption that the LLM has
-    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
-    max_consecutive_failures: int
-
     # Give the agent this many iterations to fix its current target before
     # switching to a new target.  If it succeeds at fixing the current target,
     # the outer loop will pick a new target immediately instead.
@@ -328,6 +321,7 @@ class FuelLimits:
     # Give the agent this many iterations within each file before swiching to a
     # new file.
     safety_tries_per_file: int
+
 
 def total_code_size(mvir, n_code):
     total = 0
@@ -346,7 +340,6 @@ def get_fuel_limits(mvir, n_code):
         # B01/B02
         defaults = FuelLimits(
             safety_tries = 8,
-            max_consecutive_failures = 3,
             safety_tries_per_target = 2,
             safety_tries_per_file = 10,
         )
@@ -354,7 +347,6 @@ def get_fuel_limits(mvir, n_code):
         # P01
         defaults = FuelLimits(
             safety_tries = 45,
-            max_consecutive_failures = 5,
             safety_tries_per_target = 3,
             safety_tries_per_file = 20,
         )
@@ -362,7 +354,6 @@ def get_fuel_limits(mvir, n_code):
         # P02 - run forever
         defaults = FuelLimits(
             safety_tries = 9999,
-            max_consecutive_failures = 9999,
             safety_tries_per_target = 5,
             safety_tries_per_file = 50,
         )
@@ -373,9 +364,6 @@ def get_fuel_limits(mvir, n_code):
         safety_tries = int(
             os.environ.get('LLM_SAFETY_TRIES',
                 defaults.safety_tries)),
-        max_consecutive_failures = int(
-            os.environ.get('LLM_SAFETY_MAX_CONSECUTIVE_FAILURES',
-                defaults.max_consecutive_failures)),
         safety_tries_per_target = int(
             os.environ.get('LLM_SAFETY_TRIES_PER_TARGET',
                 defaults.safety_tries_per_target)),
@@ -390,8 +378,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     w.fuel.give(limits.safety_tries)
 
-    best_unsafe_count = None
-    consecutive_failures = 0
+    # Every attempt's outcome for the exit report.
+    ledger = []
     # Report from the most recent FFI review rejection since the last accepted
     # step; fed back into the next attempt's prompt.
     ffi_feedback = None
@@ -413,20 +401,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         if unsafe_count == 0:
             break
 
-        # Update consecutive failure count
-        if best_unsafe_count is None or unsafe_count < best_unsafe_count:
-            best_unsafe_count = unsafe_count
-            consecutive_failures = 0
-        else:
-            # The previous iteration failed to make progress.  (Note the LLM
-            # may have run normally and produced working code, but if it didn't
-            # improve the unsafe count, we still consider that to be a failed
-            # iteration.)
-            consecutive_failures += 1
-            if consecutive_failures >= limits.max_consecutive_failures:
-                print(f'stopping due to {consecutive_failures} consecutive failures')
-                break
-
         # Infinite loop detection
         cur_fuel = w.fuel.fuel
         assert cur_fuel != prev_fuel, 'safety loop ran without consuming any fuel'
@@ -445,54 +419,30 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
             match args.llm_mode:
                 case 'agent':
-                    match consecutive_failures:
-                        case 0 | 1:
-                            suffix = None
-                        case 2 | 3:
-                            # Previous steps failed to make progress on
-                            # `unsafe`.  We've seen the agent sometimes just do
-                            # refactoring or other general cleanup that doesn't
-                            # directly reduce unsafe.  This is actually
-                            # desirable, but if it goes on too long, we add a
-                            # reminder to focus on reducing unsafety.
-                            suffix = (
-                                'Remember, your primary goal is to reduce '
-                                'the amount of unsafe code. '
-                                'Try to remove at least one unsafe operation '
-                                'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code.'
-                            )
-                        case n:
-                            # Last-ditch attempt to get the agent to make
-                            # progress.  This may be too strongly worded, to
-                            # the point of encouraging cheating (such as moving
-                            # unsafe operations into FFI wrappers).
-                            suffix = (
-                                'Remember, your primary goal is to reduce '
-                                'the amount of unsafe code. '
-                                f'Your past {n} attempts failed to remove '
-                                'any unsafe operations. '
-                                'You MUST remove at least one unsafe operation '
-                                'or `unsafe fn`/`static mut` qualifier '
-                                'from the core implementation code '
-                                '(NOT from FFI entry points), '
-                                'or this run will be terminated.'
-                            )
-
-                    if ffi_suffix is not None:
-                        suffix = ffi_suffix if suffix is None \
-                            else f'{suffix}\n\n{ffi_suffix}'
-
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
-                        prompt_suffix = suffix)
+                        prompt_suffix = AGENT_SAFETY_PROGRESS_PROMPT + (ffi_suffix or ''))
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.report
+
+                    target = outcome.target
+                    if outcome.code is None:
+                        ledger.append((target or '<unspecified>', 'rejected', ''))
+                    elif outcome.code.node_id() == n_code.node_id():
+                        ledger.append((target or '<unspecified>', 'refused', outcome.note))
+                    elif w.count_unsafe2(outcome.code) < unsafe_count:
+                        ledger.append((target or '<unspecified>', 'reduced', ''))
+                    else:
+                        ledger.append((target or '<unspecified>', 'neutral', ''))
 
                 case 'agent_rand_target':
                     target_goal = pick_target.current_target_goal(w, n_code)
-                    n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
+                    outcome = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
                         prompt_suffix = ffi_suffix,
                         target_goal = target_goal)
+                    n_new_code, n_new_plans, ffi_report = \
+                        outcome.code, outcome.plans, outcome.report
 
                 case 'agent_sim_no_tests':
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
@@ -513,7 +463,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             if n_new_code is not None:
                 w.accept(n_new_code, ('main', 'safety', cur_fuel))
                 n_code = n_new_code
-                n_plans = n_new_plans
                 ffi_feedback = None
             elif ffi_report is not None:
                 ffi_feedback = ffi_report
@@ -529,6 +478,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             break
 
     print('\n\n')
+    if ledger:
+        # The run's evidence: what was attempted and what each refusal hit.
+        print('attempt ledger:')
+        for target, kind, note in ledger:
+            print(f'  {kind:8} {target}' + (f' — {note}' if note else ''))
     print('final code = %s' % n_code.node_id())
     print('final c code = %s' % n_c_code.node_id())
     n_op_test = w.test_op(n_code, n_c_code)

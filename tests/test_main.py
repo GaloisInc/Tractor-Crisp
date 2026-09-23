@@ -1,8 +1,46 @@
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from crisp.__main__ import prior_agent_plans
+from crisp.__main__ import (
+    prior_agent_plans,
+    safety_loop_common, FuelLimits,
+)
 from crisp.mvir import CodexAgentOpNode, FileNode, MVIR, TreeNode
+from crisp.config import ModelsConfig
+from crisp.workflow import FuelCounter, StepOutcome
+
+
+class TargetLabelsTest(unittest.TestCase):
+    def test_declared_target_labels_reach_the_ledger(self):
+        for declared in (None, 'crate::real'):
+            with self.subTest(declared=declared):
+                code = Mock()
+                code.node_id.return_value = 'baseline'
+                plans = object()
+                w = Mock()
+                w.fuel = FuelCounter('test')
+                w.count_unsafe2.return_value = 2
+                w.test_op.return_value.exit_code = 0
+
+                def refuse(*args, **kwargs):
+                    w.fuel.use()
+                    return StepOutcome(code, plans, None, declared, 'blocked')
+
+                w.do_safety_step_agent.side_effect = refuse
+                output = StringIO()
+                limits = FuelLimits(3, 2, 10)
+                with patch('crisp.__main__.get_fuel_limits', return_value=limits), \
+                        patch('crisp.__main__.prior_agent_plans', return_value=plans), \
+                        redirect_stdout(output):
+                    safety_loop_common(SimpleNamespace(llm_mode='agent'),
+                        SimpleNamespace(models=ModelsConfig()), object(), w, code, code)
+
+                self.assertEqual(w.fuel.fuel, 0)
+                self.assertIn(f"refused  {declared or '<unspecified>'}", output.getvalue())
 
 
 class PlanRecoveryTest(unittest.TestCase):

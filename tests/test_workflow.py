@@ -8,7 +8,10 @@ from crisp.workflow import (
     AGENT_SAFETY_PROMPT, AGENT_SAFETY_REVIEW_PROMPT,
     FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
     CHECKER_RULES, SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
-    review_passed, Workflow,
+    review_passed,
+    parse_verdict, parse_target,
+    Workflow,
+    FuelCounter, OutOfFuelError,
 )
 
 
@@ -20,6 +23,122 @@ The diff removes `unsafe` from several exported entry points.
 - [P1] Restore `unsafe` on `zlibVersion_ffi` — /root/work/translated_rust/src/zutil.rs:27-27
 - [P2] Wrapper contains validation logic — /root/work/translated_rust/src/gzlib.rs:100-120
 '''
+
+
+class SafetyStepTest(unittest.TestCase):
+    def setUp(self):
+        self.w = Mock()
+        self.w.fuel = FuelCounter('test', fuel=3)
+        self.base = self.tree('baseline')
+        self.candidate = self.tree('candidate')
+        self.plans, self.c_code = object(), object()
+        self.w.agent_safety.return_value = (
+            self.candidate, self.plans, 'TARGET: crate::target\nDONE')
+        self.w.compare_unsafe2_op.return_value.exit_code = 0
+        self.w.test_op.return_value.exit_code = 0
+        self.w.do_safety_review.return_value = (True, None)
+
+    @staticmethod
+    def tree(name):
+        tree = Mock()
+        tree.node_id.return_value = name
+        return tree
+
+    def run_step(self, **kwargs):
+        return Workflow.do_safety_step_agent.__wrapped__(self.w,
+            self.base, self.c_code, self.plans, **kwargs)
+
+    def test_one_invocation_uses_one_fuel_and_runs_gates(self):
+        self.w.fuel.fuel = 1
+        outcome = self.run_step()
+        self.assertIs(outcome.code, self.candidate)
+        self.assertEqual(self.w.fuel.fuel, 0)
+        self.w.agent_safety.assert_called_once()
+        self.w.compare_unsafe2_op.assert_called_once_with(self.base, self.candidate)
+        self.w.test_op.assert_called_once_with(self.candidate, self.c_code)
+        self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
+            self.c_code, self.w.compare_unsafe2_op.return_value)
+
+    def test_blocked_discards_candidate_without_gates(self):
+        self.w.agent_safety.return_value = (
+            self.candidate, self.plans, 'TARGET: crate::target\nBLOCKED: prerequisite')
+        outcome = self.run_step()
+        self.assertIs(outcome.code, self.base)
+        self.assertEqual(outcome.note, 'prerequisite')
+        self.w.compare_unsafe2_op.assert_not_called()
+        self.w.test_op.assert_not_called()
+
+    def test_unchanged_candidate_skips_gates(self):
+        self.w.agent_safety.return_value = (self.base, self.plans, 'DONE')
+        self.assertIs(self.run_step().code, self.base)
+        self.w.compare_unsafe2_op.assert_not_called()
+        self.w.test_op.assert_not_called()
+
+    def test_failed_checker_rejects_without_tests_or_review(self):
+        self.w.compare_unsafe2_op.return_value.exit_code = 1
+        outcome = self.run_step()
+        self.assertIsNone(outcome.code)
+        self.w.test_op.assert_not_called()
+        self.w.do_safety_review.assert_not_called()
+
+    def test_failed_tests_reject_without_review(self):
+        self.w.test_op.return_value.exit_code = 1
+        outcome = self.run_step()
+        self.assertIsNone(outcome.code)
+        self.w.do_safety_review.assert_not_called()
+
+    def test_no_run_fuel_stops_before_starting_an_invocation(self):
+        self.w.fuel.fuel = 0
+        with self.assertRaises(OutOfFuelError):
+            self.run_step()
+        self.w.agent_safety.assert_not_called()
+
+
+    def test_done_candidate_runs_one_review_after_mechanical_gates(self):
+        self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+        self.assertIs(self.run_step().code, self.candidate)
+        gates = [call[0] for call in self.w.method_calls
+            if call[0] in ('compare_unsafe2_op', 'test_op', 'do_safety_review')]
+        self.assertEqual(gates, ['compare_unsafe2_op', 'test_op', 'do_safety_review'])
+        self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
+            self.c_code, self.w.compare_unsafe2_op.return_value)
+
+    def test_failed_mechanical_gate_skips_review(self):
+        for failed_gate in ('compare_unsafe2_op', 'test_op'):
+            with self.subTest(failed_gate=failed_gate):
+                self.w.reset_mock()
+                self.w.fuel.fuel = 3
+                self.w.compare_unsafe2_op.return_value.exit_code = 0
+                self.w.test_op.return_value.exit_code = 0
+                getattr(self.w, failed_gate).return_value.exit_code = 1
+                self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+                self.assertIsNone(self.run_step().code)
+                self.w.do_safety_review.assert_not_called()
+
+    def test_blocked_or_unchanged_step_skips_review(self):
+        for code, verdict in ((self.candidate, 'BLOCKED: prerequisite'), (self.base, 'DONE')):
+            with self.subTest(verdict=verdict):
+                self.w.agent_safety.return_value = (code, self.plans, verdict)
+                self.assertIs(self.run_step().code, self.base)
+                self.w.do_safety_review.assert_not_called()
+                self.w.test_op.assert_not_called()
+
+    def test_review_failure_returns_report_for_existing_feedback_path(self):
+        self.w.agent_safety.return_value = (self.candidate, self.plans, 'DONE')
+        report = 'CRISP_REVIEW: FAIL\n- [P1] Cleanup disappears in release'
+        self.w.do_safety_review.return_value = (False, report)
+        outcome = self.run_step()
+        self.assertIsNone(outcome.code)
+        self.assertEqual(outcome.report, report)
+
+    def test_simulation_reviewer_does_not_receive_hidden_original_tests(self):
+        self.w.agent_safety_no_tests.return_value = (self.candidate, self.plans, 'DONE')
+        self.w.cargo_check_json_op.return_value.passed = True
+        result = Workflow.do_safety_step_agent_sim_no_tests.__wrapped__(self.w,
+            self.base, self.c_code, self.plans)
+        self.assertEqual(result, (self.candidate, self.plans))
+        self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
+            None, self.w.compare_unsafe2_op.return_value)
 
 
 class SafetyReviewTest(unittest.TestCase):
@@ -102,6 +221,7 @@ class ReviewRuleParityTest(unittest.TestCase):
 
         self.assertIn(SAFETY_REVIEW_RULES, prompt)
         self.assertIn(FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('notes in it are guidance, not rules', prompt)
 
     def test_semantic_reviewer_uses_the_same_rules(self):
         prompt = AGENT_SAFETY_REVIEW_PROMPT.format(
@@ -166,3 +286,31 @@ class ReviewVerdictTest(unittest.TestCase):
         ]:
             with self.subTest(report=report, ran_commands=ran_commands):
                 self.assertFalse(review_passed(report, ran_commands))
+
+
+class ParseVerdictTest(unittest.TestCase):
+    def test_blocked_with_note(self):
+        self.assertEqual(parse_verdict(
+            'Updated the plan.\n\nBLOCKED: gz_read, gz_look — E0277'),
+            ('blocked', 'gz_read, gz_look — E0277'))
+
+    def test_done_explicit_and_default(self):
+        self.assertEqual(parse_verdict('All finished.\nDONE'), ('done', ''))
+        self.assertEqual(parse_verdict('No verdict line here.'), ('done', ''))
+        self.assertEqual(parse_verdict(''), ('done', ''))
+
+    def test_prose_mention_is_not_a_verdict(self):
+        self.assertEqual(parse_verdict(
+            'The work fit one invocation.\nAll done.'),
+            ('done', ''))
+
+
+class ParseTargetTest(unittest.TestCase):
+    def test_first_declaration_wins(self):
+        msg = 'TARGET: zlib::src::deflate::deflate\nwork...\nTARGET: other'
+        self.assertEqual(parse_target(msg), 'zlib::src::deflate::deflate')
+
+    def test_field_target_and_absence(self):
+        self.assertEqual(parse_target('TARGET: gz_state.path\n...'),
+            'gz_state.path')
+        self.assertIsNone(parse_target('no declaration'))

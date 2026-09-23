@@ -68,7 +68,7 @@ export CRISP_API_KEY=sk-your-api-key-here
 
 # Optional: override the `models.agent_plan`, `models.agent_loop`,
 # `models.rewriter`, etc. selections # in crisp.toml for this run.
-#export CRISP_API_MODEL=gpt-5.6-sol
+#export CRISP_API_MODEL=gpt-6-sol
 
 # As an alternative, you can direct CRISP to connect to llama.cpp or another
 # OpenAI-compatible provider running on the host machine:

@@ -56,6 +56,8 @@ struct FunctionVisitor<'a> {
     casts_int_to_ptr: usize,
     /// Number of inline assembly blocks within the current function.
     inline_asm: usize,
+    /// Number of transmutes within the current function.
+    transmutes: usize,
     /// Temps holding a `Box`'s pointer, produced when MIR lowering elaborates a safe `Box`
     /// deref.  Derefs of these don't count.
     box_ptr_locals: HashSet<Local>,
@@ -72,6 +74,7 @@ impl<'a> FunctionVisitor<'a> {
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
             inline_asm: 0,
+            transmutes: 0,
             box_ptr_locals: box_ptr_locals(body),
         }
     }
@@ -195,7 +198,10 @@ impl MirVisitor for FunctionVisitor<'_> {
                     },
                 }
             }
-        } else if let Rvalue::Cast(_kind, ref op, dest_ty) = *x {
+        } else if let Rvalue::Cast(kind, ref op, dest_ty) = *x {
+            if kind == CastKind::Transmute {
+                self.transmutes += 1;
+            }
             if dest_ty.kind().is_raw_ptr() {
                 let src_ty = op.ty(self.body.locals()).unwrap();
                 if src_ty.kind().is_integral() {
@@ -290,6 +296,9 @@ pub struct FunctionOutputs {
     pub calls_unsafe: usize,
     /// Unsafety: function contains inline assembly, which can access arbitrary memory.
     pub inline_asm: usize,
+    /// Unsafety: function transmutes values.  `transmute` is an intrinsic, so it appears in MIR
+    /// as a cast rather than as a call to an `unsafe fn`.
+    pub transmutes: usize,
     /// Unsafety: function mentions `static mut`s.
     ///
     /// This is overapproximated: we count any mention of a static `S` as an access, even though
@@ -349,7 +358,7 @@ impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
             ref mut total_unsafe, filename: _,
-            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             uses_ffi_entry_point: _,
@@ -363,6 +372,7 @@ impl FunctionOutputs {
             + derefs_raw_ptr
             + calls_unsafe
             + inline_asm
+            + transmutes
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
     }
@@ -371,7 +381,7 @@ impl FunctionOutputs {
         let FunctionOutputs {
             total_unsafe: _, filename: _,
             is_unsafe_fn, is_mut_static,
-            derefs_raw_ptr, calls_unsafe, inline_asm,
+            derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             ref uses_ffi_entry_point,
@@ -389,6 +399,7 @@ impl FunctionOutputs {
         self.derefs_raw_ptr += derefs_raw_ptr;
         self.calls_unsafe += calls_unsafe;
         self.inline_asm += inline_asm;
+        self.transmutes += transmutes;
         add_map(&mut self.uses_static_mut, uses_static_mut);
         add_map(&mut self.uses_union_field, uses_union_field);
         add_map(&mut self.uses_ffi_entry_point, uses_ffi_entry_point);
@@ -635,6 +646,37 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
         Some(CrateItem(rustc_internal::stable(parent_internal_def_id)))
     };
 
+    // The optimizer erases identity transmutes, so read the MIR it starts from.
+    let pre_opt_body = |item: CrateItem| -> Option<Body> {
+        use rustc_hir::def::DefKind;
+        use rustc_hir::Constness;
+        if !item.has_body() {
+            return None;
+        }
+        let did = rustc_internal::internal::<DefId>(tcx, item.0);
+        let is_ctfe = match tcx.def_kind(did) {
+            DefKind::Const { .. } | DefKind::Static { .. } | DefKind::AssocConst { .. }
+            | DefKind::Ctor(..) | DefKind::AnonConst => true,
+            DefKind::Fn | DefKind::AssocFn =>
+                matches!(tcx.constness(did), Constness::Const { always: true }),
+            _ => false,
+        };
+        let body = if is_ctfe {
+            rustc_internal::stable(tcx.mir_for_ctfe(did))
+        } else {
+            let steal = tcx.mir_drops_elaborated_and_const_checked(did.expect_local());
+            if steal.is_stolen() {
+                // Coroutine layouts are computed from optimized MIR, which steals this body.
+                assert!(tcx.is_coroutine(did), "pre-optimization MIR of {} already stolen",
+                    item.name());
+                rustc_internal::stable(tcx.optimized_mir(did))
+            } else {
+                rustc_internal::stable(&*steal.borrow())
+            }
+        };
+        Some(body)
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -644,7 +686,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
 
     let mut rollup_map = IndexMap::new();
     for item in items {
-        if let Some(body) = item.body() {
+        if let Some(body) = pre_opt_body(item) {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
@@ -657,6 +699,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
                 inline_asm: v.inline_asm,
+                transmutes: v.transmutes,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {
                     is_static_mut(sd).then(|| (sd.name(), count))
                 }).collect(),

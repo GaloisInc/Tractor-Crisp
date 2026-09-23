@@ -13,12 +13,17 @@ struct Outcome {
 }
 
 fn run_scenario(name: &str, with_baseline: bool) -> Outcome {
-    run_scenario_in(name, with_baseline, None)
+    run_scenario_in(name, with_baseline, None, &[])
 }
 
 /// Like `run_scenario`, but with `SRC_DIR` pointed somewhere other than the fixture, so the
-/// scenario compiles as a crate outside the project.
-fn run_scenario_in(name: &str, with_baseline: bool, src_dir: Option<&Path>) -> Outcome {
+/// scenario compiles as a crate outside the project.  `extra_args` are passed to both rustc runs.
+fn run_scenario_in(
+    name: &str,
+    with_baseline: bool,
+    src_dir: Option<&Path>,
+    extra_args: &[&str],
+) -> Outcome {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     fs::create_dir_all(&tmp).unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -36,6 +41,7 @@ fn run_scenario_in(name: &str, with_baseline: bool, src_dir: Option<&Path>) -> O
             .args(["--crate-name", &crate_name])
             .arg("--out-dir")
             .arg(&tmp)
+            .args(extra_args)
             .env("FIND_UNSAFE2_SRC_DIR", src_dir)
             .env("FIND_UNSAFE2_JSON_DIR", &tmp)
             .status()
@@ -51,6 +57,7 @@ fn run_scenario_in(name: &str, with_baseline: bool, src_dir: Option<&Path>) -> O
         .args(["--crate-name", &crate_name])
         .arg("--out-dir")
         .arg(&tmp)
+        .args(extra_args)
         .env("FIND_UNSAFE2_SRC_DIR", src_dir)
         .env("FIND_UNSAFE2_JSON_DIR", &tmp)
         .output()
@@ -122,6 +129,8 @@ tests_assert_rejected! {
     entry_point_call_from_impl,
     inline_asm,
     unsafe_impl_send,
+    // Hand-writing `#[automatically_derived]` doesn't make an impl derive-generated.
+    fake_automatically_derived,
     // Tests various methods of converting `usize` to a pointer beyond `x as *mut T`.
     int_to_ptr_laundering,
 
@@ -144,6 +153,8 @@ tests_assert_accepted! {
     closure_reindex,
     // Safe `Box` access is lowered to a raw pointer deref in MIR, which must not be charged.
     box_field_write,
+    // Derive expansions (here `TrivialClone` from `derive(Copy, Clone)`) aren't charged.
+    derive_copy_clone,
 
     // Incorrectly accepted:
 
@@ -174,7 +185,31 @@ fn new_crate_type_only() {
 fn new_dependency_crate() {
     let src_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("new_dependency_crate");
     fs::create_dir_all(&src_dir).unwrap();
-    let out = run_scenario_in("new_dependency_crate", false, Some(&src_dir));
+    let out = run_scenario_in("new_dependency_crate", false, Some(&src_dir), &[]);
     assert!(out.passed, "new_dependency_crate: expected pass, got:\n{}", out.stdout);
     assert_eq!(out.stdout, "", "new_dependency_crate: expected no diagnostics");
+}
+
+/// A derive defined by a proc-macro crate inside the project is the agent's own code, so the
+/// unsafe impl it emits is charged (unlike `derive_copy_clone`).
+#[test]
+fn project_derive() {
+    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("project_derive");
+    fs::create_dir_all(&tmp).unwrap();
+    let status = Command::new("rustc")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/adversarial/project_derive/derive.rs"))
+        .args(["--crate-type", "proc-macro"])
+        .args(["--edition", "2024"])
+        .args(["--crate-name", "adv_project_derive_macro"])
+        .arg("--out-dir")
+        .arg(&tmp)
+        .status()
+        .unwrap();
+    assert!(status.success(), "project_derive: building the proc-macro crate failed");
+    let lib = tmp.join(format!("{}adv_project_derive_macro{}",
+        std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX));
+    let extern_arg = format!("adv_project_derive_macro={}", lib.display());
+    let out = run_scenario_in("project_derive", true, None, &["--extern", &extern_arg]);
+    assert!(!out.passed, "project_derive: expected rejection, got pass");
+    insta::assert_snapshot!("project_derive", out.stdout);
 }

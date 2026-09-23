@@ -41,7 +41,9 @@ def predecessors(mvir: MVIR, target: TreeNode) -> Iterator[tuple[TreeNode, Node]
             continue
         # For `codex_agent_op_v3`, we get index entries for all `outputs`, not
         # just `outputs['code']` a.k.a. `new_code`.  Ignore the other outputs.
-        if op.new_code != target.node_id():
+        new_code = (op.outputs.get('code')
+            if isinstance(op, mvir_module.CodexAgentOpNode) else op.new_code)
+        if new_code != target.node_id():
             continue
         pred = mvir.node(getattr(op, input_key))
         yield (pred, op)

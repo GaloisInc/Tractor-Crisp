@@ -10,9 +10,8 @@ from crisp.analysis import check_unsafe2_findings, review_passed
 from crisp.config import ModelsConfig
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
-    AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT, FFI_SEEN_FINDINGS_CAP,
-    FuelCounter, OutOfFuelError, Workflow, merge_ffi_finding_titles,
-    parse_target, parse_verdict, upgrade_toolchain_rust_src,
+    AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT, FuelCounter, OutOfFuelError,
+    Workflow, parse_target, parse_verdict, upgrade_toolchain_rust_src,
 )
 
 # Finding lines as rendered by `codex exec review` (from a real zlib run).
@@ -337,29 +336,6 @@ class RejectedReviewPromptTest(unittest.TestCase):
         self.assertIn('attempt at `zlib::src::inffast::inflate_fast`', prompt)
         self.assertIn('rejection of that unrelated work', prompt)
         self.assertNotIn('attempt at this step', prompt)
-
-
-class MergeFfiFindingTitlesTest(unittest.TestCase):
-    def test_extracts_titles_without_locations(self):
-        self.assertEqual(merge_ffi_finding_titles([], REPORT), [
-            'Restore `unsafe` on `gz_intmax_ffi`',
-            'Restore `unsafe` on `zlibVersion_ffi`',
-            'Wrapper contains validation logic',
-        ])
-
-    def test_merge_deduplicates(self):
-        seen = merge_ffi_finding_titles([], REPORT)
-        self.assertEqual(merge_ffi_finding_titles(list(seen), REPORT), seen)
-
-    def test_bounded_keeps_most_recent(self):
-        report = '\n'.join(
-            f'- [P1] finding {i} — src/a.rs:{i}-{i}' for i in range(20))
-        seen = merge_ffi_finding_titles([], report)
-        self.assertEqual(len(seen), FFI_SEEN_FINDINGS_CAP)
-        self.assertEqual(seen[-1], 'finding 19')
-
-    def test_clean_report_adds_nothing(self):
-        self.assertEqual(merge_ffi_finding_titles([], 'No violations found.'), [])
 
 
 # Variadic definitions as emitted by c2rust 0.22.1 (edition 2021) for `...`

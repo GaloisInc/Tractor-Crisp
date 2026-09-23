@@ -17,6 +17,7 @@ from .. import http_server, llm
 from ..config import Config
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
+from ..planning import validate_plan
 from ..sandbox import run_sandbox, Sandbox
 
 # Repo-side agent assets; installed into the sandbox as `.codex/`, the
@@ -458,8 +459,15 @@ def run_rewrite(
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
     effort: str = 'high',
+    planning_only: bool = False,
 ) -> tuple[TreeNode, TreeNode, str]:
-    """Return the edited code, planning files, and final message if available."""
+    """Return the edited code, planning files, and final message if available.
+
+    In planning_only mode, require an input SAFETY_PLAN.md, validate its
+    replacement and unchanged source before publishing a recoverable plan.
+    """
+    if planning_only and (planning_files is None or 'SAFETY_PLAN.md' not in planning_files.files):
+        raise CrispError('Planning requires an existing SAFETY_PLAN.md')
     extra_code, env = _normalize_run_args(extra_code, env)
 
     if find_unsafe2_json_dir is not None:
@@ -498,7 +506,7 @@ def run_rewrite(
         inputs,
         codex_cmd,
         {
-            'code': lambda p: p not in extra_code_files
+            ('proposed_code' if planning_only else 'code'): lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
@@ -510,8 +518,26 @@ def run_rewrite(
         http_build_app = http_build_app,
     )
 
-    output_code = outputs['code']
+    output_code = outputs['proposed_code' if planning_only else 'code']
     output_plans = outputs['plans']
+    if planning_only:
+        # Failed planning calls stay in history, but are not code producers
+        # from which a resumed loop could accidentally recover an invalid plan.
+        if output_code.node_id() != input_code.node_id():
+            raise CrispError('Planning step modified source files', n_op)
+        if 'SAFETY_PLAN.md' not in output_plans.files:
+            raise CrispError('Planner did not produce SAFETY_PLAN.md', n_op)
+        old = mvir.node(planning_files.files['SAFETY_PLAN.md']).body_str()
+        new = mvir.node(output_plans.files['SAFETY_PLAN.md']).body_str()
+        validate_plan(old, new)
+        # Only SAFETY_PLAN.md is editable; keep any other planning files.
+        output_plans = TreeNode.new(mvir, files=planning_files.files | {
+            'SAFETY_PLAN.md': output_plans.files['SAFETY_PLAN.md']})
+        accepted = CodexAgentOpNode.new(mvir, inputs=n_op.inputs,
+            outputs={'code': input_code.node_id(), 'plans': output_plans.node_id()},
+            cmds=n_op.cmds, exit_code=0, raw_output_files=n_op.raw_output_files,
+            json_session=n_op.json_session, body=n_op.body())
+        mvir.set_tag('op_history', accepted.node_id(), accepted.kind)
     message_files = outputs['last_message'].files
     final_message = (
         mvir.node(message_files[last_message_path]).body().decode('utf-8', errors='replace')

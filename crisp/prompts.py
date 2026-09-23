@@ -11,6 +11,8 @@ def _prompt(name: str) -> str:
 
 AGENT_PLAN = _prompt('agent_plan.md')
 
+AGENT_REPLAN = _prompt('agent_replan.md')
+
 AGENT_SAFETY_REVIEW = _prompt('safety_review.md')
 
 # Prose statement of the gates `check-unsafe2` enforces; update it

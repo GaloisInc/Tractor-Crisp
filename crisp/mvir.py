@@ -715,6 +715,15 @@ class CodexAgentOpNode(Node):
     new_code = property(lambda self: self.outputs['code'])
     planning_files = property(lambda self: self.outputs['plans'])
 
+class SafetyProgressNode(Node):
+    KIND = 'safety_progress'
+    code: Metadata[NodeId]
+    plans: Metadata[NodeId]
+    # JSON body: measured attempt outcomes since the last successful plan.
+
+    code = property(lambda self: self._metadata['code'])
+    plans = property(lambda self: self._metadata['plans'])
+
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -961,6 +970,7 @@ NODE_CLASSES = [
     SplitFfiOpNode,
     LlmOpNode,
     CodexAgentOpNode,
+    SafetyProgressNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,

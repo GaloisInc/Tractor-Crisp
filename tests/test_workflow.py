@@ -53,6 +53,7 @@ class SafetyWorkerTest(unittest.TestCase):
         self.assertIn('## crate::second', reports)
         self.assertIn('SECOND full report', reports)
         prompt = rewrite.call_args.args[2]
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompt)
         self.assertIn('SAFETY_REVIEW_FEEDBACK.md', prompt)
         self.assertNotIn('FIRST full report', prompt)
         self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
@@ -68,7 +69,9 @@ class SafetyStepTest(unittest.TestCase):
         self.w.agent_safety.return_value = (
             self.candidate, self.plans, 'TARGET: crate::target\nDONE')
         self.w.compare_unsafe2_op.return_value.exit_code = 0
+        self.w.compare_unsafe2_op.return_value.body_str.return_value = 'unsafe gate diagnostic'
         self.w.test_op.return_value.exit_code = 0
+        self.w.test_op.return_value.body_str.return_value = 'test failure diagnostic'
         self.w.do_safety_review.return_value = (True, None)
 
     @staticmethod
@@ -95,14 +98,18 @@ class SafetyStepTest(unittest.TestCase):
         self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
             self.c_code, self.w.compare_unsafe2_op.return_value)
 
-    def test_blocked_discards_candidate_without_gates(self):
-        self.w.agent_safety.return_value = (
-            self.candidate, self.plans, 'TARGET: crate::target\nBLOCKED: prerequisite')
-        outcome = self.run_step()
-        self.assertIs(outcome.code, self.base)
-        self.assertEqual(outcome.note, 'prerequisite')
-        self.w.compare_unsafe2_op.assert_not_called()
-        self.w.test_op.assert_not_called()
+    def test_blocked_or_exhausted_discards_candidate_without_gates(self):
+        for verdict in ('BLOCKED', 'PLAN_EXHAUSTED'):
+            with self.subTest(verdict=verdict):
+                self.w.agent_safety.return_value = (self.candidate, self.plans,
+                    f'TARGET: crate::target\n{verdict}: prerequisite')
+                outcome = self.run_step()
+                self.assertIs(outcome.code, self.base)
+                self.assertEqual(outcome.note, 'prerequisite')
+                self.assertEqual(outcome.plan_exhausted, verdict == 'PLAN_EXHAUSTED')
+                self.w.compare_unsafe2_op.assert_not_called()
+                self.w.test_op.assert_not_called()
+                self.w.do_safety_review.assert_not_called()
 
     def test_unchanged_candidate_skips_gates(self):
         self.w.agent_safety.return_value = (self.base, self.plans, 'DONE')
@@ -114,13 +121,24 @@ class SafetyStepTest(unittest.TestCase):
         self.w.compare_unsafe2_op.return_value.exit_code = 1
         outcome = self.run_step()
         self.assertIsNone(outcome.code)
+        self.assertIn('unsafe gate diagnostic', outcome.note)
         self.w.test_op.assert_not_called()
         self.w.do_safety_review.assert_not_called()
+
+    def test_failed_checker_note_carries_findings_without_rustc_lints(self):
+        self.w.compare_unsafe2_op.return_value.exit_code = 1
+        self.w.compare_unsafe2_op.return_value.body_str.return_value = (
+            'warning: unused variable: `x`\n'
+            'crate::f: int-to-pointer casts increased: 0 -> 1')
+        outcome = self.run_step()
+        self.assertIn('crate::f: int-to-pointer casts increased', outcome.note)
+        self.assertNotIn('unused variable', outcome.note)
 
     def test_failed_tests_reject_without_review(self):
         self.w.test_op.return_value.exit_code = 1
         outcome = self.run_step()
         self.assertIsNone(outcome.code)
+        self.assertIn('test failure diagnostic', outcome.note)
         self.w.do_safety_review.assert_not_called()
 
     def test_no_run_fuel_stops_before_starting_an_invocation(self):
@@ -512,6 +530,12 @@ class ReviewVerdictTest(unittest.TestCase):
 
 
 class ParseVerdictTest(unittest.TestCase):
+    def test_plan_exhaustion_requires_a_final_verdict(self):
+        message = 'TARGET: crate::target\nPLAN_EXHAUSTED: both ready items are complete'
+        self.assertEqual(parse_verdict(message + '\n\n'),
+            ('plan_exhausted', 'both ready items are complete'))
+        self.assertEqual(parse_verdict(message + '\nDONE'), ('done', ''))
+
     def test_blocked_with_note(self):
         self.assertEqual(parse_verdict(
             'Updated the plan.\n\nBLOCKED: gz_read, gz_look — E0277'),

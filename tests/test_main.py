@@ -40,6 +40,7 @@ class TargetLabelsTest(unittest.TestCase):
                         SimpleNamespace(models=ModelsConfig()), object(), w, code, code)
 
                 self.assertEqual(w.fuel.fuel, 0)
+                self.assertIn('status: BUDGET_EXHAUSTED', output.getvalue())
                 self.assertIn(f"refused  {declared or '<unspecified>'}", output.getvalue())
 
 

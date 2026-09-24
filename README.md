@@ -25,6 +25,14 @@ The following features have been implemented in the CRISP transpiler loop:
   wrapper and a separate implementation function that can then be made safe.
 * High-level planning.  CRISP prompts the agent to develop a high-level safety
   plan for the codebase, then has the agent implement the plan step by step.
+  Agent safety loops revise that plan in a single planning call after
+  `max(1, ceil(log2(current unsafe count)))` safety attempts, or earlier when
+  a plan-guided worker reports `PLAN_EXHAUSTED`. A target-specific `BLOCKED`
+  result does not trigger early replanning. Replanning reads
+  measured progress and rejection feedback since the previous plan; the window
+  survives restarts. Existing runs without a recorded window replan on their
+  next start. Planning does not consume `LLM_SAFETY_TRIES`, and no planner runs
+  once the unsafe count reaches zero or the safety-attempt budget is exhausted.
 
 
 # Running in Docker
@@ -68,7 +76,7 @@ export CRISP_API_KEY=sk-your-api-key-here
 
 # Optional: override the `models.agent_plan`, `models.agent_loop`,
 # `models.rewriter`, etc. selections # in crisp.toml for this run.
-#export CRISP_API_MODEL=gpt-5.6-sol
+#export CRISP_API_MODEL=gpt-6-sol
 
 # As an alternative, you can direct CRISP to connect to llama.cpp or another
 # OpenAI-compatible provider running on the host machine:

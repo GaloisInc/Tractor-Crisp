@@ -7,8 +7,8 @@ from crisp.config import ModelsConfig
 
 from crisp.workflow import (
     AGENT_FFI_REJECTED_PROMPT, AGENT_SAFETY_PROMPT, AGENT_SAFETY_REVIEW_PROMPT,
-    FFI_ENTRY_POINT_RULES, FFI_SEEN_FINDINGS_CAP,
-    CHECKER_RULES, SAFETY_REVIEW_RULES, merge_ffi_finding_titles,
+    FFI_ENTRY_POINT_RULES,
+    CHECKER_RULES, SAFETY_REVIEW_RULES,
     review_passed,
     parse_verdict, parse_target,
     Workflow,
@@ -54,6 +54,7 @@ class SafetyWorkerTest(unittest.TestCase):
         self.assertIn('## crate::second', reports)
         self.assertIn('SECOND full report', reports)
         prompt = rewrite.call_args.args[2]
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompt)
         self.assertIn('SAFETY_REVIEW_FEEDBACK.md', prompt)
         self.assertNotIn('FIRST full report', prompt)
         self.assertIs(rewrite.call_args.kwargs['planning_files'], plans)
@@ -69,7 +70,9 @@ class SafetyStepTest(unittest.TestCase):
         self.w.agent_safety.return_value = (
             self.candidate, self.plans, 'TARGET: crate::target\nDONE')
         self.w.compare_unsafe2_op.return_value.exit_code = 0
+        self.w.compare_unsafe2_op.return_value.body_str.return_value = 'unsafe gate diagnostic'
         self.w.test_op.return_value.exit_code = 0
+        self.w.test_op.return_value.body_str.return_value = 'test failure diagnostic'
         self.w.do_safety_review.return_value = (True, None)
 
     @staticmethod
@@ -96,14 +99,18 @@ class SafetyStepTest(unittest.TestCase):
         self.w.do_safety_review.assert_called_once_with(self.base, self.candidate,
             self.c_code, self.w.compare_unsafe2_op.return_value)
 
-    def test_blocked_discards_candidate_without_gates(self):
-        self.w.agent_safety.return_value = (
-            self.candidate, self.plans, 'TARGET: crate::target\nBLOCKED: prerequisite')
-        outcome = self.run_step()
-        self.assertIs(outcome.code, self.base)
-        self.assertEqual(outcome.note, 'prerequisite')
-        self.w.compare_unsafe2_op.assert_not_called()
-        self.w.test_op.assert_not_called()
+    def test_blocked_or_exhausted_discards_candidate_without_gates(self):
+        for verdict in ('BLOCKED', 'PLAN_EXHAUSTED'):
+            with self.subTest(verdict=verdict):
+                self.w.agent_safety.return_value = (self.candidate, self.plans,
+                    f'TARGET: crate::target\n{verdict}: prerequisite')
+                outcome = self.run_step()
+                self.assertIs(outcome.code, self.base)
+                self.assertEqual(outcome.note, 'prerequisite')
+                self.assertEqual(outcome.plan_exhausted, verdict == 'PLAN_EXHAUSTED')
+                self.w.compare_unsafe2_op.assert_not_called()
+                self.w.test_op.assert_not_called()
+                self.w.do_safety_review.assert_not_called()
 
     def test_unchanged_candidate_skips_gates(self):
         self.w.agent_safety.return_value = (self.base, self.plans, 'DONE')
@@ -115,6 +122,7 @@ class SafetyStepTest(unittest.TestCase):
         self.w.compare_unsafe2_op.return_value.exit_code = 1
         outcome = self.run_step()
         self.assertIsNone(outcome.code)
+        self.assertIn('unsafe gate diagnostic', outcome.note)
         self.w.test_op.assert_not_called()
         self.w.do_safety_review.assert_not_called()
 
@@ -122,6 +130,7 @@ class SafetyStepTest(unittest.TestCase):
         self.w.test_op.return_value.exit_code = 1
         outcome = self.run_step()
         self.assertIsNone(outcome.code)
+        self.assertIn('test failure diagnostic', outcome.note)
         self.w.do_safety_review.assert_not_called()
 
     def test_no_run_fuel_stops_before_starting_an_invocation(self):
@@ -286,29 +295,6 @@ class RejectedReviewPromptTest(unittest.TestCase):
         self.assertNotIn('attempt at this step', prompt)
 
 
-class MergeFfiFindingTitlesTest(unittest.TestCase):
-    def test_extracts_titles_without_locations(self):
-        self.assertEqual(merge_ffi_finding_titles([], REPORT), [
-            'Restore `unsafe` on `gz_intmax_ffi`',
-            'Restore `unsafe` on `zlibVersion_ffi`',
-            'Wrapper contains validation logic',
-        ])
-
-    def test_merge_deduplicates(self):
-        seen = merge_ffi_finding_titles([], REPORT)
-        self.assertEqual(merge_ffi_finding_titles(list(seen), REPORT), seen)
-
-    def test_bounded_keeps_most_recent(self):
-        report = '\n'.join(
-            f'- [P1] finding {i} — src/a.rs:{i}-{i}' for i in range(20))
-        seen = merge_ffi_finding_titles([], report)
-        self.assertEqual(len(seen), FFI_SEEN_FINDINGS_CAP)
-        self.assertEqual(seen[-1], 'finding 19')
-
-    def test_clean_report_adds_nothing(self):
-        self.assertEqual(merge_ffi_finding_titles([], 'No violations found.'), [])
-
-
 class ReviewVerdictTest(unittest.TestCase):
     def test_completed_explicit_approval_passes(self):
         for verdict in ('CRISP_REVIEW: PASS', 'CRISP_REVIEW: PASS.',
@@ -338,6 +324,12 @@ class ReviewVerdictTest(unittest.TestCase):
 
 
 class ParseVerdictTest(unittest.TestCase):
+    def test_plan_exhaustion_requires_a_final_verdict(self):
+        message = 'TARGET: crate::target\nPLAN_EXHAUSTED: both ready items are complete'
+        self.assertEqual(parse_verdict(message + '\n\n'),
+            ('plan_exhausted', 'both ready items are complete'))
+        self.assertEqual(parse_verdict(message + '\nDONE'), ('done', ''))
+
     def test_blocked_with_note(self):
         self.assertEqual(parse_verdict(
             'Updated the plan.\n\nBLOCKED: gz_read, gz_look — E0277'),

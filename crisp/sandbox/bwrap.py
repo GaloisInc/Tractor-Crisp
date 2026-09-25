@@ -4,6 +4,7 @@ from enum import Enum
 import os
 from pathlib import Path
 from pathspec.pathspec import PathSpec
+import secrets
 import shlex
 import subprocess
 import toml
@@ -64,6 +65,10 @@ class BwrapSandbox:
     to your liking.  The user is responsible for configuring this in a way that
     does not expose sensitive information to untrusted code.
     """
+
+    # Address used to access services on the host machine
+    HOST_ADDR = '127.0.0.1'
+
     def __init__(self, mvir, work_dir):
         self.mvir = mvir
         self.work_dir = work_dir
@@ -79,8 +84,17 @@ class BwrapSandbox:
     def checkout_file_untracked(self, rel_path, body):
         self.work_dir.checkout_file_untracked(rel_path, body)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None) -> TreeNode:
-        return self.work_dir.commit_dir(rel_path, ignore_spec)
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ) -> TreeNode:
+        return self.work_dir.commit_dir(
+            rel_path,
+            ignore_spec = ignore_spec,
+            path_filter = path_filter,
+        )
 
     def commit_file(self, rel_path) -> FileNode:
         return self.work_dir.commit_file(rel_path)
@@ -180,8 +194,11 @@ class BwrapSandbox:
 
 
 @contextmanager
-def run_sandbox(cfg, mvir):
-    with lock_work_dir(cfg, mvir) as work_dir:
+def run_sandbox(cfg, mvir, require_consistent_path = False):
+    # Ignore `require_consistent_path`; paths inside the bwrap sandbox are
+    # always consistent, even though the outside `work_dir` paths vary.
+    dir_suffix = secrets.token_urlsafe(8)
+    with lock_work_dir(cfg, mvir, dir_suffix = dir_suffix) as work_dir:
         sb = BwrapSandbox(mvir, work_dir)
         yield sb
 

@@ -129,7 +129,10 @@ def run_tests(cfg: Config, mvir: MVIR,
         sb.checkout(code)
         sb.checkout(test_code)
 
-        exit_code, logs = sb.run(cmd, shell=True, stream=True)
+        # Add `-x` option to print each command before running it.  When the
+        # agent is given the test logs, this helps it understand the different
+        # parts of the output.
+        exit_code, logs = sb.run(['sh', '-x', '-c', cmd], stream=True)
 
     n = TestResultNode.new(
             mvir,
@@ -297,7 +300,9 @@ def cc_custom(
             f"can't generate compile_commands for {art.name} " \
             'because it uses lib_from_bin_artifact'
 
-    with run_sandbox(cfg, mvir) as sb:
+    # Require a consistent sandbox path for this because the absolute paths of
+    # the source files will get embedded into `compile_commands.json`.
+    with run_sandbox(cfg, mvir, require_consistent_path = True) as sb:
         work_dir = sb.join(cfg.relative_path('.'))
         cc_path = sb.join(COMPILE_COMMANDS_PATH)
 

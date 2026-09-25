@@ -62,7 +62,12 @@ class WorkDir:
             dct[rel_path] = self.commit_file(rel_path).node_id()
         return TreeNode.new(self.mvir, files=dct)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ):
         """
         `ignore_spec` is a `PathSpec` object specifying a gitignore-style
         (or alternative encoding) list of files to ignore during this operation,
@@ -80,6 +85,8 @@ class WorkDir:
                 for file_name in file_names:
                     file_path = os.path.join(dir_path_rel, file_name)
                     if ignore_spec is not None and ignore_spec.match_file(file_path):
+                        continue
+                    if path_filter is not None and not path_filter(file_path):
                         continue
 
                     assert file_path not in files
@@ -99,7 +106,7 @@ class WorkDir:
 KEEP_WORK_DIR = False
 
 @contextmanager
-def lock_work_dir(cfg, mvir):
+def lock_work_dir(cfg, mvir, dir_suffix = None):
     """
     Create a work directory based on `cfg`, and delete it on exit from the
     context manager.  This function raises an exception if the directory
@@ -107,7 +114,10 @@ def lock_work_dir(cfg, mvir):
     process can be inside the context manager at a time, so there's no risk of
     one process overwriting another process's files.
     """
-    work_dir = os.path.join(cfg.mvir_storage_dir, 'work')
+    dir_name = 'work'
+    if dir_suffix is not None:
+        dir_name = f'{dir_name}.{dir_suffix}'
+    work_dir = os.path.join(cfg.mvir_storage_dir, dir_name)
     # If the directory already exists, some other process holds the lock.
     os.makedirs(work_dir, exist_ok=False)
     try:

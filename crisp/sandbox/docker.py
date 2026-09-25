@@ -25,6 +25,10 @@ class WorkContainer:
     inputs by calling `run`, and store the outputs back into MVIR using the
     `commit` methods.
     """
+
+    # Address used to access services on the host machine
+    HOST_ADDR = 'host.docker.internal'
+
     def __init__(self, mvir):
         self.mvir = mvir
         self.client = docker.from_env()
@@ -39,7 +43,12 @@ class WorkContainer:
     def start(self):
         self.container = self.client.containers.run(
             # `sleep` is PID 1; its duration caps the lifetime of the container.
-            self.image, ('sleep', '1800'), detach=True, remove=True)
+            self.image,
+            ('sleep', '1800'),
+            detach=True,
+            remove=True,
+            extra_hosts={"host.docker.internal": "host-gateway"},
+        )
 
     def stop(self):
         if self.container is not None:
@@ -79,7 +88,12 @@ class WorkContainer:
             t.addfile(info, io.BytesIO(body))
         self._checkout_tar_file(tar_io.getvalue())
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ) -> TreeNode:
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
         tar_bytes = b''.join(tar_bytes_iter)
@@ -93,8 +107,12 @@ class WorkContainer:
         dest_prefix = os.path.dirname(rel_path)
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
+                if ignore_spec is not None and ignore_spec.match_file(dest_path):
                     continue
+                if path_filter is not None and not path_filter(dest_path):
+                    continue
+
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -105,9 +123,9 @@ class WorkContainer:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
-                f = t.extractfile(info)
-                dest_path = os.path.normpath(os.path.join(dest_prefix, info.name))
+
                 assert dest_path not in files, 'duplicate entry for %s' % dest_path
+                f = t.extractfile(info)
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 
@@ -184,7 +202,9 @@ class WorkContainer:
 KEEP_WORK_CONTAINER = False
 
 @contextmanager
-def run_work_container(cfg, mvir):
+def run_work_container(cfg, mvir, require_consistent_path = False):
+    # Ignore `require_consistent_path`; paths inside the docker container are
+    # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
     yield wc

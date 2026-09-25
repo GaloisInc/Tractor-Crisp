@@ -229,7 +229,7 @@ def parse_node_id(mvir, s):
 
 def do_main(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir, codex_login=args.codex_login)
+    w = Workflow(cfg, mvir)
 
     c_code_node_id = parse_node_id_arg(mvir, args.node)
     n_c_code = mvir.node(c_code_node_id)
@@ -697,7 +697,7 @@ def target_goal_is_done(w, n_code, target_goal):
 
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir, codex_login=args.codex_login)
+    w = Workflow(cfg, mvir)
 
     c_code_node_id = parse_node_id_arg(mvir, args.c_code)
     n_c_code = mvir.node(c_code_node_id)
@@ -891,6 +891,8 @@ def main():
         cfg_kwargs['mvir_storage_dir'] = os.path.abspath(args.mvir_storage_dir)
     if getattr(args, 'on_accept', None) is not None:
         cfg_kwargs['on_accept'] = args.on_accept
+    if getattr(args, 'codex_login', None) is not None:
+        cfg_kwargs['codex_login'] = args.codex_login
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
 
     if args.cmd == 'main':

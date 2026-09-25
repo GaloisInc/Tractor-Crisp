@@ -77,10 +77,10 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, codex_login: bool = False) -> list[str]:
+                   model: str) -> list[str]:
     cmd = ['codex', subcmd]
 
-    if codex_login:
+    if cfg.codex_login:
         # Use the host's `codex login` credentials (auth.json).  We only
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
@@ -379,7 +379,6 @@ def run_rewrite(
     unsafe_json: TreeNode | None = None,
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
-    codex_login: bool = False,
     env: dict | None = None,
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
@@ -399,7 +398,7 @@ def run_rewrite(
         inputs['plans'] = Input(planning_files)
     if unsafe_json is not None:
         inputs['unsafe_json'] = Input(unsafe_json, git_ignore=True)
-    if codex_login:
+    if cfg.codex_login:
         inputs['codex_auth'] = _codex_auth_input()
     _add_codex_agent_inputs(inputs, codex_agents)
     # Add `extra_code` last so we can report errors if there are any name
@@ -414,7 +413,7 @@ def run_rewrite(
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], model=model)
 
     n_op, outputs = run_agent(
         cfg, mvir,
@@ -446,7 +445,6 @@ def run_review(
     new_code: TreeNode,
     extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
-    codex_login: bool = False,
     env: dict | None = None,
 ) -> tuple[str, bytes, bool]:
     """
@@ -492,7 +490,7 @@ def run_review(
         'new_code': Input(new_code),
         'old_code': Input(old_code, path = 'crisp_old_code/'),
     }
-    if codex_login:
+    if cfg.codex_login:
         inputs['codex_auth'] = _codex_auth_input()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
@@ -524,7 +522,7 @@ def run_review(
         '--json',
         '--output-last-message', last_message_path,
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], model=model)
 
     n_op, outputs = run_agent(
         cfg, mvir,

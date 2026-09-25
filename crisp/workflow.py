@@ -1278,14 +1278,21 @@ class Workflow:
                 status_code = 200 if op.passed else 400)
 
         def build_app(asb, app):
+            # NB: because these are `def` rather than `async def`, they run on
+            # a thread pool managed by FastAPI, rather than on the main thread.
+            # For now we're just hoping this doesn't cause a problem.  If it
+            # does in the future, we can modify `crisp.http_server` to run the
+            # HTTP server in a background thread, and communicate back to the
+            # main thread what operations to perform.
+
             @app.post('/crisp/run_tests')
-            async def run_tests():
+            def run_tests():
                 code = asb.get_output('code')
                 op = self.test_op(code, n_test_code)
                 return op_response(op)
 
             @app.post('/crisp/check_unsafe2')
-            async def check_unsafe2():
+            def check_unsafe2():
                 code = asb.get_output('code')
                 unsafe_json = self.find_unsafe2_json(n_code)
                 op = self.check_unsafe2_op(code, unsafe_json)

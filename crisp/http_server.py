@@ -5,7 +5,7 @@ import socket
 import threading
 from typing import Annotated
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import hypercorn.asyncio
 from hypercorn.config import Config as HypercornConfig
@@ -110,6 +110,9 @@ def mk_check_api_key(expect_api_key):
             raise HTTPException(status_code=403, detail='bad API key')
     return check_api_key
 
+async def acquire_request_lock(request: Request):
+    async with request.app.state.request_lock:
+        yield
 
 def run_with_callbacks(build_app, f, *args, **kwargs):
     """
@@ -131,7 +134,8 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
                 finish_event = asyncio.Event()
 
                 @asynccontextmanager
-                async def lifespan(_app: FastAPI):
+                async def lifespan(app: FastAPI):
+                    app.state.request_lock = asyncio.Lock()
                     def on_finish():
                         loop.call_soon_threadsafe(finish_event.set)
                     rt.start(on_finish = on_finish)
@@ -139,7 +143,10 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
 
                 app = FastAPI(
                     lifespan=lifespan,
-                    dependencies=[Depends(mk_check_api_key(api_key))],
+                    dependencies=[
+                        Depends(mk_check_api_key(api_key)),
+                        Depends(acquire_request_lock),
+                    ],
                 )
                 build_app(app)
 

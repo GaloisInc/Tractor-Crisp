@@ -3,6 +3,7 @@ import io
 import os
 from pathspec.pathspec import PathSpec
 import pwd
+import secrets
 import shlex
 import subprocess
 import sys
@@ -22,13 +23,15 @@ class SudoSandbox:
     # Address used to access services on the host machine
     HOST_ADDR = '127.0.0.1'
 
-    def __init__(self, mvir, user):
+    def __init__(self, mvir, user, dir_suffix = None):
         self.mvir = mvir
         self.user = user
 
         # Get the numeric ID of the unprivileged user.
         entry = pwd.getpwnam(user)
         dir_name = 'crisp_sandbox_%d' % entry.pw_uid
+        if dir_suffix is not None:
+            dir_name = f'{dir_name}.{dir_suffix}'
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
     def _sudo_cmd(self, cmd, env):
@@ -183,9 +186,14 @@ class SudoSandbox:
 KEEP_TEMP_DIR = False
 
 @contextmanager
-def run_sandbox(cfg, mvir):
+def run_sandbox(cfg, mvir, require_consistent_path = False):
     user = os.environ['CRISP_SANDBOX_SUDO_USER']
-    sb = SudoSandbox(mvir, user)
+
+    dir_suffix = None
+    if not require_consistent_path:
+        dir_suffix = secrets.token_urlsafe(8)
+
+    sb = SudoSandbox(mvir, user, dir_suffix = dir_suffix)
     sb.start()
     try:
         yield sb

@@ -202,7 +202,9 @@ class WorkContainer:
 KEEP_WORK_CONTAINER = False
 
 @contextmanager
-def run_work_container(cfg, mvir):
+def run_work_container(cfg, mvir, require_consistent_path = False):
+    # Ignore `require_consistent_path`; paths inside the docker container are
+    # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
     yield wc

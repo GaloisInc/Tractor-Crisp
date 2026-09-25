@@ -4,6 +4,7 @@ from enum import Enum
 import os
 from pathlib import Path
 from pathspec.pathspec import PathSpec
+import secrets
 import shlex
 import subprocess
 import toml
@@ -193,8 +194,11 @@ class BwrapSandbox:
 
 
 @contextmanager
-def run_sandbox(cfg, mvir):
-    with lock_work_dir(cfg, mvir) as work_dir:
+def run_sandbox(cfg, mvir, require_consistent_path = False):
+    # Ignore `require_consistent_path`; paths inside the bwrap sandbox are
+    # always consistent, even though the outside `work_dir` paths vary.
+    dir_suffix = secrets.token_urlsafe(8)
+    with lock_work_dir(cfg, mvir, dir_suffix = dir_suffix) as work_dir:
         sb = BwrapSandbox(mvir, work_dir)
         yield sb
 

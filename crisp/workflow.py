@@ -473,7 +473,9 @@ class Workflow:
 
         cfg, mvir = self.cfg, self.mvir
         art_cfg = cfg.transpile.artifact(artifact)
-        with run_sandbox(cfg, mvir) as sb:
+        # Require a consistent sandbox path for this because it references
+        # `compile_commands.json`, which may include absolute paths.
+        with run_sandbox(cfg, mvir, require_consistent_path = True) as sb:
             output_path = cfg.relative_path(os.path.join(cfg.transpile.output_dir, subdir))
 
             sb.checkout(n_c_code)

@@ -315,11 +315,10 @@ def step(f):
 
 
 class Workflow:
-    def __init__(self, cfg: Config, mvir: MVIR, codex_login: bool = False):
+    def __init__(self, cfg: Config, mvir: MVIR):
         self.cfg = cfg
         self.mvir = mvir
         self.fuel = FuelCounter('safety tries')
-        self.codex_login = codex_login
         self._step_depth = 0
 
     def accept(self, code: TreeNode, reason = None):
@@ -1273,7 +1272,6 @@ class Workflow:
             extra_code = extra_code,
             planning_files = n_plans,
             unsafe_json = self.find_unsafe2_json(n_code),
-            codex_login=self.codex_login,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
             ],
@@ -1294,8 +1292,7 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
-            cfg.models.agent_loop, n_old_code, n_new_code,
-            codex_login = self.codex_login)
+            cfg.models.agent_loop, n_old_code, n_new_code)
 
         if report.strip() == '':
             # Fail closed on a missing report.
@@ -1455,7 +1452,6 @@ class Workflow:
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),
             planning_files = None,
-            codex_login=self.codex_login,
             codex_agents=agent.PLANNING_CODEX_AGENTS,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],

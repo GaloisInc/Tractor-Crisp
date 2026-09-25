@@ -76,6 +76,9 @@ class BwrapSandbox:
     def checkout_file(self, rel_path, n_file: FileNode):
         self.work_dir.checkout_file(rel_path, n_file)
 
+    def checkout_file_untracked(self, rel_path, body):
+        self.work_dir.checkout_file_untracked(rel_path, body)
+
     def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None) -> TreeNode:
         return self.work_dir.commit_dir(rel_path, ignore_spec)
 

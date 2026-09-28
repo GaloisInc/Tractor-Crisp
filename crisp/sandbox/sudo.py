@@ -70,14 +70,18 @@ class SudoSandbox:
         self._run_sudo(('tar', '-C', self.dir_path, '-x'), input=tar_io.getvalue())
 
     def checkout_file(self, rel_path, n_file):
-        assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
+        self.checkout_file_untracked(rel_path, n_file.body())
+
+    def checkout_file_untracked(self, rel_path, body):
+        assert not os.path.isabs(rel_path)
+        assert isinstance(body, bytes)
         file_path = self.join(rel_path)
         cmd = 'mkdir -p {parent_path} && exec cat >{file_path}'.format(
             parent_path=shlex.quote(os.path.dirname(file_path)),
             file_path=shlex.quote(file_path),
         )
-        self._run_sudo(('sh', '-c', cmd), input=n_file.body())
+        self._run_sudo(('sh', '-c', cmd), input=body)
 
     def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
         assert not os.path.isabs(rel_path)

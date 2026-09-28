@@ -37,14 +37,18 @@ class WorkDir:
             self.checkout_file(file_path, n_file)
 
     def checkout_file(self, rel_path, n_file):
-        assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
+        self.checkout_file_untracked(rel_path, n_file.body())
+
+    def checkout_file_untracked(self, rel_path, body):
+        assert not os.path.isabs(rel_path)
+        assert isinstance(body, bytes)
         path = os.path.join(self.path, rel_path)
         assert not os.path.exists(path), \
             'path %r already exists in work dir %r' % (rel_path, self.path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
-            f.write(n_file.body())
+            f.write(body)
 
     def commit(self, globs: Union[str, Sequence[str]]):
         if isinstance(globs, str):

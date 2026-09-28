@@ -8,7 +8,7 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Callable
 
 from fastapi import FastAPI
 from pathspec.pathspec import PathSpec

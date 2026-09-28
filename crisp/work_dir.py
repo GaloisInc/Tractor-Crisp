@@ -116,7 +116,7 @@ def lock_work_dir(cfg, mvir, dir_suffix = None):
     """
     dir_name = 'work'
     if dir_suffix is not None:
-        dir_name = f'{dir_name}.{dir_suffix}'
+        dir_name = f'{dir_name}.sb.{dir_suffix}'
     work_dir = os.path.join(cfg.mvir_storage_dir, dir_name)
     # If the directory already exists, some other process holds the lock.
     os.makedirs(work_dir, exist_ok=False)

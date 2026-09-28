@@ -31,7 +31,7 @@ class SudoSandbox:
         entry = pwd.getpwnam(user)
         dir_name = 'crisp_sandbox_%d' % entry.pw_uid
         if dir_suffix is not None:
-            dir_name = f'{dir_name}.{dir_suffix}'
+            dir_name = f'{dir_name}.sb.{dir_suffix}'
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
     def _sudo_cmd(self, cmd, env):

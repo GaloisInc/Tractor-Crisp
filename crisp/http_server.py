@@ -138,6 +138,10 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
                     app.state.request_lock = asyncio.Lock()
                     def on_finish():
                         loop.call_soon_threadsafe(finish_event.set)
+                    # Call `rt.start()` as late as possible.  If the server
+                    # crashes after this, `rt` may have already started a
+                    # long-running call to `f()`, and `rt.__exit__` may block
+                    # for a long time.
                     rt.start(on_finish = on_finish)
                     yield
 

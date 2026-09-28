@@ -70,6 +70,10 @@ class Config(ConfigBase):
     models: ModelsConfig = field(default_factory=ModelsConfig)
     model_options: dict[str, 'ModelOptionsConfig'] = field(default_factory=dict)
 
+    # Use the host's login credentials instead of an API key when running
+    # Codex?  This allows running CRISP against an OpenAI monthly subscription.
+    codex_login: bool = False
+
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)
         object.__setattr__(self, 'base_dir', os.path.join(config_dir, self.base_dir))

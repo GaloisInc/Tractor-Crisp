@@ -13,7 +13,7 @@ import toml
 import typing
 from typing import Any, Callable
 
-from . import agent, analysis, llm
+from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
@@ -122,11 +122,8 @@ FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()
 
 AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
 
-AGENT_FFI_REVIEW_PROMPT = _prompt('ffi_review.md')
+# TODO: Move all .md prompts (and others, eventually) into `crisp.prompts`
 
-# `codex exec review` renders each finding as `- [P1] title — file:line`;
-# a clean review is prose with no such lines.
-AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
     r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
@@ -1320,7 +1317,7 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(
+        prompt = prompts.AGENT_FFI_REVIEW.format(
             cargo_dir_path = cargo_dir,
             ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
@@ -1336,7 +1333,7 @@ class Workflow:
             print('warning: FFI review ran no commands; ignoring its report')
             passed = False
         else:
-            passed = AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
+            passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
 
         n_op = CodexReviewOpNode.new(mvir,
             old_code = n_old_code.node_id(),

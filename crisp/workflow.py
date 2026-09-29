@@ -110,20 +110,6 @@ New signatures:
 {input_files}
 '''
 
-# Prompt templates live in `crisp/prompts/`, one file per prompt.  They are
-# `str.format` templates; `{ffi_entry_point_rules}` splices the shared FFI
-# rules block into the prompts that use it.
-_PROMPT_DIR = Path(__file__).parent / 'prompts'
-
-def _prompt(name: str) -> str:
-    return (_PROMPT_DIR / name).read_text()
-
-FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()
-
-AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
-
-# TODO: Move all .md prompts (and others, eventually) into `crisp.prompts`
-
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
     r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
@@ -1319,7 +1305,7 @@ class Workflow:
 
         prompt = prompts.AGENT_FFI_REVIEW.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
             cfg.models.agent_loop, n_old_code, n_new_code)
 
@@ -1474,9 +1460,9 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
 
-        prompt = AGENT_PLAN_PROMPT.format(
+        prompt = prompts.AGENT_PLAN.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),

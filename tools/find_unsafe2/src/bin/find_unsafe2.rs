@@ -26,7 +26,8 @@ fn main() {
         "expected $FIND_UNSAFE2_JSON_DIR to be an absolute path, but got {:?}", json_dir);
     fs::create_dir_all(&json_dir).unwrap();
 
-    let args = env::args().collect::<Vec<_>>();
+    let mut args = env::args().collect::<Vec<_>>();
+    args.extend(find_unsafe2::RUSTC_FLAGS.iter().map(|&s| s.to_owned()));
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
         let crate_name = rustc_public::local_crate().name;
 

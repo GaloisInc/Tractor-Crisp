@@ -56,6 +56,8 @@ struct FunctionVisitor<'a> {
     casts_int_to_ptr: usize,
     /// Number of inline assembly blocks within the current function.
     inline_asm: usize,
+    /// Number of transmutes within the current function.
+    transmutes: usize,
     /// Temps holding a `Box`'s pointer, produced when MIR lowering elaborates a safe `Box`
     /// deref.  Derefs of these don't count.
     box_ptr_locals: HashSet<Local>,
@@ -72,6 +74,7 @@ impl<'a> FunctionVisitor<'a> {
             derefs_raw_ptr: 0,
             casts_int_to_ptr: 0,
             inline_asm: 0,
+            transmutes: 0,
             box_ptr_locals: box_ptr_locals(body),
         }
     }
@@ -195,7 +198,10 @@ impl MirVisitor for FunctionVisitor<'_> {
                     },
                 }
             }
-        } else if let Rvalue::Cast(_kind, ref op, dest_ty) = *x {
+        } else if let Rvalue::Cast(kind, ref op, dest_ty) = *x {
+            if kind == CastKind::Transmute {
+                self.transmutes += 1;
+            }
             if dest_ty.kind().is_raw_ptr() {
                 let src_ty = op.ty(self.body.locals()).unwrap();
                 if src_ty.kind().is_integral() {
@@ -290,6 +296,9 @@ pub struct FunctionOutputs {
     pub calls_unsafe: usize,
     /// Unsafety: function contains inline assembly, which can access arbitrary memory.
     pub inline_asm: usize,
+    /// Unsafety: function transmutes values.  `transmute` is an intrinsic, so it appears in MIR
+    /// as a cast rather than as a call to an `unsafe fn`.
+    pub transmutes: usize,
     /// Unsafety: function mentions `static mut`s.
     ///
     /// This is overapproximated: we count any mention of a static `S` as an access, even though
@@ -349,7 +358,7 @@ impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
             ref mut total_unsafe, filename: _,
-            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm,
+            is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             uses_ffi_entry_point: _,
@@ -363,6 +372,7 @@ impl FunctionOutputs {
             + derefs_raw_ptr
             + calls_unsafe
             + inline_asm
+            + transmutes
             + uses_static_mut.values().copied().sum::<usize>()
             + uses_union_field.values().copied().sum::<usize>();
     }
@@ -371,7 +381,7 @@ impl FunctionOutputs {
         let FunctionOutputs {
             total_unsafe: _, filename: _,
             is_unsafe_fn, is_mut_static,
-            derefs_raw_ptr, calls_unsafe, inline_asm,
+            derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
             ref uses_ffi_entry_point,
@@ -389,6 +399,7 @@ impl FunctionOutputs {
         self.derefs_raw_ptr += derefs_raw_ptr;
         self.calls_unsafe += calls_unsafe;
         self.inline_asm += inline_asm;
+        self.transmutes += transmutes;
         add_map(&mut self.uses_static_mut, uses_static_mut);
         add_map(&mut self.uses_union_field, uses_union_field);
         add_map(&mut self.uses_ffi_entry_point, uses_ffi_entry_point);
@@ -408,6 +419,24 @@ impl TypeOutputs {
 
         0
     }
+}
+
+
+/// Flags the drivers append to the rustc command line, after any from `RUSTFLAGS`.
+/// `CrateItem::body` returns optimized MIR, so stop rustc from rewriting the operations we count:
+/// turn off MIR optimizations, inlining and UB check instrumentation.  Miri, which also needs MIR
+/// that matches the source, uses nearly the same flags (`MIRI_DEFAULT_ARGS`).
+pub const RUSTC_FLAGS: &[&str] = &["-Zmir-opt-level=0", "-Zub-checks=no", "-Zinline-mir=no"];
+
+/// Check that `RUSTC_FLAGS` took effect.  An earlier flag can take ours as its argument (`-L`), and
+/// `-Zmir-enable-passes` turns on passes regardless of the opt level.
+fn check_mir_opts(tcx: TyCtxt) {
+    let opts = &tcx.sess.opts.unstable_opts;
+    assert!(
+        tcx.sess.mir_opt_level() == 0 && !tcx.sess.ub_checks()
+            && opts.inline_mir == Some(false) && opts.mir_enable_passes.is_empty(),
+        "MIR optimizations or UB checks are enabled; see RUSTC_FLAGS",
+    );
 }
 
 
@@ -533,6 +562,7 @@ fn type_def_field_contains_raw_ptr(td: &TypeDef) -> IndexMap<String, usize> {
 
 
 pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
+    check_mir_opts(tcx);
     let items = rustc_public::all_local_items();
 
     let mut is_static_mut = {
@@ -668,6 +698,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
                 derefs_raw_ptr: v.derefs_raw_ptr,
                 calls_unsafe: v.calls_unsafe,
                 inline_asm: v.inline_asm,
+                transmutes: v.transmutes,
                 uses_static_mut: v.uses_statics.iter().filter_map(|(&sd, &count)| {
                     is_static_mut(sd).then(|| (sd.name(), count))
                 }).collect(),

@@ -190,26 +190,52 @@ fn new_dependency_crate() {
     assert_eq!(out.stdout, "", "new_dependency_crate: expected no diagnostics");
 }
 
+/// Builds `src` as proc-macro crate `crate_name` in `dir`; returns the `--extern` argument.
+fn build_proc_macro(src: &Path, crate_name: &str, dir: &Path) -> String {
+    let status = Command::new("rustc")
+        .arg(src)
+        .args(["--crate-type", "proc-macro"])
+        .args(["--edition", "2024"])
+        .args(["--crate-name", crate_name])
+        .arg("--out-dir")
+        .arg(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "building proc-macro crate {crate_name} failed");
+    let lib = dir.join(format!("{}{crate_name}{}",
+        std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX));
+    format!("{crate_name}={}", lib.display())
+}
+
 /// A derive defined by a proc-macro crate inside the project is the agent's own code, so the
 /// unsafe impl it emits is charged (unlike `derive_copy_clone`).
 #[test]
 fn project_derive() {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("project_derive");
     fs::create_dir_all(&tmp).unwrap();
-    let status = Command::new("rustc")
-        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/adversarial/project_derive/derive.rs"))
-        .args(["--crate-type", "proc-macro"])
-        .args(["--edition", "2024"])
-        .args(["--crate-name", "adv_project_derive_macro"])
-        .arg("--out-dir")
-        .arg(&tmp)
-        .status()
-        .unwrap();
-    assert!(status.success(), "project_derive: building the proc-macro crate failed");
-    let lib = tmp.join(format!("{}adv_project_derive_macro{}",
-        std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX));
-    let extern_arg = format!("adv_project_derive_macro={}", lib.display());
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/adversarial/project_derive/derive.rs");
+    let extern_arg = build_proc_macro(&src, "adv_project_derive_macro", &tmp);
     let out = run_scenario_in("project_derive", true, None, &["--extern", &extern_arg]);
     assert!(!out.passed, "project_derive: expected rejection, got pass");
     insta::assert_snapshot!("project_derive", out.stdout);
+}
+
+/// A derive defined outside the project (standing in for a crates.io proc macro) isn't
+/// charged, unlike the same derive in `project_derive`.
+#[test]
+fn external_derive() {
+    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("external_derive");
+    fs::create_dir_all(&tmp).unwrap();
+    // `SRC_DIR` is the fixture dir, so build the macro from a copy outside it.
+    let src = tmp.join("derive.rs");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/adversarial/project_derive/derive.rs"),
+        &src,
+    ).unwrap();
+    let extern_arg = build_proc_macro(&src, "adv_external_derive_macro", &tmp);
+    let out = run_scenario_in("external_derive", true, None, &["--extern", &extern_arg]);
+    assert!(out.passed, "external_derive: expected pass, got:\n{}", out.stdout);
+    assert_eq!(out.stdout, "", "external_derive: expected no diagnostics");
 }

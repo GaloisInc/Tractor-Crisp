@@ -9,6 +9,7 @@ import subprocess
 import toml
 import typing
 
+from . import agent, prompts
 from . import inline_errors as inline_errors_module
 from .config import Config
 from .error import CrispError
@@ -17,7 +18,7 @@ from .mvir import (
     CompileCommandsOpNode, FindUnsafeAnalysisNode, CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, CodexReviewAnalysisNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -730,3 +731,42 @@ def related_decls(
 
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
     return n_op
+
+
+@analysis
+def ffi_review(
+    cfg: Config,
+    mvir: MVIR,
+    old_code: TreeNode,
+    new_code: TreeNode,
+    prompt: FileNode,
+) -> CodexReviewAnalysisNode:
+    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+    op_agent = agent.run_review_op(cfg, mvir, prompt.body_str(),
+        cfg.models.agent_loop, old_code, new_code)
+
+    report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
+
+    if report.strip() == '':
+        print('warning: FFI review returned an empty report')
+        passed = False
+    elif not ran_commands:
+        # The reviewer never successfully ran a command, so it cannot have
+        # inspected the diff.
+        print('warning: FFI review ran no commands; ignoring its report')
+        passed = False
+    else:
+        passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
+
+    op_review = CodexReviewAnalysisNode.new(mvir,
+        old_code = old_code.node_id(),
+        new_code = new_code.node_id(),
+        prompt = prompt.node_id(),
+        agent_op = op_agent.node_id(),
+        passed = passed,
+    )
+    mvir.set_tag('op_history', op_review.node_id(), op_review.kind)
+    return op_review
+
+

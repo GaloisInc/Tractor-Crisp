@@ -16,6 +16,11 @@ from crisp.workflow import CrispError, FuelCounter, StepOutcome
 
 
 class TargetLabelsTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('crisp.__main__.load_progress', return_value={'steps': []}))
+        self.enterContext(patch('crisp.__main__.save_progress'))
+        self.enterContext(patch('crisp.__main__.planning_interval', return_value=999))
+
     def test_declared_target_labels_reach_the_ledger(self):
         for declared in (None, 'crate::real'):
             with self.subTest(declared=declared):
@@ -42,10 +47,15 @@ class TargetLabelsTest(unittest.TestCase):
 
                 self.assertEqual(w.fuel.fuel, 0)
                 self.assertIn('status: BUDGET_EXHAUSTED', output.getvalue())
-                self.assertIn(f"refused  {declared or '<unspecified>'}", output.getvalue())
+                self.assertIn(f"{'refused':14} {declared or '<unspecified>'}", output.getvalue())
 
 
 class SafetyLoopTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('crisp.__main__.load_progress', side_effect=lambda *a: {'steps': []}))
+        self.enterContext(patch('crisp.__main__.save_progress'))
+        self.enterContext(patch('crisp.__main__.planning_interval', return_value=999))
+
     def run_attempts(self, results, targets=None):
         w = Mock()
         w.fuel = FuelCounter('test')

@@ -1,6 +1,5 @@
 import tomllib
 import unittest
-from unittest.mock import patch
 
 from crisp import agent
 from crisp.error import CrispError
@@ -38,14 +37,9 @@ class CodexAgentProfilesTest(unittest.TestCase):
             )
 
     def test_planning_profiles_are_injected_under_codex_home(self):
-        written = {}
-
-        def capture(_sb, _mvir, rel_path, body):
-            written[rel_path] = body
-
-        with patch.object(agent, '_checkout_bytes', side_effect=capture):
-            agent._inject_codex_agents(
-                object(), object(), agent.PLANNING_CODEX_AGENTS)
+        inputs = {}
+        agent._add_codex_agent_inputs(inputs, agent.PLANNING_CODEX_AGENTS)
+        written = {item.path: item.item for item in inputs.values()}
 
         self.assertIn('.codex/safety_constraints.md', written)
         self.assertEqual(
@@ -59,7 +53,7 @@ class CodexAgentProfilesTest(unittest.TestCase):
 
     def test_unknown_profile_is_rejected(self):
         with self.assertRaisesRegex(CrispError, 'unknown Codex agent profile'):
-            agent._inject_codex_agents(object(), object(), ('missing',))
+            agent._add_codex_agent_inputs({}, ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
         for name in agent.PLANNING_CODEX_AGENTS:

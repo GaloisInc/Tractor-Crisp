@@ -411,6 +411,24 @@ impl TypeOutputs {
 }
 
 
+/// Flags the drivers append to the rustc command line, after any from `RUSTFLAGS`.
+/// `CrateItem::body` returns optimized MIR, so stop rustc from rewriting the operations we count:
+/// turn off MIR optimizations, inlining and UB check instrumentation.  Miri, which also needs MIR
+/// that matches the source, uses nearly the same flags (`MIRI_DEFAULT_ARGS`).
+pub const RUSTC_FLAGS: &[&str] = &["-Zmir-opt-level=0", "-Zub-checks=no", "-Zinline-mir=no"];
+
+/// Check that `RUSTC_FLAGS` took effect.  An earlier flag can take ours as its argument (`-L`), and
+/// `-Zmir-enable-passes` turns on passes regardless of the opt level.
+fn check_mir_opts(tcx: TyCtxt) {
+    let opts = &tcx.sess.opts.unstable_opts;
+    assert!(
+        tcx.sess.mir_opt_level() == 0 && !tcx.sess.ub_checks()
+            && opts.inline_mir == Some(false) && opts.mir_enable_passes.is_empty(),
+        "MIR optimizations or UB checks are enabled; see RUSTC_FLAGS",
+    );
+}
+
+
 /// Whether any item or type of the current crate has its source under `src_dir`.  Used by the
 /// drivers to restrict analysis to the project's own crates.  Types are checked too, so a crate
 /// holding only type definitions still counts as a project crate.
@@ -533,6 +551,7 @@ fn type_def_field_contains_raw_ptr(td: &TypeDef) -> IndexMap<String, usize> {
 
 
 pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
+    check_mir_opts(tcx);
     let items = rustc_public::all_local_items();
 
     let mut is_static_mut = {

@@ -13,17 +13,17 @@ import toml
 import typing
 from typing import Any, Callable
 
-from . import agent, analysis, llm
+from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
-    LlmOpNode, CodexReviewOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
+    LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
     CargoCheckJsonAnalysisNode, EditOpNode, WorkflowStepInputsNode,
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
-    CargoFixOpNode,
+    CargoFixOpNode, CodexReviewAnalysisNode,
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
@@ -110,23 +110,6 @@ New signatures:
 {input_files}
 '''
 
-# Prompt templates live in `crisp/prompts/`, one file per prompt.  They are
-# `str.format` templates; `{ffi_entry_point_rules}` splices the shared FFI
-# rules block into the prompts that use it.
-_PROMPT_DIR = Path(__file__).parent / 'prompts'
-
-def _prompt(name: str) -> str:
-    return (_PROMPT_DIR / name).read_text()
-
-FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()
-
-AGENT_PLAN_PROMPT = _prompt('agent_plan.md')
-
-AGENT_FFI_REVIEW_PROMPT = _prompt('ffi_review.md')
-
-# `codex exec review` renders each finding as `- [P1] title — file:line`;
-# a clean review is prose with no such lines.
-AGENT_FFI_REVIEW_FINDING_RE = re.compile(r'^\s*-\s*\[P\d+\]', re.MULTILINE)
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
     r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
@@ -1316,38 +1299,25 @@ class Workflow:
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
-    ) -> CodexReviewOpNode:
+    ) -> CodexReviewAnalysisNode | None:
+        """
+        Run FFI review for the change from `n_old_code` to `n_new_code`.  If no
+        FFI functions were modified, this returns `None`.
+        """
         cfg, mvir = self.cfg, self.mvir
+
+        old_defs = self.extract_ffi_defs(n_old_code).defs
+        new_defs = self.extract_ffi_defs(n_new_code).defs
+        if old_defs == new_defs:
+            return None
+
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(
+        prompt = prompts.AGENT_FFI_REVIEW.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
-        report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
-            cfg.models.agent_loop, n_old_code, n_new_code)
-
-        if report.strip() == '':
-            # Fail closed on a missing report.
-            print('warning: FFI review returned an empty report')
-            passed = False
-        elif not ran_commands:
-            # Fail closed when the reviewer never successfully ran a command:
-            # it cannot have inspected the diff, whatever the report says.
-            print('warning: FFI review ran no commands; ignoring its report')
-            passed = False
-        else:
-            passed = AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
-
-        n_op = CodexReviewOpNode.new(mvir,
-            old_code = n_old_code.node_id(),
-            new_code = n_new_code.node_id(),
-            raw_prompt = FileNode.new(mvir, prompt).node_id(),
-            report = FileNode.new(mvir, report).node_id(),
-            verdict = 'PASS' if passed else 'FAIL',
-            body = logs,
-        )
-        mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
-        return n_op
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        prompt = FileNode.new(mvir, prompt)
+        return analysis.ffi_review(cfg, mvir,
+                n_old_code, n_new_code, prompt)
 
     @step
     def do_ffi_review(
@@ -1361,17 +1331,17 @@ class Workflow:
         Returns `(passed, report)`; `report` is the reviewer's findings when
         the change is rejected, or `None` if there is no usable report.
         """
-        old_defs = self.extract_ffi_defs(n_old_code).defs
-        new_defs = self.extract_ffi_defs(n_new_code).defs
-        if old_defs == new_defs:
+        n_op = self.ffi_review_op(n_old_code, n_new_code)
+
+        if n_op is None:
+            # No change to FFI defs
             return True, None
 
-        n_op = self.ffi_review_op(n_old_code, n_new_code)
-        report = self.mvir.node(n_op.report).body_str()
-        print(report)
-        if n_op.verdict == 'PASS':
+        if n_op.passed:
             return True, None
-        return False, report if report.strip() else None
+        else:
+            report = self.mvir.node(n_op.outputs['report']).body_str()
+            return False, report if report.strip() else None
 
     @step
     def agent_safety_no_tests(
@@ -1477,9 +1447,9 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
 
-        prompt = AGENT_PLAN_PROMPT.format(
+        prompt = prompts.AGENT_PLAN.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),

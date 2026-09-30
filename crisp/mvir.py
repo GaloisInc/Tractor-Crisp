@@ -816,6 +816,10 @@ class CheckUnsafe2AnalysisNode(Node):
     cmd = property(lambda self: self._metadata['cmd'])
     exit_code = property(lambda self: self._metadata['exit_code'])
 
+    @property
+    def passed(self):
+        return self.exit_code == 0
+
 class EditOpNode(Node):
     KIND = 'edit_op'
     old_code: Metadata[NodeId]

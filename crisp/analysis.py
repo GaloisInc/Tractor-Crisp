@@ -3,6 +3,7 @@ from functools import wraps
 import inspect
 import json
 import os
+import re
 import shlex
 import subprocess
 import toml
@@ -26,6 +27,41 @@ def _as_node_id(x):
         return x
     else:
         return x.node_id()
+
+# `/tmp/crisp-sandbox.sb.123456abcdef/foo.txt` ->
+# `/tmp/crisp-sandbox.sb.ERASED/foo.txt`
+#
+# The regex here uses lookahead for `/|$` so it matches both `/tmp/x.sb.y/foo`
+# and `/tmp/x.sb.y` (where the sandbox name is at the end of the string), and
+# in either case only replaces the `.sb.y` part.
+_ARG_VALUE_SANDBOX_DIR_RE = re.compile(r'\.sb\.[a-zA-Z0-9_-]+(?=/|$)')
+_ARG_VALUE_SANDBOX_DIR_REPLACEMENT = '.sb.ERASED'
+
+def _arg_value_eq(x, y):
+    """
+    Compare two argument values for equality.  This is used to check if a
+    cached analysis result can be reused to satisfy the current query.
+
+    This is almost identical to `x == y`, but with one special case: if the
+    values are strings (or nested lists/tuples containing strings), anything
+    that looks like a random CRISP sandbox name is replaced with a fixed
+    string.  This allows results computed in one sandbox to be reused in
+    another.
+    """
+    if isinstance(x, (list, tuple)):
+        if not isinstance(y, (list, tuple)):
+            return False
+        if len(x) != len(y):
+            return False
+        return all(_arg_value_eq(xx, yy) for xx, yy in zip(x, y))
+    elif isinstance(x, str):
+        if not isinstance(y, str):
+            return False
+        x = _ARG_VALUE_SANDBOX_DIR_RE.sub(_ARG_VALUE_SANDBOX_DIR_REPLACEMENT, x)
+        y = _ARG_VALUE_SANDBOX_DIR_RE.sub(_ARG_VALUE_SANDBOX_DIR_REPLACEMENT, y)
+        return x == y
+    else:
+        return x == y
 
 def analysis(f):
     """
@@ -91,7 +127,7 @@ def analysis(f):
             value = bound.arguments[k]
             if isinstance(value, Node):
                 value = value.node_id()
-            return value == getattr(n, k)
+            return _arg_value_eq(value, getattr(n, k))
 
         mvir = bound.arguments[mvir_param_name]
         index_node_id = _as_node_id(bound.arguments[index_param_name])
@@ -129,7 +165,10 @@ def run_tests(cfg: Config, mvir: MVIR,
         sb.checkout(code)
         sb.checkout(test_code)
 
-        exit_code, logs = sb.run(cmd, shell=True, stream=True)
+        # Add `-x` option to print each command before running it.  When the
+        # agent is given the test logs, this helps it understand the different
+        # parts of the output.
+        exit_code, logs = sb.run(['sh', '-x', '-c', cmd], stream=True)
 
     n = TestResultNode.new(
             mvir,
@@ -297,7 +336,9 @@ def cc_custom(
             f"can't generate compile_commands for {art.name} " \
             'because it uses lib_from_bin_artifact'
 
-    with run_sandbox(cfg, mvir) as sb:
+    # Require a consistent sandbox path for this because the absolute paths of
+    # the source files will get embedded into `compile_commands.json`.
+    with run_sandbox(cfg, mvir, require_consistent_path = True) as sb:
         work_dir = sb.join(cfg.relative_path('.'))
         cc_path = sb.join(COMPILE_COMMANDS_PATH)
 

@@ -81,6 +81,10 @@ pub fn cargo_subcommand_main(wrapper_exe: &Path) {
         .status()
         .expect("Failed to run `cargo build` with RUSTC_WRAPPER");
     if !status.success() {
-        panic!("Failed to run {}: {status}", wrapper_exe.display())
+        if let Some(code) = status.code() {
+            process::exit(code);
+        } else {
+            panic!("Abnormal exit from {}: {status}", wrapper_exe.display());
+        }
     }
 }

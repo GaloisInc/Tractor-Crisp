@@ -3,7 +3,7 @@ import glob
 import os
 from pathspec.pathspec import PathSpec
 import shutil
-from typing import Union, Sequence
+from typing import Union, Sequence, Callable
 
 from .mvir import FileNode, TreeNode
 

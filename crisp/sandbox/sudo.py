@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import tarfile
+from typing import Callable
 from subprocess import CompletedProcess, Popen
 
 from ..mvir import FileNode, TreeNode

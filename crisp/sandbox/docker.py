@@ -5,6 +5,7 @@ import os
 from pathspec.pathspec import PathSpec
 import sys
 import tarfile
+from typing import Callable
 import shlex
 
 from ..mvir import FileNode, TreeNode

@@ -8,6 +8,7 @@ import secrets
 import shlex
 import subprocess
 import toml
+from typing import Callable
 from subprocess import CompletedProcess, Popen
 
 from ..config import ConfigBase

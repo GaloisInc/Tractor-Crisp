@@ -741,6 +741,14 @@ def ffi_review(
     new_code: TreeNode,
     prompt: FileNode,
 ) -> CodexReviewAnalysisNode:
+    """
+    Run FFI review pass.
+
+    As the review is LLM-based, this is not deterministic like most analyses
+    are.  Results are still cached as normal, so calling this a second time
+    with the same `old_code`, `new_code`, and `prompt` will simply return the
+    cached value rather than running the review a second time.
+    """
     cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
     op_agent = agent.run_review_op(cfg, mvir, prompt.body_str(),

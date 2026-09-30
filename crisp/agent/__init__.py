@@ -511,7 +511,7 @@ def run_rewrite(
     return (output_code, output_plans)
 
 
-def run_review(
+def run_review_op(
     cfg: Config,
     mvir: MVIR,
     prompt: str,
@@ -521,7 +521,7 @@ def run_review(
     extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
     env: dict | None = None,
-) -> tuple[str, bytes, bool]:
+) -> CodexAgentOpNode:
     """
     Run `codex exec review` over the change from `old_code` to `new_code` and
     return the reviewer's final message, the full log output, and whether the
@@ -541,24 +541,6 @@ def run_review(
     instructions are given, so `prompt` itself must direct the reviewer at the
     uncommitted changes.
     """
-    def _review_ran_commands(logs: bytes) -> bool:
-        """True iff the codex `--json` event stream in `logs` shows at
-           least one successfully executed command."""
-        for line in logs.splitlines():
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(ev, dict):
-                continue
-            item = ev.get('item')
-            if (ev.get('type') == 'item.completed'
-                    and isinstance(item, dict)
-                    and item.get('type') == 'command_execution'
-                    and item.get('exit_code') == 0):
-                return True
-        return False
-
     extra_code, env = _normalize_run_args(extra_code, env)
 
     inputs = {
@@ -612,6 +594,27 @@ def run_review(
         cwd = cwd,
         env = env,
     )
+
+    return n_op
+
+def review_op_results(mvir: MVIR, n_op: CodexAgentOpNode) -> tuple[str, bytes, bool]:
+    def _review_ran_commands(logs: bytes) -> bool:
+        """True iff the codex `--json` event stream in `logs` shows at
+           least one successfully executed command."""
+        for line in logs.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            item = ev.get('item')
+            if (ev.get('type') == 'item.completed'
+                    and isinstance(item, dict)
+                    and item.get('type') == 'command_execution'
+                    and item.get('exit_code') == 0):
+                return True
+        return False
 
     n_last_message_tree = mvir.node(n_op.outputs['last_message'])
     n_last_message = mvir.node(n_last_message_tree.sole_file)

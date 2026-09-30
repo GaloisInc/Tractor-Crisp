@@ -411,6 +411,20 @@ impl TypeOutputs {
 }
 
 
+/// Flags the drivers append to the rustc command line, after any from `RUSTFLAGS`.
+/// `CrateItem::body` returns optimized MIR, so stop rustc from rewriting the operations we count.
+///
+/// - `-Zmir-opt-level=0` turns off the optimization passes, which delete and rewrite operations
+///   (e.g. InstSimplify drops casts between types that are equal once lifetimes are erased).
+/// - `-Zub-checks=no` turns off the passes that instrument raw pointer derefs with checks of their
+///   own, including transmutes.
+/// - `-Zinline-mir=no` is already the default at opt level 0, but `-Zinline-mir=yes` in `RUSTFLAGS`
+///   turns inlining on at any opt level.  Unlike Miri, which attributes an operation by its source
+///   span, we attribute it to the function whose body contains it, so inlining would charge
+///   callers (including safe code calling into `std`) for their callees' unsafe operations.
+pub const RUSTC_FLAGS: &[&str] = &["-Zmir-opt-level=0", "-Zub-checks=no", "-Zinline-mir=no"];
+
+
 /// Whether any item or type of the current crate has its source under `src_dir`.  Used by the
 /// drivers to restrict analysis to the project's own crates.  Types are checked too, so a crate
 /// holding only type definitions still counts as a project crate.

@@ -190,7 +190,8 @@ fn main() {
     assert!(src_dir.is_absolute(),
         "expected $FIND_UNSAFE2_SRC_DIR to be an absolute path, but got {:?}", src_dir);
 
-    let args = env::args().collect::<Vec<_>>();
+    let mut args = env::args().collect::<Vec<_>>();
+    args.extend(find_unsafe2::RUSTC_FLAGS.iter().map(|&s| s.to_owned()));
     let r = rustc_public::run_with_tcx!(&args[1..], |tcx| {
         let crate_name = rustc_public::local_crate().name;
 

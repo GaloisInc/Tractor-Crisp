@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 from pathlib import Path
+import time
 from typing import Sequence, Callable
 
 from fastapi import FastAPI
@@ -320,6 +321,9 @@ def run_agent(
         # Env var is set automatically inside `sandbox.run()` if present.
         # TODO: Set it here instead.
 
+    codex_call_duration_sec = 0.
+    codex_output_tokens = 0
+
     with run_sandbox(cfg, mvir) as sb:
         gitignore_lines = [
             '# Cargo build output',
@@ -385,7 +389,34 @@ def run_agent(
                 asb.run_all_with_api_port, all_cmds,
             )
         else:
-            exit_code, logs = asb.run_all(all_cmds)
+            logs = None
+            for cmd in all_cmds:
+                print(f'run: {shlex.join(cmd)}')
+    
+                if cmd == codex_cmd:
+    
+                    # capture time taken by codex command
+                    codex_start_time = time.perf_counter()
+                    exit_code, logs2 = asb.run(cmd)
+                    codex_call_duration_sec = time.perf_counter() - codex_start_time
+    
+                    # capture token usage of codex command, if possible
+                    for line in logs2.decode('utf-8').splitlines():
+                        try:
+                            event = json.loads(line)
+                            if not isinstance(event, dict):
+                                continue
+                            if event.get('type') == 'turn.completed' and 'usage' in event:
+                                codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
+                        except json.decoder.JSONDecodeError:
+                            continue
+    
+                else:
+                    exit_code, logs2 = asb.run(cmd)
+    
+                logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
+                if exit_code != 0:
+                    break
 
         raw_output_files = asb.commit_raw_output_files()
 
@@ -431,6 +462,8 @@ def run_agent(
         raw_output_files = raw_output_files.node_id(),
         json_session = json_session_node_id,
         body = logs if logs is not None else b'',
+        call_duration_sec = codex_call_duration_sec,
+        output_tokens = codex_output_tokens,
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
@@ -486,6 +519,7 @@ def run_rewrite(
     codex_cmd = _codex_command(cfg, 'exec', [
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
+        '--json',
         prompt,
     ], model=model)
 

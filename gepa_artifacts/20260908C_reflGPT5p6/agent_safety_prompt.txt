@@ -1,0 +1,64 @@
+Continue the iterative Rust safety refactor described in `SAFETY_PLAN.md`.
+
+Goal:
+{target_goal}
+
+Additional requirements:
+{after_refactoring_instruction}
+
+Current context:
+- The previous iteration reduced the measured unsafe-entity count from 6604 to 6347 (257 removed), and the functionality tests passed.
+- Treat the repository and `SAFETY_PLAN.md` as authoritative if they differ from this historical count.
+- The code is a C-to-Rust translation that must retain its C ABI, exported symbol names, data layout, return codes, and observable zlib-compatible behavior.
+- Prior successful work used safe Rust implementations behind thin FFI adapters, replaced pointer traversal with slices/iterators, made genuinely read-only tables immutable, and converted scalar-only helpers and wrappers to safe functions.
+- Important compatibility details include:
+  - A null checksum buffer has special zlib semantics and is not necessarily equivalent to an empty slice. Preserve the distinction explicitly.
+  - Adler-32 uses modulus 65521 and traditionally limits reduction blocks to 5552 bytes.
+  - CRC-32 uses the reflected polynomial `0xedb88320` and 32-bit checksum masking even where the C `unsigned long` type is wider.
+  - Length-combination APIs must preserve behavior for negative lengths and platform C integer widths.
+  - Raw-pointer-to-slice conversion is valid only after checking the pointer and length contract; even zero-length cases must preserve the API’s null-pointer semantics.
+  - C-facing symbols may be referenced through `extern "C"` declarations elsewhere in the crate, so keep exact exported names and ABI-compatible signatures.
+  - Do not make externally writable ABI data immutable unless it is semantically and contractually read-only.
+
+Perform one bounded, high-value iteration rather than attempting a broad rewrite:
+
+1. Read `SAFETY_PLAN.md`, inspect the current diff/status, and identify a small coherent set of high-confidence opportunities.
+2. Prefer changes that remove many unsafe entities with little behavioral risk:
+   - pure arithmetic or state-independent helpers;
+   - scalar-only wrappers that do not require caller safety preconditions;
+   - immutable lookup tables or function-local constant arrays currently declared `static mut`;
+   - safe slice-based cores with raw pointer handling confined to existing FFI boundaries;
+   - repeated pointer indexing that can be replaced by checked slice or array operations without changing algorithmic behavior.
+3. Avoid starting with deeply interconnected pointer-owning state machines unless the plan already identifies a narrow, tested seam. Do not churn large generated files merely for style.
+4. Preserve performance-relevant behavior where practical, but prefer a simple, obviously correct safe implementation when tests establish equivalence.
+5. Do not opportunistically “fix” suspicious translated expressions or alter public behavior without comparing against tests or the upstream C implementation.
+
+Safety rules:
+- Do not introduce new unsafe code, raw-pointer parameters/fields, integer-to-pointer casts, mutable statics, or other unsafe-adjacent constructs inside implementation functions.
+- Keep unavoidable pointer validation, raw slice construction, and C interop in clearly identifiable FFI boundary functions only.
+- Never expose a safe Rust function whose callers can trigger undefined behavior through ordinary safe inputs.
+- Do not create references or slices from a raw pointer before validating all required null, length, alignment, allocation, and aliasing conditions.
+- Do not hide unsafe behavior behind unchecked indexing, transmute, forged lifetimes, or misleading safe wrappers.
+- Preserve `#[repr(C)]`, callback ABI, symbol exports, and public C signatures where required. A Rust function does not need to be declared `unsafe` merely because it uses `extern "C"`; mark it unsafe only when callers must uphold a safety contract.
+- Convert `static mut` to immutable `static` or `const` only when no legitimate mutation is required.
+
+Validation:
+- Run focused tests for the changed behavior, including null/empty inputs, boundary lengths, overflow-sensitive values, and known reference vectors where relevant.
+- Run the project’s normal formatting, build, and functionality tests available in the repository.
+- Run:
+  ```sh
+  cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+  ```
+  This command reports improperly added unsafe code and newly added unsafe-adjacent code such as integer-to-pointer casts and raw-pointer arguments or fields.
+- Compare the unsafe-entity count before and after when the tooling exposes it. Do not claim a reduction unless verified.
+- If a validation command cannot run, record the exact reason rather than implying success.
+
+Before finishing, update `SAFETY_PLAN.md` concisely with:
+- what was actually changed this iteration;
+- what is now complete;
+- validation performed and its result;
+- the measured unsafe reduction, if known;
+- the next best general area to address;
+- pitfalls, compatibility constraints, or failed approaches future iterations should avoid.
+
+Keep the final response short: summarize the changed areas, safety improvement, tests/checks run, and any remaining blocker. Do not paste entire source files or large generated diffs.

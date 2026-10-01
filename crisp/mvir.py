@@ -702,6 +702,9 @@ class CodexAgentOpNode(Node):
     raw_output_files: Metadata[NodeId]
     # JSON-formatted session log, e.g. `.codex/sessions/xxx/rollout-xxx.jsonl`
     json_session: Metadata[NodeId]
+    # Codex stats
+    call_duration_sec: Metadata[float]
+    output_tokens: Metadata[int]
 
     inputs = property(lambda self: self._metadata['inputs'])
     outputs = property(lambda self: self._metadata['outputs'])
@@ -709,6 +712,8 @@ class CodexAgentOpNode(Node):
     exit_code = property(lambda self: self._metadata['exit_code'])
     raw_output_files = property(lambda self: self._metadata['raw_output_files'])
     json_session = property(lambda self: self._metadata['json_session'])
+    call_duration_sec = property(lambda self: self._metadata['call_duration_sec'])
+    output_tokens = property(lambda self: self._metadata['output_tokens'])
 
     old_code = property(lambda self: self.inputs['code'])
     new_code = property(lambda self: self.outputs['code'])

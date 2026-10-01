@@ -1,0 +1,12 @@
+Continue the plan from `SAFETY_PLAN.md` using {target_goal}.
+Check as `cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml`.
+
+{after_refactoring_instruction}
+
+
+Got it?
+
+When done, use {after_refactoring_instruction} to check again:
+{target_goal}
+
+and return.

@@ -1,10 +1,6 @@
-"""
-Code for GEPA prompt optimization.
+"""Code for GEPA prompt optimization for individual LLMs.
 
-Note: This file is named gepa_po.py and not gepa.py to
-avoid import issues, since the library is also called gepa.
-
-Note: Code here is inspired from adapters/default_adapter/default_adapter.py
+Code here is inspired from adapters/default_adapter/default_adapter.py
 in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
 """
 
@@ -20,10 +16,15 @@ import random
 from typing import Any
 
 from . import llm_format
-from .config import Config
 from .error import CrispError
+from .gepa_common import (
+    GEPA_MIN_SCORE,
+    GEPA_MAX_SCORE,
+    is_project_gepaready,
+    get_workflow_for_project
+)
 from .__main__ import parse_node_id_arg
-from .mvir import MVIR, TreeNode
+from .mvir import TreeNode
 from .workflow import Workflow
 
 
@@ -51,34 +52,15 @@ class EvaluationResult:
     feedback: str
 
 
-def is_project_gepaready(project_folder: Path) -> bool:
-    """
-    Given a project folder, check if it has the required files to run GEPA and return True / False accordingly.
-    """
-    for required_file in [
-        project_folder / 'crisp.toml',
-        project_folder / 'crisp-storage/tags/c_code',
-        project_folder / 'crisp-storage/tags/current'
-    ]:
-        if not required_file.is_file():
-            print(f"Warning: Skipping '{project_folder.name}'. Required file(s) not found.")
-            return False
-    return True
-
-
 class ResponseEvaluator:
 
     def __init__(
         self,
-        score_success: float = 1.0,
         score_passtests_but_unsafe: float = 0.5,
-        score_compiles_but_failtests: float = 0.25,
-        score_failure: float = 0.0
+        score_compiles_but_failtests: float = 0.25
     ):
-        self.score_success = score_success
         self.score_passtests_but_unsafe = score_passtests_but_unsafe
         self.score_compiles_but_failtests = score_compiles_but_failtests
-        self.score_failure = score_failure
 
     def __call__(
         self,
@@ -91,7 +73,7 @@ class ResponseEvaluator:
         # Check for correct format; if not, TreeNode hasn't changed
         if n_llm_output_code.node_id() == n_llm_input_code.node_id():
             return EvaluationResult(
-                score = self.score_failure,
+                score = GEPA_MIN_SCORE,
                 feedback = "The generated response is not in the proper format."
             )
 
@@ -99,7 +81,7 @@ class ResponseEvaluator:
         compile_results = workflow.cargo_check_json_op(n_llm_output_code)
         if not compile_results.passed:
             return EvaluationResult(
-                score = self.score_failure,
+                score = GEPA_MIN_SCORE,
                 feedback = f"The generated response includes Rust code that cannot compile. Please try again to produce Rust code that can compile, has identical behavior as the input, and is safe.\nHere are the results of attempting to compile:\n{compile_results.body_str()}"
             )
 
@@ -130,7 +112,7 @@ class ResponseEvaluator:
 
         # Everything works
         return EvaluationResult(
-            score = self.score_success,
+            score = GEPA_MAX_SCORE,
             feedback = "The generated response includes Rust code that successfully compiles, has identical behavior to the input (i.e. passes tests), and is safe. Good job!"
         )
 
@@ -161,7 +143,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
             n_c_code_id = parse_node_id_arg(task['workflow'].mvir, 'c_code')
             n_c_code = task['workflow'].mvir.node(n_c_code_id)
 
-            n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current') #NOTE: This assumes that 'current' is the node corresponding to the non-rewritten, unsafe C2Rust output. See the docstring of `gepa_setup_initial.sh` for more details.
+            n_llm_input_code_id = parse_node_id_arg(task['workflow'].mvir, 'current')
             n_llm_input_code = task['workflow'].mvir.node(n_llm_input_code_id)
 
             for rep in range(1, NUM_LLM_CALL_REPEATS+1):
@@ -239,7 +221,7 @@ class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
         return dataset
 
 
-def do_gepa(
+def run_gepa(
     dataset_path: Path,
     seed_prompt_path: Path,
     task_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
@@ -273,12 +255,7 @@ def do_gepa(
     project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
     random.shuffle(project_folders)
     for i,project_folder in enumerate(project_folders):
-        cfg = Config.from_toml_file(
-            str(project_folder / 'crisp.toml'),
-            mvir_storage_dir = str(project_folder / 'crisp-storage')
-        )
-        mvir = MVIR(cfg.mvir_storage_dir, '.')
-        workflow = Workflow(cfg, mvir)
+        workflow = get_workflow_for_project(project_folder)
         task_input = {'workflow': workflow}
         (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
 
@@ -292,7 +269,8 @@ def do_gepa(
         valset = valset,
         adapter = adapter,
         max_metric_calls = max_metric_calls,
-        reflection_lm = reflection_lm
+        reflection_lm = reflection_lm,
+        perfect_score = GEPA_MAX_SCORE
     )
 
     # Save optimization results
@@ -300,7 +278,7 @@ def do_gepa(
         f.write(gepa_result.best_candidate['system_prompt'])
 
 
-def run_gepa_eval_on_prompt(
+def eval_gepa(
     dataset_path: Path,
     optimized_prompt_folder: Path,
     model: str = os.getenv('CRISP_API_MODEL', 'gpt-5.5'),
@@ -361,18 +339,13 @@ def run_gepa_eval_on_prompt(
                 continue
 
             # Create mvir and workflow
-            cfg = Config.from_toml_file(
-                str(project_folder / 'crisp.toml'),
-                mvir_storage_dir = str(project_folder / 'crisp-storage')
-            )
-            mvir = MVIR(cfg.mvir_storage_dir, '.')
-            workflow = Workflow(cfg, mvir)
+            workflow = get_workflow_for_project(project_folder)
 
             # Get relevant nodes
-            n_c_code_id = parse_node_id_arg(mvir, 'c_code')
-            n_c_code = mvir.node(n_c_code_id)
-            n_llm_input_code_id = parse_node_id_arg(mvir, 'current')
-            n_llm_input_code = mvir.node(n_llm_input_code_id)
+            n_c_code_id = parse_node_id_arg(workflow.mvir, 'c_code')
+            n_c_code = workflow.mvir.node(n_c_code_id)
+            n_llm_input_code_id = parse_node_id_arg(workflow.mvir, 'current')
+            n_llm_input_code = workflow.mvir.node(n_llm_input_code_id)
 
             # LLM rewriting
             n_llm_output_code = workflow.llm_gepa(n_code=n_llm_input_code, prompt=prompt)

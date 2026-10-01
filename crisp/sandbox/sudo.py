@@ -3,10 +3,12 @@ import io
 import os
 from pathspec.pathspec import PathSpec
 import pwd
+import secrets
 import shlex
 import subprocess
 import sys
 import tarfile
+from typing import Callable
 from subprocess import CompletedProcess, Popen
 
 from ..mvir import FileNode, TreeNode
@@ -18,13 +20,19 @@ class SudoSandbox:
     Helper for managing a `sudo`-based sandbox.  This uses `sudo` to run
     commands as an unprivileged user.
     """
-    def __init__(self, mvir, user):
+
+    # Address used to access services on the host machine
+    HOST_ADDR = '127.0.0.1'
+
+    def __init__(self, mvir, user, dir_suffix = None):
         self.mvir = mvir
         self.user = user
 
         # Get the numeric ID of the unprivileged user.
         entry = pwd.getpwnam(user)
         dir_name = 'crisp_sandbox_%d' % entry.pw_uid
+        if dir_suffix is not None:
+            dir_name = f'{dir_name}.sb.{dir_suffix}'
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
     def _sudo_cmd(self, cmd, env):
@@ -70,16 +78,25 @@ class SudoSandbox:
         self._run_sudo(('tar', '-C', self.dir_path, '-x'), input=tar_io.getvalue())
 
     def checkout_file(self, rel_path, n_file):
-        assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
+        self.checkout_file_untracked(rel_path, n_file.body())
+
+    def checkout_file_untracked(self, rel_path, body):
+        assert not os.path.isabs(rel_path)
+        assert isinstance(body, bytes)
         file_path = self.join(rel_path)
         cmd = 'mkdir -p {parent_path} && exec cat >{file_path}'.format(
             parent_path=shlex.quote(os.path.dirname(file_path)),
             file_path=shlex.quote(file_path),
         )
-        self._run_sudo(('sh', '-c', cmd), input=n_file.body())
+        self._run_sudo(('sh', '-c', cmd), input=body)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ):
         assert not os.path.isabs(rel_path)
         p = self._run_sudo(('tar', '-C', self.join(rel_path), '-c', '.'), stdout=subprocess.PIPE)
         tar_bytes = p.stdout
@@ -87,8 +104,13 @@ class SudoSandbox:
         files = {}
         with tarfile.open(fileobj=tar_io, mode='r') as t:
             while (info := t.next()) is not None:
-                if ignore_spec is not None and ignore_spec.match_file(info.name):
+                # Prefix output paths with the requested `rel_path`.
+                dest_path = os.path.normpath(os.path.join(rel_path, info.name))
+                if ignore_spec is not None and ignore_spec.match_file(dest_path):
                     continue
+                if path_filter is not None and not path_filter(dest_path):
+                    continue
+
                 match info.type:
                     case tarfile.REGTYPE:
                         pass
@@ -99,9 +121,9 @@ class SudoSandbox:
                         continue
                     case t:
                         raise ValueError(f"expected REGTYPE, LNKTYPE or DIRTYPE, but got {t} for file {info.name}")
+
+                assert dest_path not in files, 'duplicate entry for %s' % dest_path
                 f = t.extractfile(info)
-                # Prefix output paths with the requested `rel_path`.
-                dest_path = os.path.normpath(os.path.join(rel_path, info.name))
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 
@@ -165,9 +187,14 @@ class SudoSandbox:
 KEEP_TEMP_DIR = False
 
 @contextmanager
-def run_sandbox(cfg, mvir):
+def run_sandbox(cfg, mvir, require_consistent_path = False):
     user = os.environ['CRISP_SANDBOX_SUDO_USER']
-    sb = SudoSandbox(mvir, user)
+
+    dir_suffix = None
+    if not require_consistent_path:
+        dir_suffix = secrets.token_urlsafe(8)
+
+    sb = SudoSandbox(mvir, user, dir_suffix = dir_suffix)
     sb.start()
     try:
         yield sb

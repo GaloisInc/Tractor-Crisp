@@ -40,8 +40,8 @@ class ConfigBase:
 
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
-    agent_plan: str = "gpt-5.6-sol"
-    agent_loop: str = "gpt-5.6-terra"
+    agent_plan: str = "gpt-6.1-sol"
+    agent_loop: str = "gpt-6.1-sol"
     postprocess: str = "gpt-5.6-luna"
     # `rewriter = None` means call `/v1/models` and pick the first from the list.
     rewriter: str | None = None
@@ -69,6 +69,10 @@ class Config(ConfigBase):
 
     models: ModelsConfig = field(default_factory=ModelsConfig)
     model_options: dict[str, 'ModelOptionsConfig'] = field(default_factory=dict)
+
+    # Use the host's login credentials instead of an API key when running
+    # Codex?  This allows running CRISP against an OpenAI monthly subscription.
+    codex_login: bool = False
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

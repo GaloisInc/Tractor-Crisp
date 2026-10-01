@@ -5,8 +5,8 @@ FROM docker.io/rust:trixie AS tractor-crisp-user
 
 # rust-analyzer 0.0.329 (used by tools/*) requires Rust 1.93 at minimum
 # find_unsafe2 requires a specific nightly and rustc-internal components
-RUN rustup default nightly-2026-06-17
-RUN rustup +nightly-2026-06-17 component add rustfmt rustc-dev rust-src llvm-tools
+RUN rustup default nightly-2026-08-02
+RUN rustup +nightly-2026-08-02 component add rustfmt rustc-dev rust-src llvm-tools
 
 RUN apt-get update
 
@@ -30,7 +30,12 @@ ENV CARGO_HOME=/usr/local/cargo
 RUN mkdir -p $CARGO_HOME
 COPY .cargo/config.toml $CARGO_HOME/config.toml
 
+# Copy helper script for doing Cargo builds.
 COPY scripts/cargo-docker-clean.sh /usr/local/bin/
+
+# Copy helper scripts for calling the CRISP internal HTTP API.
+COPY scripts/crisp_check_unsafe2.sh /usr/local/bin/
+COPY scripts/crisp_run_tests.sh /usr/local/bin/
 
 # `uv` is required for building `c2rust-refactor` and crisp scripts.
 # Make sure things are installed not under `/root/`
@@ -93,7 +98,7 @@ RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
 # Install codex-cli
 RUN mkdir /opt/codex-cli \
     && cd /opt/codex-cli \
-    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-x86_64-unknown-linux-musl.tar.gz \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.159.1/codex-x86_64-unknown-linux-musl.tar.gz \
     && wget --quiet "$codex_url" \
     && tar -xzf "$(basename "$codex_url")" \
     && ln -s "$PWD/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex \

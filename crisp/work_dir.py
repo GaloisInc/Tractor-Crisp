@@ -3,7 +3,7 @@ import glob
 import os
 from pathspec.pathspec import PathSpec
 import shutil
-from typing import Union, Sequence
+from typing import Union, Sequence, Callable
 
 from .mvir import FileNode, TreeNode
 
@@ -37,14 +37,18 @@ class WorkDir:
             self.checkout_file(file_path, n_file)
 
     def checkout_file(self, rel_path, n_file):
-        assert not os.path.isabs(rel_path)
         assert isinstance(n_file, FileNode)
+        self.checkout_file_untracked(rel_path, n_file.body())
+
+    def checkout_file_untracked(self, rel_path, body):
+        assert not os.path.isabs(rel_path)
+        assert isinstance(body, bytes)
         path = os.path.join(self.path, rel_path)
         assert not os.path.exists(path), \
             'path %r already exists in work dir %r' % (rel_path, self.path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
-            f.write(n_file.body())
+            f.write(body)
 
     def commit(self, globs: Union[str, Sequence[str]]):
         if isinstance(globs, str):
@@ -58,7 +62,12 @@ class WorkDir:
             dct[rel_path] = self.commit_file(rel_path).node_id()
         return TreeNode.new(self.mvir, files=dct)
 
-    def commit_dir(self, rel_path, ignore_spec: PathSpec | None = None):
+    def commit_dir(
+        self,
+        rel_path,
+        ignore_spec: PathSpec | None = None,
+        path_filter: Callable[[str], bool] | None = None,
+    ):
         """
         `ignore_spec` is a `PathSpec` object specifying a gitignore-style
         (or alternative encoding) list of files to ignore during this operation,
@@ -76,6 +85,8 @@ class WorkDir:
                 for file_name in file_names:
                     file_path = os.path.join(dir_path_rel, file_name)
                     if ignore_spec is not None and ignore_spec.match_file(file_path):
+                        continue
+                    if path_filter is not None and not path_filter(file_path):
                         continue
 
                     assert file_path not in files
@@ -95,7 +106,7 @@ class WorkDir:
 KEEP_WORK_DIR = False
 
 @contextmanager
-def lock_work_dir(cfg, mvir):
+def lock_work_dir(cfg, mvir, dir_suffix = None):
     """
     Create a work directory based on `cfg`, and delete it on exit from the
     context manager.  This function raises an exception if the directory
@@ -103,7 +114,10 @@ def lock_work_dir(cfg, mvir):
     process can be inside the context manager at a time, so there's no risk of
     one process overwriting another process's files.
     """
-    work_dir = os.path.join(cfg.mvir_storage_dir, 'work')
+    dir_name = 'work'
+    if dir_suffix is not None:
+        dir_name = f'{dir_name}.sb.{dir_suffix}'
+    work_dir = os.path.join(cfg.mvir_storage_dir, dir_name)
     # If the directory already exists, some other process holds the lock.
     os.makedirs(work_dir, exist_ok=False)
     try:

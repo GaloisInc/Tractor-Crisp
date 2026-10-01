@@ -142,6 +142,8 @@ tests_assert_accepted! {
     exported_static_demoted,
     add_closure_ffi,
     closure_reindex,
+    // Safe `Box` access is lowered to a raw pointer deref in MIR, which must not be charged.
+    box_field_write,
 
     // Incorrectly accepted:
 

@@ -9,15 +9,16 @@ import re
 import shlex
 from pathlib import Path
 import time
-from typing import Sequence
+from typing import Sequence, Callable
 
+from fastapi import FastAPI
 from pathspec.pathspec import PathSpec
 
-from .. import llm
+from .. import http_server, llm
 from ..config import Config
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
-from ..sandbox import run_sandbox
+from ..sandbox import run_sandbox, Sandbox
 
 # Repo-side agent assets; installed into the sandbox as `.codex/`, the
 # directory codex-cli searches for project-level agents and instructions.
@@ -78,10 +79,10 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, codex_login: bool = False) -> list[str]:
+                   model: str) -> list[str]:
     cmd = ['codex', subcmd]
 
-    if codex_login:
+    if cfg.codex_login:
         # Use the host's `codex login` credentials (auth.json).  We only
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
@@ -181,6 +182,85 @@ def _add_codex_agent_inputs(
             path = f'.codex/agents/{profile.name}',
         )
 
+HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
+KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
+PORT_ENV_VAR = 'CRISP_INTERNAL_API_PORT'
+
+class AgentSandbox:
+    def __init__(
+        self,
+        sb: Sandbox,
+        mvir: MVIR,
+        inputs: dict[str, Input],
+        output_filters: dict[str, Callable[[str], bool]],
+        cwd: str,
+        env: dict,
+    ):
+        self.sb = sb
+        self.mvir = mvir
+        self.inputs = inputs
+        self.output_filters = output_filters
+        self.cwd = cwd
+        self.env = env.copy()
+
+    def run(self, cmd):
+        return self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
+
+    def run_all(self, cmds):
+        logs = None
+        for cmd in cmds:
+            print(f'run: {shlex.join(cmd)}')
+            exit_code, logs2 = self.run(cmd)
+            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
+            if exit_code != 0:
+                break
+        return exit_code, logs
+
+    def run_all_with_api_port(self, api_port, api_key, cmds):
+        assert HOST_ENV_VAR not in self.env
+        self.env[HOST_ENV_VAR] = Sandbox.HOST_ADDR
+
+        assert PORT_ENV_VAR not in self.env
+        self.env[PORT_ENV_VAR] = str(api_port)
+
+        assert KEY_ENV_VAR not in self.env
+        self.env[KEY_ENV_VAR] = api_key
+
+        r = self.run_all(cmds)
+
+        del self.env[HOST_ENV_VAR]
+        del self.env[PORT_ENV_VAR]
+        del self.env[KEY_ENV_VAR]
+        return r
+
+    def commit_raw_output_files(
+        self,
+        path_filter: Callable[[str], bool] | None = None,
+    ) -> TreeNode:
+        # Gather raw output files.
+        ignore_lines = [
+            '.git/',
+            '__pycache__/',
+            'build/',
+            'build-ninja/',
+            'target/',
+            '.codex/',
+            '!.codex/log/',
+            '!.codex/sessions/',
+        ]
+        ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
+        return self.sb.commit_dir('.', ignore_spec=ignore_spec, path_filter=path_filter)
+
+    def get_input(self, name) -> TreeNode:
+        inp = self.inputs[name]
+        if isinstance(inp.item, TreeNode) and inp.path == '.':
+            return inp.item
+        else:
+            raise TypeError('TODO: convert Input to TreeNode')
+
+    def get_output(self, name) -> TreeNode:
+        path_filter = self.output_filters[name]
+        return self.commit_raw_output_files(path_filter)
 
 def run_agent(
     cfg: Config,
@@ -193,6 +273,7 @@ def run_agent(
     setup_cmds: list[list[str]] = [],
     clean_cmds: list[list[str]] = [],
     env: dict | None = None,
+    http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
 ) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
     """
     Run the agent on some input files to produce some outputs.
@@ -226,6 +307,8 @@ def run_agent(
     - clean_cmds: Extra cleanup commands to run after `codex_cmd` but before
       extracting outputs.
     - cwd: Working directory (relative to sandbox root) used for all commands.
+    - http_build_app: If set, this will be called to set up an HTTP API that
+      will be available to the agent while it runs.
     """
 
     if env is None:
@@ -282,6 +365,8 @@ def run_agent(
         codex_dir = sb.join('.codex')
         env.setdefault('CODEX_HOME', codex_dir)
 
+        asb = AgentSandbox(sb, mvir, inputs, output_filters, cwd, env)
+
         all_cmds = []
         if init_git:
             all_cmds += [
@@ -298,48 +383,42 @@ def run_agent(
         ]
         all_cmds += clean_cmds
 
-        logs = None
-        for cmd in all_cmds:
-            print(f'run: {shlex.join(cmd)}')
-
-            if cmd == codex_cmd:
-
-                # capture time taken by codex command
-                codex_start_time = time.perf_counter()
-                exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
-                codex_call_duration_sec = time.perf_counter() - codex_start_time
-
-                # capture token usage of codex command, if possible
-                for line in logs2.decode('utf-8').splitlines():
-                    try:
-                        event = json.loads(line)
-                        if not isinstance(event, dict):
+        if http_build_app is not None:
+            exit_code, logs = http_server.run_with_callbacks(
+                lambda app: http_build_app(asb, app),
+                asb.run_all_with_api_port, all_cmds,
+            )
+        else:
+            logs = None
+            for cmd in all_cmds:
+                print(f'run: {shlex.join(cmd)}')
+    
+                if cmd == codex_cmd:
+    
+                    # capture time taken by codex command
+                    codex_start_time = time.perf_counter()
+                    exit_code, logs2 = asb.run(cmd)
+                    codex_call_duration_sec = time.perf_counter() - codex_start_time
+    
+                    # capture token usage of codex command, if possible
+                    for line in logs2.decode('utf-8').splitlines():
+                        try:
+                            event = json.loads(line)
+                            if not isinstance(event, dict):
+                                continue
+                            if event.get('type') == 'turn.completed' and 'usage' in event:
+                                codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
+                        except json.decoder.JSONDecodeError:
                             continue
-                        if event.get('type') == 'turn.completed' and 'usage' in event:
-                            codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
-                    except json.decoder.JSONDecodeError:
-                        continue
+    
+                else:
+                    exit_code, logs2 = asb.run(cmd)
+    
+                logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
+                if exit_code != 0:
+                    break
 
-            else:
-                exit_code, logs2 = sb.run(cmd, cwd=cwd, stream=True, env=env)
-
-            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
-            if exit_code != 0:
-                break
-
-        # Gather raw output files.
-        ignore_lines = [
-            '.git/',
-            '__pycache__/',
-            'build/',
-            'build-ninja/',
-            'target/',
-            '.codex/',
-            '!.codex/log/',
-            '!.codex/sessions/',
-        ]
-        ignore_spec = PathSpec.from_lines('gitignore', ignore_lines)
-        raw_output_files = sb.commit_dir('.', ignore_spec=ignore_spec)
+        raw_output_files = asb.commit_raw_output_files()
 
     # Gather input `NodeId`s.
     input_node_ids = {}
@@ -406,8 +485,8 @@ def run_rewrite(
     unsafe_json: TreeNode | None = None,
     cwd: str = '.',
     clean_cmds: list[list[str]] = [],
-    codex_login: bool = False,
     env: dict | None = None,
+    http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
@@ -426,7 +505,7 @@ def run_rewrite(
         inputs['plans'] = Input(planning_files)
     if unsafe_json is not None:
         inputs['unsafe_json'] = Input(unsafe_json, git_ignore=True)
-    if codex_login:
+    if cfg.codex_login:
         inputs['codex_auth'] = _codex_auth_input()
     _add_codex_agent_inputs(inputs, codex_agents)
     # Add `extra_code` last so we can report errors if there are any name
@@ -442,7 +521,7 @@ def run_rewrite(
         '--skip-git-repo-check',
         '--json',
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], model=model)
 
     n_op, outputs = run_agent(
         cfg, mvir,
@@ -457,6 +536,7 @@ def run_rewrite(
         cwd = cwd,
         clean_cmds = clean_cmds,
         env = env,
+        http_build_app = http_build_app,
     )
 
     output_code = outputs['code']
@@ -474,7 +554,6 @@ def run_review(
     new_code: TreeNode,
     extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
-    codex_login: bool = False,
     env: dict | None = None,
 ) -> tuple[str, bytes, bool]:
     """
@@ -520,7 +599,7 @@ def run_review(
         'new_code': Input(new_code),
         'old_code': Input(old_code, path = 'crisp_old_code/'),
     }
-    if codex_login:
+    if cfg.codex_login:
         inputs['codex_auth'] = _codex_auth_input()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
@@ -542,7 +621,7 @@ def run_review(
         ['rm', '-rf', 'crisp_old_code'],
     ]
 
-    last_message_path = '.codex/last_message.txt'
+    last_message_path = 'codex_last_message.txt'
     codex_cmd = _codex_command(cfg, 'exec', [
         'review',
         # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
@@ -552,7 +631,7 @@ def run_review(
         '--json',
         '--output-last-message', last_message_path,
         prompt,
-    ], codex_login=codex_login, model=model)
+    ], model=model)
 
     n_op, outputs = run_agent(
         cfg, mvir,

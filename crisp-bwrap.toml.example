@@ -8,6 +8,7 @@
 # Provide CRISP tools and add them to `$PATH`
 "tools/target/debug" = "expose_path"
 "../c2rust/target/release" = "expose_path"
+"scripts" = "expose_path"
 
 # cargo/rustup
 # Don't expose ~/.cargo, which may contain credentials.  Also don't expose

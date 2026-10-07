@@ -757,13 +757,11 @@ def ffi_review(
     report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
 
     if report.strip() == '':
-        print('warning: FFI review returned an empty report')
-        passed = False
+        raise CrispError('FFI review returned an empty report', op_agent)
     elif not ran_commands:
         # The reviewer never successfully ran a command, so it cannot have
         # inspected the diff.
-        print('warning: FFI review ran no commands; ignoring its report')
-        passed = False
+        raise CrispError('FFI review ran no commands; ignoring its report', op_agent)
     else:
         passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
 

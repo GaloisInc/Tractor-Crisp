@@ -1053,7 +1053,6 @@ def migrate_codex_agent_op_v2(mvir: MVIR, metadata: dict[str, Any]):
 
 @migration('codex_review_op')
 def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
-    print(metadata)
     metadata['kind'] = 'codex_agent_op_v3'
     # At this point in metadata parsing, dicts are still represented as lists
     # of pairs.
@@ -1062,11 +1061,11 @@ def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
         ('new_code', metadata.pop('new_code')),
     ]
     # `report` is a `FileNode`, but we need a `TreeNode` for each output.
-    report_tree = TreeNode.new(mvir, files = {
-        'review_report.txt': NodeId.from_cbor(metadata.pop('report')),
+    last_message_tree = TreeNode.new(mvir, files = {
+        'codex_last_message.txt': NodeId.from_cbor(metadata.pop('report')),
     })
     metadata['outputs'] = [
-        ('report', report_tree.node_id().to_cbor()),
+        ('last_message', last_message_tree.node_id().to_cbor()),
     ]
     metadata['raw_output_files'] = report_tree.node_id().to_cbor()
     metadata['json_session'] = FileNode.new(mvir, '').node_id().to_cbor()
@@ -1077,4 +1076,3 @@ def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
     metadata['cmds'] = [
         ['codex', 'dummy-cmd', prompt],
     ]
-    print(metadata)

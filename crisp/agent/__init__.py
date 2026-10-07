@@ -523,10 +523,7 @@ def run_review_op(
     env: dict | None = None,
 ) -> CodexAgentOpNode:
     """
-    Run `codex exec review` over the change from `old_code` to `new_code` and
-    return the reviewer's final message, the full log output, and whether the
-    reviewer successfully ran at least one command (evidence that it actually
-    inspected the change rather than answering blind).
+    Run `codex exec review` over the change from `old_code` to `new_code`.
 
     `codex exec review` is used rather than a plain `codex exec` prompt
     because review mode reports findings in a fixed, machine-parseable format
@@ -537,9 +534,7 @@ def run_review_op(
     fresh sandbox (the rewrite sandbox and its repo are gone by now, and
     `.git/` is never committed to MVIR), so the change is staged as
     uncommitted edits on a baseline commit in a throwaway repo built from
-    the MVIR nodes.  Codex rejects `--uncommitted` when custom review
-    instructions are given, so `prompt` itself must direct the reviewer at the
-    uncommitted changes.
+    the MVIR nodes.
     """
     extra_code, env = _normalize_run_args(extra_code, env)
 

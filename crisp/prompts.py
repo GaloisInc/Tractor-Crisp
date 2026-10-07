@@ -4,6 +4,9 @@ import re
 
 _PROMPT_DIR = Path(__file__).parent / 'prompts'
 def _prompt(name: str) -> str:
+    """
+    Load a prompt from `crisp/prompts/{name}`.
+    """
     return (_PROMPT_DIR / name).read_text()
 
 AGENT_PLAN = _prompt('agent_plan.md')

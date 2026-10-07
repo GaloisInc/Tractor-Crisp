@@ -533,7 +533,8 @@ class Node:
             assert name not in metadata
             ty = field_tys[name]
             metadata[name] = from_cbor(ty, value)
-        assert metadata.keys() == field_tys.keys()
+        assert metadata.keys() == field_tys.keys(), \
+            f'keys mismatch: {sorted(metadata.keys())} vs {sorted(field_tys.keys())}'
         return metadata
 
     @classmethod
@@ -714,23 +715,6 @@ class CodexAgentOpNode(Node):
     new_code = property(lambda self: self.outputs['code'])
     planning_files = property(lambda self: self.outputs['plans'])
 
-class CodexReviewOpNode(Node):
-    KIND = 'codex_review_op'
-    old_code: Metadata[NodeId]
-    new_code: Metadata[NodeId]
-    raw_prompt: Metadata[NodeId]
-    # The reviewer's final message
-    report: Metadata[NodeId]
-    # 'PASS' or 'FAIL'
-    verdict: Metadata[str]
-    # `body` stores the log output
-
-    old_code = property(lambda self: self._metadata['old_code'])
-    new_code = property(lambda self: self._metadata['new_code'])
-    raw_prompt = property(lambda self: self._metadata['raw_prompt'])
-    report = property(lambda self: self._metadata['report'])
-    verdict = property(lambda self: self._metadata['verdict'])
-
 class TestResultNode(Node):
     KIND = 'test_result_node'
     code: Metadata[NodeId]
@@ -819,6 +803,24 @@ class CheckUnsafe2AnalysisNode(Node):
     @property
     def passed(self):
         return self.exit_code == 0
+
+class CodexReviewAnalysisNode(Node):
+    KIND = 'codex_review_analysis'
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    prompt: Metadata[NodeId]
+    # The reviewer's final message.
+    report: Metadata[NodeId]
+    # CodexAgentOpNode with the complete details of the review step.
+    agent_op: Metadata[NodeId]
+    passed: Metadata[bool]
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    prompt = property(lambda self: self._metadata['prompt'])
+    report = property(lambda self: self._metadata['report'])
+    agent_op = property(lambda self: self._metadata['agent_op'])
+    passed = property(lambda self: self._metadata['passed'])
 
 class EditOpNode(Node):
     KIND = 'edit_op'
@@ -956,13 +958,13 @@ NODE_CLASSES = [
     SplitFfiOpNode,
     LlmOpNode,
     CodexAgentOpNode,
-    CodexReviewOpNode,
     TestResultNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
     FindUnsafe2AnalysisNode,
     CheckUnsafe2AnalysisNode,
+    CodexReviewAnalysisNode,
     EditOpNode,
     CargoFixOpNode,
 
@@ -1043,6 +1045,32 @@ def migrate_codex_agent_op_v2(mvir: MVIR, metadata: dict[str, Any]):
         ('code', metadata.pop('new_code')),
         ('plans', metadata.pop('planning_files')),
     ]
+    # v2 stored the prompt as a file node; v3 keeps it inline in the command.
+    prompt = mvir.node(NodeId(metadata.pop('raw_prompt'))).body().decode()
+    metadata['cmds'] = [
+        ['codex', 'dummy-cmd', prompt],
+    ]
+
+@migration('codex_review_op')
+def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'codex_agent_op_v3'
+    # At this point in metadata parsing, dicts are still represented as lists
+    # of pairs.
+    metadata['inputs'] = [
+        ('old_code', metadata.pop('old_code')),
+        ('new_code', metadata.pop('new_code')),
+    ]
+    # `report` is a `FileNode`, but we need a `TreeNode` for each output.
+    last_message_tree = TreeNode.new(mvir, files = {
+        'codex_last_message.txt': NodeId.from_cbor(metadata.pop('report')),
+    })
+    metadata['outputs'] = [
+        ('last_message', last_message_tree.node_id().to_cbor()),
+    ]
+    metadata['raw_output_files'] = report_tree.node_id().to_cbor()
+    metadata['json_session'] = FileNode.new(mvir, '').node_id().to_cbor()
+    # Convert PASS/FAIL verdict to an exit code.
+    metadata['exit_code'] = 0 if metadata.pop('verdict') == 'PASS' else 1
     # v2 stored the prompt as a file node; v3 keeps it inline in the command.
     prompt = mvir.node(NodeId(metadata.pop('raw_prompt'))).body().decode()
     metadata['cmds'] = [

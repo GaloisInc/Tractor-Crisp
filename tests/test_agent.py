@@ -2,9 +2,8 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
-from crisp import agent
+from crisp import agent, prompts
 from crisp.error import CrispError
-from crisp.workflow import AGENT_PLAN_PROMPT
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -63,22 +62,22 @@ class CodexAgentProfilesTest(unittest.TestCase):
 
     def test_planning_prompt_orchestrates_all_profiles(self):
         for name in agent.PLANNING_CODEX_AGENTS:
-            self.assertIn(f'`{name}`', AGENT_PLAN_PROMPT)
-        self.assertIn('fork_turns="none"', AGENT_PLAN_PROMPT)
-        self.assertIn('Wait for all agents', AGENT_PLAN_PROMPT)
-        self.assertIn('only the parent agent write', AGENT_PLAN_PROMPT)
-        self.assertIn('`{cargo_dir_path}`', AGENT_PLAN_PROMPT)
-        self.assertIn('$FIND_UNSAFE2_JSON_DIR', AGENT_PLAN_PROMPT)
-        self.assertIn('.codex/safety_constraints.md', AGENT_PLAN_PROMPT)
+            self.assertIn(f'`{name}`', prompts.AGENT_PLAN)
+        self.assertIn('fork_turns="none"', prompts.AGENT_PLAN)
+        self.assertIn('Wait for all agents', prompts.AGENT_PLAN)
+        self.assertIn('only the parent agent write', prompts.AGENT_PLAN)
+        self.assertIn('`{cargo_dir_path}`', prompts.AGENT_PLAN)
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompts.AGENT_PLAN)
+        self.assertIn('.codex/safety_constraints.md', prompts.AGENT_PLAN)
         self.assertIn('Do not modify, create, rename, or delete',
-                      AGENT_PLAN_PROMPT)
+                      prompts.AGENT_PLAN)
         # The required plan sections.
-        self.assertIn('## FFI entry point rules', AGENT_PLAN_PROMPT)
-        self.assertIn('## Conventions', AGENT_PLAN_PROMPT)
-        self.assertIn('## Cluster guide', AGENT_PLAN_PROMPT)
-        self.assertIn('## Status', AGENT_PLAN_PROMPT)
+        self.assertIn('## FFI entry point rules', prompts.AGENT_PLAN)
+        self.assertIn('## Conventions', prompts.AGENT_PLAN)
+        self.assertIn('## Cluster guide', prompts.AGENT_PLAN)
+        self.assertIn('## Status', prompts.AGENT_PLAN)
         # The plan must not carry verification commands; the harness does.
-        self.assertIn('the harness supplies all validation', AGENT_PLAN_PROMPT)
+        self.assertIn('the harness supplies all validation', prompts.AGENT_PLAN)
 
 
 if __name__ == '__main__':

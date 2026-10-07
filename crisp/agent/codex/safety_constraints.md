@@ -60,14 +60,18 @@ parent's spawn message may give the concrete path). Each file contains:
 - `total_unsafe`: crate-wide count of unsafety findings, excluding FFI entry
   points.
 - `fns`: a map from function name to a record with `filename`, `total_unsafe`,
-  `is_ffi_entry_point`, `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`,
-  `calls_unsafe`, and the maps `uses_static_mut` and `uses_union_field` (keyed
-  by the static or field used), plus the progress metrics `uses_foreign_fn`,
-  `casts_int_to_ptr`, and `sig_contains_raw_ptr`.
+  `ffi_symbol` (the exported symbol name for an FFI entry point, otherwise
+  `null`), `is_unsafe_fn`, `is_mut_static`, `derefs_raw_ptr`, `calls_unsafe`,
+  `inline_asm`, `transmutes`, and the maps `uses_static_mut` and
+  `uses_union_field` (keyed by the static or field used), plus the progress
+  metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
+  `sig_contains_raw_ptr`.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field
   `"type"`.
+- `unsafe_impls`: a map from parent module name to the number of unsafe impls
+  charged to that module.
 
 The harness that later executes the plan assigns work targets using exactly
 these function, type, and field names. Cite symbols in your report using these

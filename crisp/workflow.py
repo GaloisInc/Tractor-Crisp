@@ -1340,7 +1340,7 @@ class Workflow:
         if n_op.passed:
             return True, None
         else:
-            report = self.mvir.node(n_op.outputs['report']).body_str()
+            report = self.mvir.node(n_op.report).body_str()
             return False, report if report.strip() else None
 
     @step

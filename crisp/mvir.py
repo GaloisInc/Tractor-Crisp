@@ -809,6 +809,8 @@ class CodexReviewAnalysisNode(Node):
     old_code: Metadata[NodeId]
     new_code: Metadata[NodeId]
     prompt: Metadata[NodeId]
+    # The reviewer's final message.
+    report: Metadata[NodeId]
     # CodexAgentOpNode with the complete details of the review step.
     agent_op: Metadata[NodeId]
     passed: Metadata[bool]
@@ -816,6 +818,7 @@ class CodexReviewAnalysisNode(Node):
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
     prompt = property(lambda self: self._metadata['prompt'])
+    report = property(lambda self: self._metadata['report'])
     agent_op = property(lambda self: self._metadata['agent_op'])
     passed = property(lambda self: self._metadata['passed'])
 

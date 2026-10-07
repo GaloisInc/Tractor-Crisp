@@ -756,19 +756,25 @@ def ffi_review(
 
     report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
 
-    if report.strip() == '':
+    if report is None:
+        raise CrispError("FFI review didn't return a report", op_agent)
+
+    report_str = report.body_str()
+    if report_str.strip() == '':
         raise CrispError('FFI review returned an empty report', op_agent)
-    elif not ran_commands:
+
+    if not ran_commands:
         # The reviewer never successfully ran a command, so it cannot have
         # inspected the diff.
         raise CrispError('FFI review ran no commands; ignoring its report', op_agent)
-    else:
-        passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report) is None
+
+    passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report_str) is None
 
     op_review = CodexReviewAnalysisNode.new(mvir,
         old_code = old_code.node_id(),
         new_code = new_code.node_id(),
         prompt = prompt.node_id(),
+        report = report.node_id(),
         agent_op = op_agent.node_id(),
         passed = passed,
     )

@@ -592,7 +592,7 @@ def run_review_op(
 
     return n_op
 
-def review_op_results(mvir: MVIR, n_op: CodexAgentOpNode) -> tuple[str, bytes, bool]:
+def review_op_results(mvir: MVIR, n_op: CodexAgentOpNode) -> tuple[Optional[FileNode], bytes, bool]:
     def _review_ran_commands(logs: bytes) -> bool:
         """True iff the codex `--json` event stream in `logs` shows at
            least one successfully executed command."""
@@ -612,8 +612,10 @@ def review_op_results(mvir: MVIR, n_op: CodexAgentOpNode) -> tuple[str, bytes, b
         return False
 
     n_last_message_tree = mvir.node(n_op.outputs['last_message'])
-    n_last_message = mvir.node(n_last_message_tree.sole_file)
-    report_bytes = n_last_message.body().decode('utf-8', errors='replace')
+    if len(n_last_message_tree.files) == 1:
+        n_report = mvir.node(n_last_message_tree.sole_file)
+    else:
+        n_report = None
     logs = n_op.body()
     ran_commands = _review_ran_commands(logs)
-    return report_bytes, logs, ran_commands
+    return n_report, logs, ran_commands

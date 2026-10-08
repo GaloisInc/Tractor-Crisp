@@ -65,7 +65,8 @@ parent's spawn message may give the concrete path). Each file contains:
   `inline_asm`, `transmutes`, and the maps `uses_static_mut` and
   `uses_union_field` (keyed by the static or field used), plus the progress
   metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
-  `sig_contains_raw_ptr`.
+  `sig_contains_raw_ptr`.  Closures inside FFI entry points are attributed to
+  that entry point; other closures have their own inventory records.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field

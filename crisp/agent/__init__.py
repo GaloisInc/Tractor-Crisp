@@ -78,7 +78,7 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str) -> list[str]:
+                   model: str, effort: str = 'high') -> list[str]:
     cmd = ['codex', subcmd]
 
     if cfg.codex_login:
@@ -115,7 +115,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
     # [0]: https://developers.openai.com/codex/speed
     # [1]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/service_tier_resolution.rs#L18
     cmd += [
-        '-c', 'model_reasoning_effort="high"',
+        '-c', f'model_reasoning_effort="{effort}"',
         '-c', 'features.fast_mode=false',
     ]
 
@@ -457,6 +457,7 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
+    effort: str = 'high',
 ) -> tuple[TreeNode, TreeNode]:
     extra_code, env = _normalize_run_args(extra_code, env)
 
@@ -487,7 +488,7 @@ def run_rewrite(
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
         prompt,
-    ], model=model)
+    ], model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,
@@ -521,6 +522,7 @@ def run_review(
     extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
     env: dict | None = None,
+    effort: str = 'high',
 ) -> tuple[str, bytes, bool]:
     """
     Run `codex exec review` over the change from `old_code` to `new_code` and
@@ -597,7 +599,7 @@ def run_review(
         '--json',
         '--output-last-message', last_message_path,
         prompt,
-    ], model=model)
+    ], model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,

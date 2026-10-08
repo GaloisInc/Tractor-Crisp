@@ -1484,6 +1484,7 @@ class Workflow:
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),
             planning_files = None,
+            effort = 'high',
             codex_agents=agent.PLANNING_CODEX_AGENTS,
             clean_cmds = [
                 ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],

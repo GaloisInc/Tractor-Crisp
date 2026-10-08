@@ -1,0 +1,628 @@
+"""Code for GEPA prompt optimization for agentic workflows.
+
+Code here is inspired from adapters/default_adapter/default_adapter.py
+in the gepa package, and from https://gepa-ai.github.io/gepa/guides/adapters/
+"""
+
+import csv
+from dataclasses import dataclass, fields
+import gepa
+from gepa.core.adapter import EvaluationBatch, GEPAAdapter
+import os
+import pandas as pd
+from pathlib import Path
+import random
+import traceback
+from typing import Any
+
+from . import llm_format
+from .error import CrispError
+from .gepa_common import (
+    GEPA_MIN_SCORE,
+    GEPA_MAX_SCORE,
+    is_project_gepaready,
+    get_workflow_for_project,
+    get_expected_formatted_blocks,
+    analyze_formatted_blocks_in_candidate
+)
+from .__main__ import parse_node_id_arg
+from .mvir import TreeNode
+from .workflow import Workflow
+
+
+@dataclass
+class AgentRunDetails:
+    call_duration_sec: float = 0.
+    output_tokens: int = 0
+
+    @property
+    def valid(self) -> bool:
+        return (self.call_duration_sec != 0. and self.output_tokens != 0)
+
+
+@dataclass
+class TaskInput:
+    workflow: Workflow
+
+@dataclass
+class TaskTrace:
+    task: TaskInput
+    n_input_code: TreeNode
+    n_output_code: TreeNode
+    feedback: str
+
+@dataclass
+class TaskOutput:
+    n_code: TreeNode
+    run_details: dict[str, AgentRunDetails]
+
+@dataclass
+class EvaluationResult:
+    score: float
+    feedback: str
+    unsafe_removed: int
+    unsafe_remaining: int | None = None
+    passtests: bool | None = None
+
+
+class ResponseEvaluator:
+
+    def __init__(
+        self,
+        score_safe: float = GEPA_MAX_SCORE/2,
+        score_passtests: float = GEPA_MAX_SCORE/2,
+        score_penalty_per_output_token: float = 1e-5,
+        score_penalty_per_call_duration_sec: float = 1e-3
+    ):
+        self.score_safe = score_safe
+        self.score_passtests = score_passtests
+        self.score_penalty_per_output_token = score_penalty_per_output_token
+        self.score_penalty_per_call_duration_sec = score_penalty_per_call_duration_sec
+
+    def __call__(
+        self,
+        workflow: Workflow,
+        n_output_code: TreeNode,
+        n_input_code: TreeNode,
+        n_c_code: TreeNode,
+        run_details: dict[str, AgentRunDetails]
+    ) -> EvaluationResult:
+        score = GEPA_MIN_SCORE
+
+        # Get prior unsafe count as baseline
+        prior_unsafe_count = workflow.count_unsafe2(n_input_code)
+
+        # Check if anything changed from input to output; if not, the agent failed
+        if n_output_code.node_id() == n_input_code.node_id():
+            return EvaluationResult(
+                score = GEPA_MIN_SCORE,
+                feedback = "The refactored Rust code is unchanged from the original. Please try again to produce Rust code that is safe and functionally correct.",
+                unsafe_removed = 0,
+                unsafe_remaining = prior_unsafe_count
+            )
+
+        # Check if all Codex run details make sense; if not, the agent failed
+        if any(not agent_run_details.valid for agent_run_details in run_details.values()):
+            return EvaluationResult(
+                score = GEPA_MIN_SCORE,
+                feedback = "The agent did not run correctly. Either no output tokens were generated, or the agent run is unfinished. Please try again to produce Rust code that is safe and functionally correct.",
+                unsafe_removed = 0,
+                unsafe_remaining = prior_unsafe_count
+            )
+
+        feedback_components = []
+        passtests = False
+
+        # Check for un-safety
+
+        ### Get current unsafe count and sub-categories
+        unsafe_count = 0
+        unsafe_fns = []
+        unsafe_types = []
+        for n_json_file in workflow.find_unsafe2_json_files(n_output_code):
+            unsafe_json = n_json_file.body_json()
+            try:
+                unsafe_fns += [k for k,v in unsafe_json['fns'].items() if v['total_unsafe'] > 0]
+                unsafe_types += [k for k,v in unsafe_json['types'].items() if sum(v['field_contains_raw_ptr'].values()) > 0]
+            except KeyError: # in case some dicts in `unsafe_json` don't have the appropriate keys, do nothing
+                pass
+            unsafe_count += unsafe_json['total_unsafe']
+
+        ### Get unsafe removed and compute score
+        unsafe_removed = prior_unsafe_count - unsafe_count
+        if prior_unsafe_count == 0:
+            score += (self.score_safe if unsafe_removed == 0 else 0)
+        else:
+            score += self.score_safe / prior_unsafe_count * unsafe_removed
+
+        ### Give feedback
+        if unsafe_count == 0:
+            feedback_components.append(f"The refactored Rust code has no unsafe entities remaining. All of the {prior_unsafe_count} unsafe entities in the original Rust code have been removed in the refactored Rust code. Good job!")
+        else:
+            feedback_components.append(f"The refactored Rust code has a total of {unsafe_count} unsafe entities. The original Rust code had {prior_unsafe_count} unsafe entities, so the refactor has {'added' if unsafe_removed < 0 else 'removed'} {unsafe_removed} unsafe entities. Keep trying to achieve the goal of making the Rust code safe by removing as many unsafe entities as possible, while maintaining functional correctness.")
+            if unsafe_fns:
+                feedback_components.append(f"At the moment, the unsafe functions are {', '.join(['`'+elem+'`' for elem in unsafe_fns])}")
+            if unsafe_types:
+                feedback_components.append(f"At the moment, the fields containing raw pointers are {', '.join(['`'+elem+'`' for elem in unsafe_types])}")
+
+        # Check for tests passing
+        test_results = workflow.test_op(n_output_code, n_c_code)
+        if test_results.exit_code == 0:
+            passtests = True
+            score += self.score_passtests
+            feedback_components.append("The refactored Rust code passes functionality tests. Good job!")
+        else:
+            feedback_components.append(f"The refactored Rust code fails functionality tests. Here are the outputs from the tests:\n{test_results.body_str()}\nPlease try again to produce refactored Rust code that achieves the correct functionality by passing tests, and is safe.")
+
+        # Penalize for output tokens
+        total_output_tokens = sum(elem.output_tokens for elem in run_details.values())
+        score -= (self.score_penalty_per_output_token * total_output_tokens)
+        feedback_components.append(f"The refactored Rust code cost a total of {total_output_tokens} output tokens. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
+
+        # Penalize for call duration
+        total_call_duration_sec = sum(elem.call_duration_sec for elem in run_details.values())
+        score -= (self.score_penalty_per_call_duration_sec * total_call_duration_sec)
+        feedback_components.append(f"The refactored Rust code took a total of {round(total_call_duration_sec)} seconds to generate. Please try to reduce this as much as possible, while still producing Rust code that is safe and functionally correct.")
+
+        # Return final results
+        score = min(max(score, GEPA_MIN_SCORE), GEPA_MAX_SCORE)
+        feedback = '\n\n'.join(feedback_components)
+        return EvaluationResult(
+            score = score,
+            feedback = feedback,
+            unsafe_removed = unsafe_removed,
+            unsafe_remaining = unsafe_count,
+            passtests = passtests
+        )
+
+
+def bad_prompt_evaluator(
+    expected_formatted_blocks: dict[str, set[str]],
+    bad_prompt_types: set[str]
+) -> EvaluationResult:
+    score = GEPA_MIN_SCORE
+    feedback_components = []
+
+    for bad_prompt_type in bad_prompt_types:
+        placeholders = ', '.join(expected_formatted_blocks[bad_prompt_type])
+        feedback_components.append(f"The candidate key '{bad_prompt_type}' does not have the required placeholders {placeholders}. Hence, this is an invalid candidate. Try again. It is VERY important that the following placeholders are present in the '{bad_prompt_type}' for every candidate -- {placeholders}.")
+
+    feedback = '\n\n'.join(feedback_components)
+    return EvaluationResult(
+        score = score,
+        feedback = feedback,
+        unsafe_removed = 0
+    )
+
+
+class RustAdapter(GEPAAdapter[TaskInput, TaskTrace, TaskOutput]):
+
+    def __init__(
+        self,
+        evaluator: ResponseEvaluator,
+        expected_formatted_blocks: dict[str, set[str]],
+        csv_log_path: Path | None = None
+    ):
+        self.evaluator = evaluator
+        self.expected_formatted_blocks = expected_formatted_blocks
+        self.csv_log_path = csv_log_path
+        self.least_unsafe_remaining = float('inf')
+
+    def evaluate(
+        self,
+        batch: list[TaskInput],
+        candidate: dict[str,str],
+        capture_traces: bool = False
+    ) -> EvaluationBatch[TaskTrace, TaskOutput]:
+
+        outputs = []
+        scores = []
+        trajectories = [] if capture_traces else None
+
+        # Analyze formatted blocks in candidate -- mark the ones that have missing fblocks as bad, and escape the extra fblocks in the ones that have them
+        fblock_analysis = analyze_formatted_blocks_in_candidate(
+            candidate = candidate,
+            expected_formatted_blocks = self.expected_formatted_blocks
+        )
+        bad_prompt_types = set()
+        for prompt_type in candidate:
+            if fblock_analysis[prompt_type].missing_expected_fblocks:
+                bad_prompt_types.add(prompt_type)
+                continue
+            for extra_fblock in fblock_analysis[prompt_type].has_extra_fblocks:
+                candidate[prompt_type] = candidate[prompt_type].replace(extra_fblock, '{'+extra_fblock+'}')
+
+        # Iterate over tasks
+        for task in batch:
+            n_input_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'current')) #TODO: for single big projects (e.g. zlib), consider starting from a different node which already has some unsafe removed (e.g. the tag `attempt20_20260908B_reflGPT5p6`). We can also use different nodes with varying degrees of unsafe removed as multiple data points in the trainset and valset. Immunant might have more of such nodes saved.
+
+            # If any candidate prompt is missing expected formatted blocks
+            if bad_prompt_types:
+                eval_result = bad_prompt_evaluator(
+                    expected_formatted_blocks = self.expected_formatted_blocks,
+                    bad_prompt_types = bad_prompt_types
+                )
+
+                # Assign dummy values to required variables
+                n_output_code = TreeNode.new(task['workflow'].mvir, files={})
+                run_details = {}
+
+            # If all candidate prompts have at least the expected formatted blocks
+            else:
+                n_c_code = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'c_code'))
+
+                #NOTE: Any workflow method that has `fuel.use()` inside it (e.g. `workflow.do_safety_step_agent()`) will require the workflow being given fuel beforehand. If we are not calling any such method, then we don't need to give fuel. Hence, keep the following line commented out.
+                # task['workflow'].fuel.give(1)
+
+                # Try to get pre-saved plans; if they don't exist, ask the agent to generate new ones and save those
+                try:
+                    n_plans = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'plans'))
+                except ValueError:
+                    n_plans = task['workflow'].do_safety_plan_agent(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code
+                    )[1]
+                    task['workflow'].mvir.set_tag('plans', n_plans.node_id())
+
+                # ================== # ================== # ================== # ================== #
+                #NOTE: Alternative to the above try-except block is:
+                # ================== # ================== # ================== # ================== #
+                # from crisp.__main__ import prior_agent_plans
+                # n_plans = prior_agent_plans(task['workflow'].mvir, n_input_code)
+                # if not n_plans:
+                #     n_plans = task['workflow'].do_safety_plan_agent(
+                #         n_code = n_input_code,
+                #         n_test_code = n_c_code
+                #     )[1]
+                # ================== # ================== # ================== # ================== #
+                # If we do the above, the agent will basically generate the plan for an example whenever it's first run in this function.
+                # This is as opposed to generating the `plans` nodes for all examples via the `save_plans.py` script prior to starting a GEPA run.
+                # In terms of runtime, both approaches will be similar because the agent will eventually have to generate plans for all examples, one way or another.
+                # FWIW doing them using the separate script may be better because it ensures a single source of truth for all plans that is set in stone prior to starting a GEPA run. 
+                # ================== # ================== # ================== # ================== #
+
+                try:
+                    #TODO maybe incorporate FFI stuff and have a loop where the agent makes multiple attempts (as is done in crisp.__main__.py::safety_loop_common()), and more attempts are penalized via the evaluator
+                    #NOTE this may be a bad idea because each iteration takes a very long time
+
+                    n_output_code, _ = task['workflow'].agent_safety(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code,
+                        n_plans = n_plans,
+                        agent_safety_prompt = candidate['agent_safety_prompt']
+                    )
+
+                    # ================== # ================== # ================== # ================== #
+                    #NOTE:
+                    # We may think of assigning the output node of one iteration to the input node for the next iteration, so that we get incremental progress.
+                    # But, it is actually recommended to *not* do this (even for hard cases like zlib) since this changes the optimization goalposts and hence is likely to reduce the performance of GEPA.
+                    # Instead, if we want incremental progress, we can run the eval functions which applies a prompt (or set of prompts) repeatedly, while updating the input of each attempt to be the output of the previous attempt.
+                    # Also, note that the eval functions do not touch the 'current' node. They create a separate node 'attempts' which starts off as a copy of the 'current' node, then gets updated repeatedly. In general, it is best to not touch the 'current' node.
+                    # ================== # ================== # ================== # ================== #
+
+                    n_codex = task['workflow'].mvir.node(parse_node_id_arg(task['workflow'].mvir, 'op_history'))
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails(
+                            call_duration_sec = n_codex.call_duration_sec,
+                            output_tokens = n_codex.output_tokens
+                        )
+                    }
+
+                except CrispError as e:
+                    print(f'Safety attempt failed: {e}')
+                    traceback.print_exc()
+
+                    # Assign dummy values to required variables
+                    n_output_code = TreeNode.new(task['workflow'].mvir, files={})
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails()
+                    }
+
+                eval_result = self.evaluator(
+                    workflow = task['workflow'],
+                    n_output_code = n_output_code,
+                    n_input_code = n_input_code,
+                    n_c_code = n_c_code,
+                    run_details = run_details
+                )
+
+                # Save output node if unsafe removed is best
+                if eval_result.unsafe_remaining < self.least_unsafe_remaining:
+                    task['workflow'].mvir.set_tag(f'unsafe_{eval_result.unsafe_remaining}', n_output_code.node_id())
+                    self.least_unsafe_remaining = eval_result.unsafe_remaining
+
+            # Get everything required for EvaluationBatch
+            outputs.append(
+                TaskOutput(
+                    n_code = n_output_code,
+                    run_details = run_details
+                )
+            )
+            scores.append(eval_result.score)
+            if capture_traces:
+                trajectories.append(
+                    TaskTrace(
+                        task = task,
+                        n_input_code = n_input_code,
+                        n_output_code = n_output_code,
+                        feedback = eval_result.feedback
+                    )
+                )
+
+        # Write candidate record to CSV
+        if self.csv_log_path is not None:
+            with open(self.csv_log_path, 'a', encoding='utf-8', newline='') as csvfile:
+                csv.writer(csvfile).writerow([candidate[k] for k in sorted(candidate.keys())] + [scores])
+
+        # Return batch
+        return EvaluationBatch(
+            outputs = outputs,
+            scores = scores,
+            trajectories = trajectories
+        )
+
+    def make_reflective_dataset(
+        self,
+        candidate: dict[str,str], # pylint: disable=unused-argument # required as per GEPA
+        eval_batch: EvaluationBatch[TaskTrace, TaskOutput],
+        components_to_update: list[str] # pylint: disable=unused-argument # required as per GEPA
+    ) -> dict[str, list[dict[str, Any]]]:
+        dataset = {'agent_safety_prompt': []}
+        file_formatter = llm_format.get_file_formatter('xml')
+        for traj in (eval_batch.trajectories or []):
+            dataset['agent_safety_prompt'].append(
+                {
+                    "Inputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_input_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
+                    "Generated Outputs": file_formatter.emit_files(
+                        mvir = traj.task['workflow'].mvir,
+                        n = traj.n_output_code,
+                        glob_filter = traj.task['workflow'].cfg.src_globs
+                    )[0],
+                    "Feedback": traj.feedback + "\n\nWhen suggesting new candidate prompts, don't include instructions for specific files or functions. Instead, try to come up with generally good candidate prompts which can achieve the desired goals -- generating safe and functionally correct Rust code without expending too much time or output tokens -- across a wide variety of projects."
+                }
+            )
+            #NOTE: When multiple prompts are optimized together, each gets its own key-value pair in `dataset`
+        return dataset
+
+
+def run_gepa(
+    dataset_path: Path,
+    is_individual_project: bool,
+    seed_prompt_paths: dict[str, Path],
+    reflection_lm: str = os.getenv('CRISP_API_MODEL', 'gpt-5.6-sol'),
+    trainset_frac: float = 0.5,
+    max_metric_calls: int = 100,
+    response_evaluator: ResponseEvaluator | None = None,
+    optimized_prompts_folder: Path = Path(__file__).parent.parent / 'gepa_artifacts/new'
+):
+    """
+    Run GEPA optimization for converting unsafe Rust to safe Rust.
+
+    Inputs:
+    - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
+    - seed_prompt_paths: Paths to the seed prompts to use.
+    - reflection_lm: The LM outside the loop for GEPA.
+    - trainset_frac: If `is_individual_project` is False, this is the fraction of the data to use for training, with the remaining used for validation. If `is_individual_project` is True, this is ignored.
+    - max_metric_calls: Required by GEPA.
+    - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
+    - optimized_prompts_folder: Optimized prompts and GEPA logs will be saved in this folder. Folder will be created if it doesn't exist, and will throw error if it already exists.
+    """
+
+    # Get prompt types being optimized
+    prompt_types = seed_prompt_paths.keys()
+
+    # Create optimized prompts folder
+    optimized_prompts_folder.mkdir(parents=True, exist_ok=False)
+
+    # Get seed prompts
+    seed_prompts = {}
+    for prompt_type in prompt_types:
+        seed_prompts[prompt_type] = seed_prompt_paths[prompt_type].read_text()
+
+    # Get expected formatted blocks
+    expected_formatted_blocks = get_expected_formatted_blocks(seed_prompts)
+
+    # Create datasets
+    if not is_individual_project:
+        trainset, valset = [], []
+        project_folders = [folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder)]
+        random.shuffle(project_folders)
+        for i,project_folder in enumerate(project_folders):
+            workflow = get_workflow_for_project(project_folder)
+            task_input = {'workflow': workflow}
+            (trainset if i < trainset_frac*len(project_folders) else valset).append(task_input)
+    else:
+        assert is_project_gepaready(dataset_path), f"Project at {dataset_path} is not GEPA-ready."
+        workflow = get_workflow_for_project(dataset_path)
+        task_input = {'workflow': workflow}
+        trainset = [task_input]
+        valset = [task_input]
+
+    # Instantiate response evaluator
+    if response_evaluator is None:
+        response_evaluator = ResponseEvaluator()
+
+    # Initiate CSV file to log run
+    csv_log_path = optimized_prompts_folder / 'gepa_record.csv'
+    with open(csv_log_path, 'w', encoding='utf-8', newline='') as csvfile:
+        csv.writer(csvfile).writerow(sorted(prompt_types) + ['scores'])
+
+    # Instantiate GEPA adapter
+    adapter = RustAdapter(
+        evaluator = response_evaluator,
+        expected_formatted_blocks = expected_formatted_blocks,
+        csv_log_path = csv_log_path
+    )
+
+    # Run GEPA optimization
+    gepa_optimize_params = {
+        'seed_candidate': seed_prompts,
+        'trainset': trainset,
+        'valset': valset,
+        'adapter': adapter,
+        'max_metric_calls': max_metric_calls,
+        'reflection_lm': reflection_lm,
+        'perfect_score': GEPA_MAX_SCORE
+    }
+    if is_individual_project:
+        gepa_optimize_params['reflection_minibatch_size'] = 1
+    gepa_result = gepa.optimize(**gepa_optimize_params)
+
+    # Save optimization results
+    for prompt_type in prompt_types:
+        with open(optimized_prompts_folder / f'{prompt_type}.txt', 'w', encoding='utf-8') as f:
+            f.write(gepa_result.best_candidate[prompt_type])
+
+
+def eval_gepa(
+    dataset_path: Path,
+    is_individual_project: bool,
+    optimized_prompt_folder: Path,
+    optimized_prompt_paths: dict[str, Path],
+    output_csv_path: Path | None = None,
+    response_evaluator: ResponseEvaluator | None = None,
+    attempts: int = 1,
+    save_final_attempt_node_name: str | None = None
+):
+    """
+    Use the GEPA evaluation function(s) to check the performance of any prompt(s).
+
+    Inputs:
+    - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
+    - optimized_prompt_folder: Path to a folder where the results will be stored.
+    - optimized_prompt_paths: Paths to the prompts which will be evaluated.
+    - model: The LM to run the prompt on.
+    - output_csv_path: Save results to this CSV.
+        - If None, set to `<optimized_prompt_folder> / results_<dataset_name>.csv`
+        - File will be appended to if it already exists
+    - response_evaluator: Instance of `ResponseEvaluator` to be used by the GEPA adapter. Defaults to None, in which case a fresh instance of `ResponseEvaluator()` will be created and used.
+    - attempts: For each project, run the GEPA prompt this many times. For each attempt, use the output of the previous attempt as input. Each attempt's result gets saved individually.
+    - save_final_attempt_node_name: If not None, save the node after the final attempt with this name.
+    """
+
+    # Get prompt types
+    prompt_types = optimized_prompt_paths.keys()
+
+    # Get prompts
+    optimized_prompts = {}
+    for prompt_type in prompt_types:
+        optimized_prompts[prompt_type] = optimized_prompt_paths[prompt_type].read_text()
+
+    # Get project folders
+    if not is_individual_project:
+        project_folders = sorted(folder for folder in dataset_path.iterdir() if folder.is_dir() and is_project_gepaready(folder, plans_required=True))
+    else:
+        assert is_project_gepaready(dataset_path, plans_required=True), f"Project at {dataset_path} is not GEPA-ready."
+        project_folders = [dataset_path]
+
+    # Load response evaluator
+    if response_evaluator is None:
+        response_evaluator = ResponseEvaluator()
+
+    # If it exists, read output CSV and get done files
+    if output_csv_path is None:
+        output_csv_path = optimized_prompt_folder / f'results_{dataset_path.name}.csv'
+    output_csv_existed = False
+    done_already = set()
+    if output_csv_path.exists():
+        output_csv_existed = True
+        output_csv = pd.read_csv(output_csv_path)
+        done_already = set(output_csv['project_folder'])
+        del output_csv
+
+    # Write to output CSV
+    with open(output_csv_path, 'a', encoding='utf-8') as csvfile:
+        csvwriter = csv.writer(csvfile)
+
+        # Write header if this is the first time output CSV is being written to
+        if not output_csv_existed:
+            csvwriter.writerow(
+                [
+                    'project_folder',
+                    'score',
+                    'unsafe_removed',
+                    'unsafe_remaining',
+                    'passtests'
+                ] + [
+                    f'{prompt_type}_{f.name}' for prompt_type in prompt_types for f in fields(AgentRunDetails)
+                ]
+            )
+
+        # Iterate
+        for project_folder in project_folders:
+
+            # Check if already done
+            if project_folder.name in done_already:
+                continue
+
+            # Create workflow
+            workflow = get_workflow_for_project(project_folder)
+
+            # Copy the 'current' node over to 'attempts', so that it can be used for multiple attempts
+            n_current = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'current'))
+            workflow.mvir.set_tag('attempts', n_current.node_id())
+
+            # Get other relevant nodes
+            n_c_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))
+            n_plans = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'plans'))
+
+            # Run agent
+            for attempt in range(1,attempts+1):
+                n_input_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'attempts'))
+
+                try:
+                    n_output_code, _ = workflow.agent_safety(
+                        n_code = n_input_code,
+                        n_test_code = n_c_code,
+                        n_plans = n_plans,
+                        agent_safety_prompt = optimized_prompts['agent_safety_prompt']
+                    )
+                    n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails(
+                            call_duration_sec = n_codex.call_duration_sec,
+                            output_tokens = n_codex.output_tokens
+                        )
+                    }
+                    workflow.mvir.set_tag('attempts', n_output_code.node_id())
+
+                except CrispError as e:
+                    print(f'Safety attempt failed: {e}')
+                    traceback.print_exc()
+
+                    # Assign dummy values to required variables
+                    n_output_code = TreeNode.new(workflow.mvir, files={})
+                    run_details = {
+                        'agent_safety_prompt': AgentRunDetails()
+                    }
+
+                # Get evaluation result
+                eval_result = response_evaluator(
+                    workflow = workflow,
+                    n_output_code = n_output_code,
+                    n_input_code = n_input_code,
+                    n_c_code = n_c_code,
+                    run_details = run_details
+                )
+
+                # Write results
+                csvwriter.writerow(
+                    [
+                        f"{project_folder.name}_attempt{attempt}",
+                        eval_result.score,
+                        eval_result.unsafe_removed,
+                        eval_result.unsafe_remaining,
+                        eval_result.passtests,
+                    ] + [
+                        getattr(run_details[prompt_type], f.name) for prompt_type in run_details.keys() for f in fields(AgentRunDetails) #NOTE: Even though we create the header row for all prompt types, we only write values for the prompt types in run_details. In practice, these two should be identical.
+                    ]
+                )
+
+            # Save node after final attempt
+            if save_final_attempt_node_name:
+                n_final_attempt = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'attempts'))
+                workflow.mvir.set_tag(save_final_attempt_node_name, n_final_attempt.node_id())

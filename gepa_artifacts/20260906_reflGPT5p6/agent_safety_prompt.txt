@@ -1,0 +1,51 @@
+Continue the incremental safety refactor described in `SAFETY_PLAN.md`.
+
+{target_goal}
+
+{after_refactoring_instruction}
+
+Work in one focused, high-value iteration rather than attempting a broad rewrite. First inspect `SAFETY_PLAN.md`, the current diff, relevant call sites, exports, tests, and build configuration. Select a coherent group of changes likely to remove many unsafe entities with low behavioral risk.
+
+Use this general refactoring strategy:
+
+- Separate C ABI boundaries from Rust implementations:
+  - Keep exported symbols, calling conventions, parameter types, return types, and `#[repr(C)]` layouts ABI-compatible.
+  - Prefer a thin `unsafe extern "C"` wrapper for validation and raw-pointer conversion.
+  - Move actual logic into private safe Rust functions using slices, references, arrays, enums, and `Option` where appropriate.
+  - Do not expose a safe function that accepts unchecked foreign pointers or otherwise requires caller-maintained safety invariants.
+- Prioritize easy, high-yield conversions:
+  - Pure arithmetic, bit manipulation, bounds calculations, and state-independent helpers.
+  - Read-only lookup tables currently declared `static mut`; convert them to immutable `static` or `const` when they are never modified.
+  - Generated pointer loops that can be expressed with iterators, indexing, chunks, or slice operations.
+  - Internal functions whose only reason for being unsafe is inherited `unsafe extern "C"` syntax.
+- Preserve exact C-compatible behavior:
+  - Maintain null-pointer sentinel behavior, error codes, partial progress reporting, overflow behavior, and edge cases.
+  - A null pointer must never be passed to `from_raw_parts`, even when the length is zero.
+  - Before constructing a slice from a foreign pointer and length, validate every representability constraint required by Rust, including the `isize::MAX` bound where applicable.
+  - Preserve intentional unsigned wrapping with explicit wrapping operations when overflow can occur; do not accidentally replace C wrapping behavior with debug-build panics.
+  - Preserve callback behavior, ownership, allocation/free pairing, state transitions, and externally visible mutable state.
+  - Do not use pointer subtraction or ordering unless both pointers are known to belong to the same live allocation. Prefer tracked lengths or indices where possible.
+- Keep unsafe code narrowly localized and justified at genuine FFI or ownership boundaries. Merely deleting an `unsafe` keyword is not progress if unchecked invariants remain.
+- Avoid introducing raw pointers, raw-pointer fields, integer-to-pointer casts, or new unsafe helpers into implementation code as a way to silence the checker.
+- Avoid large mechanical formatting changes, generated-table rewrites, unrelated cleanup, and speculative architecture changes. Reuse existing tables and types when that keeps the patch small.
+- Search all internal and cross-module callers before changing symbol ownership. In translated C projects, internal calls may resolve through exported symbol names rather than normal Rust module paths, so retain exactly one definition for each required external symbol.
+- Add or extend compact tests for changed behavior, especially empty inputs, null sentinels, boundary lengths, overflow cases, known vectors, and composition/round-trip properties. Prefer tests that compare the safe core and ABI wrapper or established reference results.
+
+Validate the smallest relevant target after each coherent edit, then run the project’s normal functionality tests. Also run:
+
+```sh
+cargo check-unsafe2 --manifest-path {cargo_dir_path}/Cargo.toml
+```
+
+This checker rejects improperly added unsafe code and newly added unsafe-adjacent implementation code, including raw-pointer arguments or fields and integer-to-pointer casts. Treat checker failures as design feedback: move validation/conversion to an existing legitimate boundary rather than adding exemptions or disguising pointer operations.
+
+If a proposed conversion would require inventing unverifiable lifetimes, creating references to potentially aliased foreign memory, changing ABI semantics, or substantially expanding the patch, record it as a pitfall and choose a safer candidate instead.
+
+Before finishing, update `SAFETY_PLAN.md` concisely with:
+- what was actually changed this iteration;
+- what is now complete;
+- validation commands and outcomes;
+- what remains and the best next general category of work;
+- any behavioral traps, failed approaches, or dead ends future iterations should avoid.
+
+Keep `SAFETY_PLAN.md` as a working scratchpad, not a report. In the final response, give only a concise summary of changes, safety impact, and validation results.

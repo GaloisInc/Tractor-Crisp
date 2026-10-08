@@ -1251,6 +1251,7 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        agent_safety_prompt: str = AGENT_SAFETY_PROMPT
     ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1265,7 +1266,7 @@ class Workflow:
         if n_test_code is not None:
             extra_code['tests'] = n_test_code
 
-        prompt = AGENT_SAFETY_PROMPT.format(
+        prompt = agent_safety_prompt.format(
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
@@ -1316,13 +1317,15 @@ class Workflow:
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
+        agent_ffi_review_prompt: str = AGENT_FFI_REVIEW_PROMPT,
+        ffi_entry_point_rules: str = FFI_ENTRY_POINT_RULES
     ) -> CodexReviewOpNode:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        prompt = AGENT_FFI_REVIEW_PROMPT.format(
+        prompt = agent_ffi_review_prompt.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+            ffi_entry_point_rules = ffi_entry_point_rules)
         report, logs, ran_commands = agent.run_review(cfg, mvir, prompt,
             cfg.models.agent_loop, n_old_code, n_new_code)
 
@@ -1354,6 +1357,8 @@ class Workflow:
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
+        agent_ffi_review_prompt: str = AGENT_FFI_REVIEW_PROMPT,
+        ffi_entry_point_rules: str = FFI_ENTRY_POINT_RULES
     ) -> tuple[bool, str | None]:
         """
         Diff-triggered FFI review: if the change touched any FFI entry point,
@@ -1366,7 +1371,7 @@ class Workflow:
         if old_defs == new_defs:
             return True, None
 
-        n_op = self.ffi_review_op(n_old_code, n_new_code)
+        n_op = self.ffi_review_op(n_old_code, n_new_code, agent_ffi_review_prompt=agent_ffi_review_prompt, ffi_entry_point_rules=ffi_entry_point_rules)
         report = self.mvir.node(n_op.report).body_str()
         print(report)
         if n_op.verdict == 'PASS':
@@ -1462,6 +1467,8 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
+        agent_plan_prompt: str = AGENT_PLAN_PROMPT,
+        ffi_entry_point_rules: str = FFI_ENTRY_POINT_RULES
     ) -> tuple[TreeNode | None, TreeNode | None]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1477,9 +1484,9 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
 
-        prompt = AGENT_PLAN_PROMPT.format(
+        prompt = agent_plan_prompt.format(
             cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = FFI_ENTRY_POINT_RULES)
+            ffi_entry_point_rules = ffi_entry_point_rules)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),
@@ -1500,19 +1507,23 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        agent_safety_prompt: str = AGENT_SAFETY_PROMPT,
+        agent_ffi_review_prompt: str = AGENT_FFI_REVIEW_PROMPT,
+        ffi_entry_point_rules: str = FFI_ENTRY_POINT_RULES
     ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
         self.fuel.use()
 
         n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
-            target_goal = target_goal)
+            target_goal = target_goal,
+            agent_safety_prompt = agent_safety_prompt)
         # The change must pass tests, must not regress any unsafe count, and
         # must not break the FFI entry point rules.
         n_op_test = self.test_op(n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
             return None, None, None
-        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
+        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code, agent_ffi_review_prompt=agent_ffi_review_prompt, ffi_entry_point_rules=ffi_entry_point_rules)
         if not ffi_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.

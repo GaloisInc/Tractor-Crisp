@@ -826,6 +826,9 @@ def do_commit(args, cfg):
             dct[rel_path] = n_file.node_id()
     n = TreeNode.new(mvir, files=dct)
 
+    if len(dct) == 0:
+        raise CrispError('no files committed!')
+
     mvir.set_tag(args.tag, n.node_id(), 'commit')
     print('committed %s = %s' % (args.tag, n.node_id()))
 

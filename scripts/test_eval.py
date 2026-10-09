@@ -504,7 +504,8 @@ def main():
         # Compiled/generated output
         'target/', '__pycache__/',
         # CRISP configs and storage
-        'crisp*',
+        'crisp.toml',
+        'crisp-storage',
         # CRISP outputs that the user may have checked out into the directory
         'translated_rust/', 'compile_commands.json',
     ]

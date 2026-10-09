@@ -500,6 +500,7 @@ def find_unsafe2(cfg: Config, mvir: MVIR, code: TreeNode) -> FindUnsafe2Analysis
             'env',
             f'FIND_UNSAFE2_SRC_DIR={sb.join(cargo_dir)}',
             f'FIND_UNSAFE2_JSON_DIR={sb.join("unsafe_json")}',
+            'CACHE_BUSTER=for-history-progress-1',
             'cargo', 'find-unsafe2',
             '--manifest-path', sb.join(cargo_toml_path),
         ]

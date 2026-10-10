@@ -64,6 +64,12 @@ fn add_ffi_wrapper(
     };
     let fn_name = fn_item.sig.ident.to_string();
 
+    // A wrapper has no way to forward `...` to the inner function, so leave variadic functions
+    // unsplit.  The original function remains the FFI entry point.
+    if fn_item.sig.variadic.is_some() {
+        return None;
+    }
+
     // Example of gathering semantic information from rust-analyzer:
     /*
     let range = span_to_text_range(fn_item.span());
@@ -444,5 +450,46 @@ fn main_impl(
         let s = buf.finish();
         fs::write(&path, &s).unwrap();
         log::trace!("wrote {:?}", path);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ra_ap_syntax::{Edition, SourceFile};
+
+    /// Run `add_ffi_wrapper` on the single item in `src`.  Returns the item and its wrapper, if
+    /// one was generated, as strings.
+    fn split(src: &str) -> (String, Option<String>) {
+        let args = Args {
+            cargo_dir_path: PathBuf::new(),
+            add_unsafe_blocks: false,
+        };
+        let db = RootDatabase::new(None);
+        let sema = Semantics::new(&db);
+        let root = SourceFile::parse(src, Edition::CURRENT).syntax_node();
+        let mut item: syn::Item = syn::parse_str(src).unwrap();
+        let wrapper = add_ffi_wrapper(&args, &db, &sema, root, &mut item);
+        let show = |item: syn::Item| item.into_token_stream().to_string();
+        (show(item), wrapper.map(show))
+    }
+
+    #[test]
+    fn wraps_entry_point() {
+        let (inner, wrapper) = split(
+            "#[no_mangle] pub unsafe extern \"C\" fn f(x: i32) -> i32 { x }");
+        assert!(!inner.contains("no_mangle"), "{inner}");
+        let wrapper = wrapper.unwrap();
+        assert!(wrapper.contains("export_name = \"f\""), "{wrapper}");
+        assert!(wrapper.contains("f (x)"), "{wrapper}");
+    }
+
+    /// The wrapper would call `f(n)`, silently dropping the variadic arguments.
+    #[test]
+    fn leaves_variadic_entry_point_unsplit() {
+        let (inner, wrapper) = split(
+            "#[no_mangle] pub unsafe extern \"C\" fn f(n: i32, mut args: ...) -> i32 { n }");
+        assert!(inner.contains("no_mangle"), "{inner}");
+        assert!(wrapper.is_none(), "{wrapper:?}");
     }
 }

@@ -1,7 +1,12 @@
+import contextlib
+import io
+import tempfile
 import unittest
 
+from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
-    FFI_SEEN_FINDINGS_CAP, merge_ffi_finding_titles, upgrade_toolchain_rust_src,
+    FFI_SEEN_FINDINGS_CAP, Workflow, merge_ffi_finding_titles,
+    upgrade_toolchain_rust_src,
 )
 
 
@@ -132,3 +137,46 @@ class UpgradeToolchainRustSrcTest(unittest.TestCase):
             '(*s).arg = (*s).arg + 1;\n'
         )
         self.assertEqual(upgrade_toolchain_rust_src(src), src)
+
+
+class PatchBuildRsTest(unittest.TestCase):
+    def patch_build_rs(self, paths: dict[str, str], libs: list[str]):
+        """
+        Run `patch_build_rs` on a tree with the given file contents.  Returns
+        the old and new trees, and a function for reading a file of the latter.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mvir = MVIR(tmp.name, '.')
+        code = TreeNode.new(mvir, files = {
+            path: FileNode.new(mvir, src).node_id() for path, src in paths.items()})
+        # Steps print a trace of their arguments and results.
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_code = Workflow(None, mvir).patch_build_rs(code, libs = libs)
+        return code, new_code, lambda path: mvir.node(new_code.files[path]).body_str()
+
+    def test_writes_link_libs(self):
+        code, new_code, read = self.patch_build_rs({
+            'translated_rust/Cargo.toml': '[package]\n',
+            'translated_rust/build.rs': 'fn main() {}\n',
+            'translated_rust/src/shell.rs': 'pub fn main_0() {}\n',
+        }, ['m', 'z'])
+        self.assertEqual(read('translated_rust/build.rs'), (
+            'fn main() {\n'
+            '    println!("cargo:rustc-link-lib=m");\n'
+            '    println!("cargo:rustc-link-lib=z");\n'
+            '}\n'
+        ))
+        self.assertEqual(set(new_code.files), set(code.files))
+
+    def test_ignores_transpiled_build_c(self):
+        # SQLite has a `src/build.c`, which c2rust transpiles to `src/build.rs`.
+        code, new_code, read = self.patch_build_rs({
+            'translated_rust/Cargo.toml': '[package]\n',
+            'translated_rust/build.rs': 'fn main() {}\n',
+            'translated_rust/src/build.rs': 'pub fn sqlite3StartTable() {}\n',
+        }, ['m'])
+        self.assertIn('rustc-link-lib=m', read('translated_rust/build.rs'))
+        self.assertEqual(
+            new_code.files['translated_rust/src/build.rs'],
+            code.files['translated_rust/src/build.rs'])

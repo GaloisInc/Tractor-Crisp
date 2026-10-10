@@ -794,11 +794,16 @@ class Workflow:
     def patch_build_rs_op(self, code: TreeNode, libs: list[str]) -> EditOpNode:
         cfg, mvir = self.cfg, self.mvir
 
-        build_rs_paths = [k for k in code.files.keys()
-                if os.path.basename(k) == 'build.rs']
-        assert len(build_rs_paths) == 1, (
-                f'expected only 1 build.rs in transpiler output, but got {build_rs_paths}')
-        build_rs_path, = build_rs_paths
+        # Look only for the build script next to `Cargo.toml`.  A C file named
+        # `build.c` is transpiled to `src/build.rs`, which is not one.
+        cargo_toml_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+        assert len(cargo_toml_paths) == 1, (
+                f'expected only 1 Cargo.toml in transpiler output, but got {cargo_toml_paths}')
+        cargo_toml_path, = cargo_toml_paths
+        build_rs_path = os.path.join(os.path.dirname(cargo_toml_path), 'build.rs')
+        assert build_rs_path in code.files, (
+                f'expected {build_rs_path} in transpiler output')
         build_rs = mvir.node(code.files[build_rs_path])
 
         new_build_rs_lines = ['fn main() {']

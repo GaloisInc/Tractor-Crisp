@@ -147,6 +147,30 @@ def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
             seen.append(title)
     return seen[-FFI_SEEN_FINDINGS_CAP:]
 
+VA_LIST_IMPL_RE = re.compile(r'\bVaListImpl\b')
+
+def upgrade_toolchain_rust_src(src: str) -> str:
+    """
+    Rewrite c2rust-transpile output, which targets a 2023 toolchain, so it
+    builds with the 2026 toolchain `patch_upgrade_toolchain` switches to.
+    """
+    src = (src
+        # This handles both `from_exposed_addr` and `from_exposed_addr_mut`
+        .replace('ptr::from_exposed_addr', 'ptr::with_exposed_provenance')
+        .replace('.expose_addr()', '.expose_provenance()')
+        # `raw_ref_op` no longer requires a feature gate
+        .replace('#![feature(raw_ref_op)]', '')
+        # rust-lang/rust#141980 removed `as_va_list`; `VaList` is now
+        # `Clone` (`va_copy`).  c2rust `--edition 2024` emits the same.
+        .replace('.as_va_list()', '.clone()')
+        # rust-lang/rust#155614 renamed `VaList::arg` to `next_arg`
+        .replace('.arg::<', '.next_arg::<')
+        # rust-lang/rust#155697 stabilized `c_variadic`
+        .replace('#![feature(c_variadic)]', '')
+        )
+    # rust-lang/rust#141980 merged `VaListImpl` into `VaList`
+    return VA_LIST_IMPL_RE.sub('VaList', src)
+
 AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
 **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
@@ -770,11 +794,16 @@ class Workflow:
     def patch_build_rs_op(self, code: TreeNode, libs: list[str]) -> EditOpNode:
         cfg, mvir = self.cfg, self.mvir
 
-        build_rs_paths = [k for k in code.files.keys()
-                if os.path.basename(k) == 'build.rs']
-        assert len(build_rs_paths) == 1, (
-                f'expected only 1 build.rs in transpiler output, but got {build_rs_paths}')
-        build_rs_path, = build_rs_paths
+        # Look only for the build script next to `Cargo.toml`.  A C file named
+        # `build.c` is transpiled to `src/build.rs`, which is not one.
+        cargo_toml_paths = [k for k in code.files.keys()
+                if os.path.basename(k) == 'Cargo.toml']
+        assert len(cargo_toml_paths) == 1, (
+                f'expected only 1 Cargo.toml in transpiler output, but got {cargo_toml_paths}')
+        cargo_toml_path, = cargo_toml_paths
+        build_rs_path = os.path.join(os.path.dirname(cargo_toml_path), 'build.rs')
+        assert build_rs_path in code.files, (
+                f'expected {build_rs_path} in transpiler output')
         build_rs = mvir.node(code.files[build_rs_path])
 
         new_build_rs_lines = ['fn main() {']
@@ -809,6 +838,9 @@ class Workflow:
         transpiler output incompatible with find-unsafe2.  Upgrading to the
         newer toolchain (and renaming the strict provenance calls in the
         process) allows find-unsafe2 to work on the transpiled code.
+
+        The `core::ffi::VaList` API was also redesigned in 2025-26, so
+        definitions of variadic functions are rewritten to the new API.
         """
         n_op = self.patch_upgrade_toolchain_op(code)
         new_code = self.mvir.node(n_op.new_code)
@@ -823,13 +855,7 @@ class Workflow:
             if path.endswith('.rs'):
                 file = mvir.node(file_id)
                 old_src = file.body_str()
-                new_src = (old_src
-                    # This handles both `from_exposed_addr` and `from_exposed_addr_mut`
-                    .replace('ptr::from_exposed_addr', 'ptr::with_exposed_provenance')
-                    .replace('.expose_addr()', '.expose_provenance()')
-                    # `raw_ref_op` no longer requires a feature gate
-                    .replace('#![feature(raw_ref_op)]', '')
-                    )
+                new_src = upgrade_toolchain_rust_src(old_src)
                 new_file = FileNode.new(mvir, new_src)
                 new_file_id = new_file.node_id()
 

@@ -56,6 +56,71 @@ class NodeId:
         assert isinstance(x, cls), 'expected %r, but got %r' % (cls, type(x))
 
 
+@dataclass(frozen=True)
+class Untyped:
+    raw: Any
+
+    def to_cbor(self):
+        def go(raw):
+            if isinstance(raw, (NoneType, bool, int, float, str, bytes)):
+                return raw
+            elif isinstance(raw, (list, tuple)):
+                return ('list', [go(x) for x in raw])
+            elif isinstance(raw, dict):
+                # Keys must be a CBOR-compatible type, such as `str`
+                items = sorted(
+                    ((k, go(v)) for k,v in raw.items()),
+                    key=lambda x: x[0])
+                return ('dict', items)
+            elif isinstance(raw, NodeId):
+                return ('NodeId', raw.to_cbor())
+            else:
+                raise TypeError(f'unsupported type {type(raw)} in Untyped')
+        return go(self.raw)
+
+    @classmethod
+    def from_cbor(cls, raw):
+        def go(raw):
+            if isinstance(raw, (NoneType, bool, int, float, str, bytes)):
+                return raw
+            elif isinstance(raw, (list, tuple)):
+                if len(raw) != 2:
+                    raise TypeError(f'bad tagged value {raw!r} in Untyped')
+                tag, value = raw
+                match tag:
+                    case 'list':
+                        return [go(x) for x in value]
+                    case 'dict':
+                        return {k: go(v) for k,v in value}
+                    case 'NodeId':
+                        return NodeId(value)
+                    case _:
+                        raise TypeError(f'unsupported tag {tag!r} in Untyped')
+            else:
+                raise TypeError(f'unsupported type {type(self.raw)} in Untyped')
+        return cls(go(raw))
+
+    @classmethod
+    def check_type(cls, x):
+        assert isinstance(x, cls), 'expected %r, but got %r' % (cls, type(x))
+
+    def iter_node_ids(self):
+        def go(raw):
+            if isinstance(raw, (NoneType, bool, int, float, str, bytes)):
+                return
+            elif isinstance(raw, (list, tuple)):
+                for x in raw:
+                    yield from go(x)
+            elif isinstance(raw, dict):
+                for x in raw.values():
+                    yield from go(x)
+            elif isinstance(raw, NodeId):
+                yield raw
+            else:
+                raise TypeError(f'unsupported type {type(raw)} in Untyped')
+        yield from go(self.raw)
+
+
 def to_cbor(x):
     if isinstance(x, (NoneType, bool, int, float, str, bytes)):
         return x
@@ -205,6 +270,8 @@ def _metadata_node_ids(x):
         for k,v in x.items():
             yield from _metadata_node_ids(k)
             yield from _metadata_node_ids(v)
+    elif isinstance(x, Untyped):
+        yield from x.iter_node_ids()
     else:
         raise TypeError('unsupported type in metadata: %r' % (type(x),))
 
@@ -951,13 +1018,9 @@ class WorkflowStepNode(Node):
 
 class BranchStateNode(Node):
     KIND = 'branch_state'
-    c_code: Metadata[NodeId]
-    code: Metadata[NodeId]
-    plans: Metadata[Optional[NodeId]]
+    fields: Metadata[Untyped]
 
-    c_code = property(lambda self: self._metadata['c_code'])
-    code = property(lambda self: self._metadata['code'])
-    plans = property(lambda self: self._metadata['plans'])
+    fields = property(lambda self: self._metadata['fields'])
 
 class BranchStepNode(Node):
     KIND = 'branch_step'

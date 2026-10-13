@@ -3,7 +3,7 @@ from datetime import datetime
 import functools
 
 from .error import CrispError
-from .mvir import BranchStateNode, BranchStepNode
+from .mvir import BranchStateNode, BranchStepNode, Untyped
 from .rand_target import PickTarget
 from .util import FuelLimits
 from .workflow import Workflow, FuelCounter, AgentTargetOther
@@ -75,20 +75,32 @@ class BranchState:
     def _reset(self, n: BranchStateNode):
         self._n = n
 
-        self.c_code = self.mvir.node(n.c_code)
-        self.code = self.mvir.node(n.code)
-        self.plans = self.mvir.node(n.plans) if n.plans is not None else None
+        fields = n.fields.raw
+
+        self.c_code = self.mvir.node(fields['c_code'])
+        self.code = self.mvir.node(fields['code'])
+        plans_id = fields.get('plans')
+        self.plans = self.mvir.node(plans_id) if plans_id is not None else None
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
         assert n.node_id() == self._snapshot().node_id()
 
     def _snapshot(self) -> BranchStateNode:
-        return BranchStateNode.new(
-            self.mvir,
+        fields = dict(
             c_code = self.c_code.node_id(),
             code = self.code.node_id(),
-            plans = self.plans.node_id(),
         )
+        if self.plans is not None:
+            fields['plans'] = self.plans.node_id()
+        return BranchStateNode.new(self.mvir, fields = Untyped(fields))
+
+    @classmethod
+    def new(cls, w: Workflow, limits: FuelLimits, n_c_code: TreeNode, n_code: TreeNode):
+        n = BranchStateNode.new(w.mvir, fields = Untyped(dict(
+            c_code = n_c_code.node_id(),
+            code = n_code.node_id(),
+        )))
+        return cls(w, n,limits)
 
 
     def accept(self):
@@ -123,7 +135,7 @@ class BranchState:
 
     @step
     def init_plans(self):
-        _, self.plans = self._w.do_safety_plan_agent(n_code, n_c_code)
+        _, self.plans = self._w.do_safety_plan_agent(self.code, self.c_code)
 
     @step
     def safety_loop(self):

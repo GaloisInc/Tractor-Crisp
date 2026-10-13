@@ -587,13 +587,7 @@ def do_branch_main(args, cfg):
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
 
-    n_branch = BranchStateNode.new(
-        mvir,
-        c_code = n_c_code.node_id(),
-        code = n_code.node_id(),
-        plans = None,
-    )
-    br = BranchState(w, n_branch, limits)
+    br = BranchState.new(w, limits, n_c_code, n_code)
     br.accept()
     br.safety_loop()
 
@@ -604,7 +598,7 @@ def do_branch_safety_loop(args, cfg):
     branch_node_id = parse_node_id_arg(mvir, args.node)
     n_branch = mvir.node(branch_node_id)
 
-    limits = get_fuel_limits(mvir, mvir.node(n_branch.code))
+    limits = get_fuel_limits(mvir, mvir.node(n_branch.fields.raw['code']))
     print(f'limits = {limits!r}')
 
     br = BranchState(w, n_branch, limits)

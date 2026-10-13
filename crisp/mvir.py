@@ -1067,7 +1067,7 @@ def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
     metadata['outputs'] = [
         ('last_message', last_message_tree.node_id().to_cbor()),
     ]
-    metadata['raw_output_files'] = report_tree.node_id().to_cbor()
+    metadata['raw_output_files'] = last_message_tree.node_id().to_cbor()
     metadata['json_session'] = FileNode.new(mvir, '').node_id().to_cbor()
     # Convert PASS/FAIL verdict to an exit code.
     metadata['exit_code'] = 0 if metadata.pop('verdict') == 'PASS' else 1

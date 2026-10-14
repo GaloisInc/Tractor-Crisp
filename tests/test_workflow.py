@@ -2,13 +2,16 @@ import contextlib
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from crisp import prompts
+from crisp.analysis import review_passed
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
-    FFI_SEEN_FINDINGS_CAP, Workflow, merge_ffi_finding_titles,
-    upgrade_toolchain_rust_src,
+    AGENT_SAFETY_PROMPT, FFI_SEEN_FINDINGS_CAP, Workflow,
+    merge_ffi_finding_titles, upgrade_toolchain_rust_src,
 )
-
 
 # Finding lines as rendered by `codex exec review` (from a real zlib run).
 REPORT = '''
@@ -18,6 +21,105 @@ The diff removes `unsafe` from several exported entry points.
 - [P1] Restore `unsafe` on `zlibVersion_ffi` — /root/work/translated_rust/src/zutil.rs:27-27
 - [P2] Wrapper contains validation logic — /root/work/translated_rust/src/gzlib.rs:100-120
 '''
+
+
+class SafetyReviewTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.mvir = MVIR(temp.name, temp.name)
+        cfg = SimpleNamespace(
+            transpile=SimpleNamespace(output_dir='crate'),
+            relative_path=lambda path: path,
+            models=SimpleNamespace(agent_review='configured-review-model'),
+        )
+        self.w = Workflow(cfg, self.mvir)
+        self.reference = self.tree('api.h', 'typedef void *(*alloc_fn)(void *context);')
+        # Any node stands in for the agent op.
+        self.review = self.enterContext(patch('crisp.analysis.agent.run_review_op',
+            return_value=FileNode.new(self.mvir, 'agent op')))
+        self.results = self.enterContext(patch('crisp.analysis.agent.review_op_results'))
+        self.set_review('CRISP_REVIEW: PASS\nChecked contracts and callers.', True)
+        self.enterContext(patch('builtins.print'))
+
+    def tree(self, path, body):
+        return TreeNode.new(self.mvir,
+            files={path: FileNode.new(self.mvir, body).node_id()})
+
+    def set_review(self, report, ran_commands):
+        n_report = FileNode.new(self.mvir, report) if report else None
+        self.results.return_value = n_report, b'log', ran_commands
+
+    def test_callback_and_neutral_cleanup_changes_receive_review(self):
+        for old, new in [
+            ('type Alloc = unsafe extern "C" fn(*mut u8);',
+             'type Alloc = extern "C" fn(*mut u8);'),
+            ('fn cleanup() { let result = release_owner(); debug_assert!(result.is_none()); }',
+             'fn cleanup() { debug_assert!(release_owner().is_none()); }'),
+        ]:
+            with self.subTest(new=new):
+                self.review.reset_mock()
+                baseline = self.tree('crate/src/lib.rs', old)
+                candidate = self.tree('crate/src/lib.rs', new)
+                self.assertEqual(self.w.do_safety_review(baseline, candidate,
+                    self.reference), (True, None))
+                self.review.assert_called_once()
+                args, kwargs = self.review.call_args
+                self.assertEqual(args[3], 'configured-review-model')
+                self.assertEqual(args[4:6], (baseline, candidate))
+                self.assertEqual(kwargs['extra_code'], {'c_code': self.reference})
+                self.assertEqual(kwargs['effort'], 'xhigh')
+                self.assertIn('at their original paths', args[2])
+                self.assertIn(prompts.SAFETY_REVIEW_RULES, args[2])
+
+    def test_identical_tree_skips_model(self):
+        code = self.tree('crate/src/lib.rs', 'fn example() {}')
+        self.assertEqual(self.w.do_safety_review(code, code, self.reference),
+            (True, None))
+        self.review.assert_not_called()
+
+    def test_missing_report_and_missing_command_evidence_reject_and_record_reason(self):
+        baseline = self.tree('crate/src/lib.rs', 'fn before() {}')
+        for i, (report, inspected) in enumerate([('', True), ('No findings.', True),
+                ('CRISP_REVIEW: PASS', False), ('CRISP_REVIEW: FAIL\nMissing context.', True)]):
+            with self.subTest(report=report, inspected=inspected):
+                # A distinct candidate per case avoids the cached review.
+                candidate = self.tree('crate/src/lib.rs', f'fn after{i}() {{}}')
+                self.set_review(report, inspected)
+                passed, reason = self.w.do_safety_review(baseline, candidate,
+                    self.reference)
+                self.assertFalse(passed)
+                self.assertTrue(reason.startswith('CRISP_REVIEW: '))
+                entry = self.mvir.tag_reflog('op_history')[-1]
+                op = self.mvir.node(entry.node_id)
+                self.assertFalse(op.passed)
+                self.assertEqual(self.mvir.node(op.report).body_str(), reason)
+
+
+class ReviewRuleParityTest(unittest.TestCase):
+    def test_worker_prompt_contains_canonical_review_rules(self):
+        prompt = AGENT_SAFETY_PROMPT.format(
+            cargo_dir_path='translated_rust',
+            after_refactoring_instruction='run tests',
+            target_goal='',
+            safety_review_rules=prompts.SAFETY_REVIEW_RULES,
+            ffi_entry_point_rules=prompts.FFI_ENTRY_POINT_RULES,
+        )
+
+        self.assertIn(prompts.SAFETY_REVIEW_RULES, prompt)
+        self.assertIn(prompts.FFI_ENTRY_POINT_RULES, prompt)
+
+    def test_semantic_reviewer_uses_the_same_rules(self):
+        prompt = prompts.AGENT_SAFETY_REVIEW.format(
+            cargo_dir_path='translated_rust',
+            reference_instruction='Original C is at its original paths.',
+            safety_review_rules=prompts.SAFETY_REVIEW_RULES,
+            ffi_entry_point_rules=prompts.FFI_ENTRY_POINT_RULES,
+        )
+        self.assertIn(prompts.SAFETY_REVIEW_RULES, prompt)
+        self.assertIn(prompts.FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('overall_explanation', prompt)
+        self.assertIn('CRISP_REVIEW: PASS', prompt)
 
 
 class MergeFfiFindingTitlesTest(unittest.TestCase):
@@ -180,3 +282,31 @@ class PatchBuildRsTest(unittest.TestCase):
         self.assertEqual(
             new_code.files['translated_rust/src/build.rs'],
             code.files['translated_rust/src/build.rs'])
+
+
+class ReviewVerdictTest(unittest.TestCase):
+    def test_completed_explicit_approval_passes(self):
+        for verdict in ('CRISP_REVIEW: PASS', 'CRISP_REVIEW: PASS.',
+                'CRISP_REVIEW: PASS - no defects'):
+            with self.subTest(verdict=verdict):
+                self.assertTrue(review_passed(verdict + '\nChecked the affected callers.', True))
+
+    def test_missing_incomplete_ambiguous_and_rejecting_reports_fail(self):
+        for report, ran_commands in [
+            ('', True),
+            ('No findings.', True),
+            ('Review was interrupted.', True),
+            ('Unable to assess the callback lifetime.', True),
+            ('CRISP_REVIEW: FAIL\nMissing API context.', True),
+            ('CRISP_REVIEW: PASS', False),
+            ('CRISP_REVIEW: PASSING', True),
+            ('CRISP_REVIEW: PASS_FAIL', True),
+            ('CRISP_REVIEW: PASS\nCRISP_REVIEW: FAIL', True),
+            ('CRISP_REVIEW: PASS.\nCRISP_REVIEW: FAIL', True),
+            ('CRISP_REVIEW: PASS - no defects', False),
+            ('CRISP_REVIEW: PASS.\n  - [P2] Missed cleanup', True),
+            ('CRISP_REVIEW: PASS\n' + REPORT, True),
+            ('CRISP_REVIEW: PASS\n  - [P2] Missed cleanup', True),
+        ]:
+            with self.subTest(report=report, ran_commands=ran_commands):
+                self.assertFalse(review_passed(report, ran_commands))

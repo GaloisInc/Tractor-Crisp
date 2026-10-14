@@ -64,8 +64,12 @@ fn add_ffi_wrapper(
     };
     let fn_name = fn_item.sig.ident.to_string();
 
-    // A wrapper has no way to forward `...` to the inner function, so leave variadic functions
-    // unsplit.  The original function remains the FFI entry point.
+    // Skip variadic functions.  Internal calls and calls from C both expect the callee to take
+    // `...`, and there's no way to forward `...` to `...` (only `...` to `VaList`), so at best we
+    // could have separate internal and external wrappers that each take `...` and forward to an
+    // implementation function taking `VaList`.  This is more complex than the usual case, and it's
+    // not clear that it would be any improvement over doing nothing and letting internal callers
+    // just call the FFI entry point directly.
     if fn_item.sig.variadic.is_some() {
         return None;
     }

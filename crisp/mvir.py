@@ -805,11 +805,13 @@ class CheckUnsafe2AnalysisNode(Node):
         return self.exit_code == 0
 
 class CodexReviewAnalysisNode(Node):
-    KIND = 'codex_review_analysis'
+    KIND = 'codex_review_analysis_v2'
     old_code: Metadata[NodeId]
     new_code: Metadata[NodeId]
+    # Original C sources and tests given to the reviewer as context.
+    c_code: Metadata[Optional[NodeId]]
     prompt: Metadata[NodeId]
-    # The reviewer's final message.
+    # The reviewer's final message, annotated when incomplete.
     report: Metadata[NodeId]
     # CodexAgentOpNode with the complete details of the review step.
     agent_op: Metadata[NodeId]
@@ -817,6 +819,7 @@ class CodexReviewAnalysisNode(Node):
 
     old_code = property(lambda self: self._metadata['old_code'])
     new_code = property(lambda self: self._metadata['new_code'])
+    c_code = property(lambda self: self._metadata['c_code'])
     prompt = property(lambda self: self._metadata['prompt'])
     report = property(lambda self: self._metadata['report'])
     agent_op = property(lambda self: self._metadata['agent_op'])
@@ -1076,3 +1079,9 @@ def migrate_codex_review_op(mvir: MVIR, metadata: dict[str, Any]):
     metadata['cmds'] = [
         ['codex', 'dummy-cmd', prompt],
     ]
+
+@migration('codex_review_analysis')
+def migrate_codex_review_analysis(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'codex_review_analysis_v2'
+    # `c_code` was added; FFI reviews had no C context.
+    metadata['c_code'] = None

@@ -167,6 +167,15 @@ Your changes must not introduce new unsafe code within implementation functions.
 crisp_check_unsafe2.sh
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+
+Every changed candidate receives independent safety and compatibility review
+under these binding rules, including count-neutral preparation:
+
+{safety_review_rules}
+
+FFI entry points are judged under these binding rules:
+
+{ffi_entry_point_rules}
 '''
 
 AGENT_FFI_REJECTED_PROMPT = '''
@@ -1278,6 +1287,8 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            safety_review_rules = prompts.SAFETY_REVIEW_RULES,
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES,
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
@@ -1321,53 +1332,47 @@ class Workflow:
         )
 
     @step
-    def ffi_review_op(
+    def safety_review_op(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
-    ) -> CodexReviewAnalysisNode | None:
-        """
-        Run FFI review for the change from `n_old_code` to `n_new_code`.  If no
-        FFI functions were modified, this returns `None`.
-        """
+        n_c_code: TreeNode | None,
+    ) -> CodexReviewAnalysisNode:
         cfg, mvir = self.cfg, self.mvir
-
-        old_defs = self.extract_ffi_defs(n_old_code).defs
-        new_defs = self.extract_ffi_defs(n_new_code).defs
-        if old_defs == new_defs:
-            return None
-
-        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = prompts.AGENT_FFI_REVIEW.format(
-            cargo_dir_path = cargo_dir,
+        reference_instruction = (
+            'Original C sources, headers, and available tests are checked out '
+            'at their original paths relative to the sandbox root, as in the '
+            'planner and safety worker. Consult the relevant contracts there; '
+            'these unchanged files are included in the Git baseline.'
+            if n_c_code is not None else
+            'Original C sources and tests are unavailable in this mode. '
+            'Use the baseline and available contracts; if essential evidence '
+            'is missing, report an incomplete review with CRISP_REVIEW: FAIL.')
+        prompt = prompts.AGENT_SAFETY_REVIEW.format(
+            cargo_dir_path = cfg.relative_path(cfg.transpile.output_dir),
+            reference_instruction = reference_instruction,
+            safety_review_rules = prompts.SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         prompt = FileNode.new(mvir, prompt)
-        return analysis.ffi_review(cfg, mvir,
-                n_old_code, n_new_code, prompt)
+        return analysis.safety_review(cfg, mvir,
+                n_old_code, n_new_code, n_c_code, prompt)
 
     @step
-    def do_ffi_review(
+    def do_safety_review(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
+        n_c_code: TreeNode | None,
     ) -> tuple[bool, str | None]:
-        """
-        Diff-triggered FFI review: if the change touched any FFI entry point,
-        have a reviewer agent check it against the FFI entry point rules.
-        Returns `(passed, report)`; `report` is the reviewer's findings when
-        the change is rejected, or `None` if there is no usable report.
-        """
-        n_op = self.ffi_review_op(n_old_code, n_new_code)
-
-        if n_op is None:
-            # No change to FFI defs
+        """Review every changed candidate that passed the mechanical gates."""
+        if n_old_code.node_id() == n_new_code.node_id():
             return True, None
-
+        n_op = self.safety_review_op(n_old_code, n_new_code, n_c_code)
+        report = self.mvir.node(n_op.report).body_str()
+        print(report)
         if n_op.passed:
             return True, None
-        else:
-            report = self.mvir.node(n_op.report).body_str()
-            return False, report if report.strip() else None
+        return False, report if report.strip() else None
 
     @step
     def agent_safety_no_tests(
@@ -1503,17 +1508,21 @@ class Workflow:
         n_new_code, n_plans, _ = self.agent_safety(n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
             target_goal = target_goal)
-        # The change must pass tests, must not regress any unsafe count, and
-        # must not break the FFI entry point rules.
-        n_op_test = self.test_op(n_new_code, n_test_code)
+        # The step must pass tests, must not regress the unsafe counts, and
+        # must pass independent safety, behavior and FFI review.  The cheap
+        # unsafe comparison runs first so a regressing attempt doesn't pay
+        # for the full test suite.
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
+        if n_op_unsafe.exit_code != 0:
             return None, None, None
-        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
-        if not ffi_ok:
+        n_op_test = self.test_op(n_new_code, n_test_code)
+        if n_op_test.exit_code != 0:
+            return None, None, None
+        review_ok, report = self.do_safety_review(n_code, n_new_code, n_test_code)
+        if not review_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
-            return None, None, ffi_report
+            return None, None, report
         return n_new_code, n_plans, None
 
     @step
@@ -1535,7 +1544,8 @@ class Workflow:
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             return None, None
-        if not self.do_ffi_review(n_code, n_new_code)[0]:
+        # Preserve this mode's deliberate lack of original C/test context.
+        if not self.do_safety_review(n_code, n_new_code, None)[0]:
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

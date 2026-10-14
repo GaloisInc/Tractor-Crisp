@@ -42,6 +42,8 @@ class ConfigBase:
 class ModelsConfig(ConfigBase):
     agent_plan: str = "gpt-6-astra"
     agent_loop: str = "gpt-6.1-sol"
+    # Used for independent safety and compatibility reviews.
+    agent_review: str = "gpt-6-luna"
     postprocess: str = "gpt-6-luna"
     # `rewriter = None` means call `/v1/models` and pick the first from the list.
     rewriter: str | None = None

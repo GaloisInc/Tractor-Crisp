@@ -281,11 +281,24 @@ def do_main(args, cfg):
 def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # Look up the node which produced `n_code` and return the planning files for that step.
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
-    matches = [
-        ie for ie in mvir.index(n_code.node_id())
-        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'outputs'
-        and mvir.node(ie.node_id).outputs.get('code') == n_code.node_id()
-    ]
+    matches = []
+    for ie in mvir.index(n_code.node_id()):
+        # Look for a `CodexAgentOpNode` with `n_code` as the output code and
+        # nonempty output `planning_files`.
+        if ie.kind != CodexAgentOpNode.KIND or ie.key != 'outputs':
+            continue
+        op_node = mvir.node(ie.node_id)
+        if op_node.outputs.get('code') != n_code.node_id():
+            continue
+        plans_id = op_node.outputs.get('plans')
+        if plans_id is None:
+            continue
+        plans = mvir.node(plans_id)
+        if len(plans.files) == 0:
+            continue
+        # All checks passed - this is a valid candidate.
+        matches.append(ie)
+
 
     match matches:
         case [ie]:

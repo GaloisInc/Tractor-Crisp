@@ -20,13 +20,35 @@ The following FFI rules are mandatory:
   code itself), as is considered best practice in C. This means the struct
   layout is not part of the ABI, so you may freely change the field types to
   improve safety.
-- Each FFI entry point should convert the inputs from unsafe types to safe ones
-  (e.g. `*const T` -> `&T`) if needed, dispatch to an implementation function,
-  and convert the results back to unsafe types if needed. Do not add extraneous
-  unsafe code to FFI entry points.
-- The FFI entry points should be as minimal as possible, and do as little
-  non-trivial work as necessary. All proper program logic should stay out of
-  the FFI wrappers and instead live in the internal safe Rust code.
+- FFI entry points adapt the C interface to named Rust implementation
+  functions. They may validate inputs, convert raw pointers into justified
+  references or bounded views, project fields, assemble argument views,
+  dispatch, and convert results back to C types.
+- Necessary adaptation may include null checks and calls to named validation or
+  view-construction helpers. Every conversion must preserve the required
+  initialization, extent, aliasing, and lifetime guarantees. Boundary placement
+  does not excuse an unjustified conversion.
+- When creating all views before dispatch would violate aliasing or observation
+  order, the entry point may supply invocation-local access closures. These
+  closures may construct the requested views and invoke the supplied operation.
+  Named safe implementation code must determine whether, when, and in what
+  order those accesses occur.
+- Program logic must remain in named implementation functions: algorithmic
+  decisions, traversal and copy loops, status policy, allocation and cleanup,
+  and sequencing of observable effects. Moving such logic into an entry point,
+  macro, or boundary closure violates this rule.
+- An increase in unsafe operations inside an entry point is a review trigger,
+  not an automatic violation. Review must distinguish necessary boundary
+  adaptation from relocated program logic. A rejection must identify the
+  specific misplaced operation or unmet safety obligation; increased counts or
+  wrapper length alone are insufficient.
+- For example, a wrapper may supply deferred conversion of an optional C string
+  while a named safe implementation decides whether and when to request it. A
+  buffer-transfer wrapper may supply scoped source and destination views while
+  a named safe implementation calculates ranges, controls copy order, performs
+  copies, and publishes results. The wrapper must not choose transfer ranges,
+  loop over transfers, copy bytes, or decide publication order, including
+  inside its access closures.
 - Don't hide implementation logic in macros. Macro expansions count as part of
   the FFI entry point body: an entry point must dispatch to a named
   implementation function, and must not invoke macros that expand to program
@@ -65,7 +87,8 @@ parent's spawn message may give the concrete path). Each file contains:
   `inline_asm`, `transmutes`, and the maps `uses_static_mut` and
   `uses_union_field` (keyed by the static or field used), plus the progress
   metrics `uses_foreign_fn`, `uses_ffi_entry_point`, `casts_int_to_ptr`, and
-  `sig_contains_raw_ptr`.
+  `sig_contains_raw_ptr`.  Closures inside FFI entry points are attributed to
+  that entry point; other closures have their own inventory records.
 - `types`: a map from type name to a record with `filename` and
   `field_contains_raw_ptr`, a map from field name to raw-pointer count. A type
   alias whose definition contains a raw pointer appears with the pseudo-field

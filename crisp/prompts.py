@@ -182,3 +182,11 @@ def ffi_review(cargo_dir_path: str) -> str:
         cargo_dir_path = cargo_dir_path,
         ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
     )
+
+
+def warning_cleanup(cargo_dir_path: str) -> str:
+    """Render the warning cleanup prompt with the FFI entry point rules."""
+    return jinja_env.get_template('warning_cleanup.jinja').render(
+        cargo_dir_path = cargo_dir_path,
+        ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
+    )

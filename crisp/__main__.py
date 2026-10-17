@@ -275,6 +275,16 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'cargo_fix'))
 
+    if (args.llm_mode in ('agent', 'agent_rand_target')
+            and get_fuel_limits(mvir, n_code).safety_tries > 0):
+        try:
+            n_new = w.agent_warning_cleanup(n_code, n_c_code)
+            if n_new.node_id() != n_code.node_id():
+                n_code = n_new
+                w.accept(n_code, ('main', 'warning_cleanup'))
+        except CrispError as e:
+            print(f'warning cleanup failed: {e}')
+
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
 
@@ -284,7 +294,8 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     matches = [
         ie for ie in mvir.index(n_code.node_id())
         if ie.kind == CodexAgentOpNode.KIND and ie.key == 'outputs'
-        and mvir.node(ie.node_id).outputs.get('code') == n_code.node_id()
+        and (op := mvir.node(ie.node_id)).outputs.get('code') == n_code.node_id()
+        and 'SAFETY_PLAN.md' in mvir.node(op.planning_files).files
     ]
 
     match matches:

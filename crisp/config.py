@@ -106,6 +106,7 @@ class TranspileConfig(ConfigBase):
     config_path: str
     output_dir: str
     artifacts: list[TranspileArtifactConfig]
+    hayroll: bool = True
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

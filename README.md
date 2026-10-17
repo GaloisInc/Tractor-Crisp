@@ -8,7 +8,8 @@ The following features have been implemented in the CRISP transpiler loop:
 
 * Automatic translation of C to unsafe Rust using either c2rust-transpile or
   [Hayroll](https://github.com/UW-HARVEST/Hayroll).  CRISP tries Hayroll first
-  and falls back to ordinary c2rust-transpile only if it fails.
+  and falls back to ordinary c2rust-transpile only if it fails.  Set
+  `transpile.hayroll = false` to skip Hayroll.
 * Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
   unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
   builds, passes the tests, and does not introduce new unsafety before

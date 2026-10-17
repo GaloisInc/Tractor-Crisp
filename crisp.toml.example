@@ -41,6 +41,9 @@ postprocess = "gpt-6-luna"
 # `src_globs` above to match.
 output_dir = "rust"
 
+# Set to false to skip the Hayroll attempt when the c2rust transpile fails.
+#hayroll = false
+
 
 # Define a `transpile.artifacts` section for the binary or library to
 # transpile.

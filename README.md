@@ -12,8 +12,12 @@ The following features have been implemented in the CRISP transpiler loop:
   `transpile.hayroll = false` to skip Hayroll.
 * Agent-based safety refactoring.  CRISP invokes the Codex agent to convert
   unsafe Rust to safe Rust.  CRISP checks that the code produced by the agent
-  builds, passes the tests, and does not introduce new unsafety before
-  accepting it.
+  builds, passes the tests, and does not introduce new unsafety. Every changed
+  candidate that passes those checks also receives one independent review of
+  safety, behavior, and FFI compatibility before acceptance, including changes
+  that leave the unsafe count unchanged. Review uses the original C/API
+  reference and requires an explicit passing verdict; missing or incomplete
+  review results are rejected.
 * Automatic detection of unsafe code.  The CRISP transpiler loop stops once
   there is no unsafe code left to make safe.
 * FFI function splitting.  To preserve ABI compatibility when translating
@@ -22,6 +26,14 @@ The following features have been implemented in the CRISP transpiler loop:
   wrapper and a separate implementation function that can then be made safe.
 * High-level planning.  CRISP prompts the agent to develop a high-level safety
   plan for the codebase, then has the agent implement the plan step by step.
+  Agent safety loops revise that plan in a single planning call after
+  `max(1, ceil(log2(current unsafe count)))` safety attempts, or earlier when
+  a plan-guided worker reports `PLAN_EXHAUSTED`. A target-specific `BLOCKED`
+  result does not trigger early replanning. Replanning reads
+  measured progress and rejection feedback since the previous plan; the window
+  survives restarts. Existing runs without a recorded window replan on their
+  next start. Planning does not consume `LLM_SAFETY_TRIES`, and no planner runs
+  once the unsafe count reaches zero or the safety-attempt budget is exhausted.
 
 
 # Running in Docker

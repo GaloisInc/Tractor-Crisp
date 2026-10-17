@@ -17,6 +17,7 @@ from .. import http_server, llm
 from ..config import Config
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
+from ..planning import validate_plan
 from ..sandbox import run_sandbox, Sandbox
 
 # Repo-side agent assets; installed into the sandbox as `.codex/`, the
@@ -78,7 +79,7 @@ def _snapshot_to_family_alias(model: str) -> str:
     return m.group("alias") if m else model
 
 def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str) -> list[str]:
+                   model: str, effort: str = 'high') -> list[str]:
     cmd = ['codex', subcmd]
 
     if cfg.codex_login:
@@ -115,7 +116,7 @@ def _codex_command(cfg: Config, subcmd: str, args: list[str],
     # [0]: https://developers.openai.com/codex/speed
     # [1]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/service_tier_resolution.rs#L18
     cmd += [
-        '-c', 'model_reasoning_effort="high"',
+        '-c', f'model_reasoning_effort="{effort}"',
         '-c', 'features.fast_mode=false',
     ]
 
@@ -457,7 +458,16 @@ def run_rewrite(
     find_unsafe2_json_dir: str | None = None,
     find_unsafe2_src_dir: str | None = None,
     codex_agents: Sequence[str] = (),
-) -> tuple[TreeNode, TreeNode]:
+    effort: str = 'high',
+    planning_only: bool = False,
+) -> tuple[TreeNode, TreeNode, str]:
+    """Return the edited code, planning files, and final message if available.
+
+    In planning_only mode, require an input SAFETY_PLAN.md, validate its
+    replacement and unchanged source before publishing a recoverable plan.
+    """
+    if planning_only and (planning_files is None or 'SAFETY_PLAN.md' not in planning_files.files):
+        raise CrispError('Planning requires an existing SAFETY_PLAN.md')
     extra_code, env = _normalize_run_args(extra_code, env)
 
     if find_unsafe2_json_dir is not None:
@@ -483,21 +493,24 @@ def run_rewrite(
         inputs[name] = Input(tree)
         extra_code_files.update(tree.files.keys())
 
+    last_message_path = 'codex_last_message.txt'
     codex_cmd = _codex_command(cfg, 'exec', [
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
-    ], model=model)
+    ], model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,
         inputs,
         codex_cmd,
         {
-            'code': lambda p: p not in extra_code_files
+            ('proposed_code' if planning_only else 'code'): lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+            'last_message': lambda p: p == last_message_path,
         },
         cwd = cwd,
         clean_cmds = clean_cmds,
@@ -505,10 +518,32 @@ def run_rewrite(
         http_build_app = http_build_app,
     )
 
-    output_code = outputs['code']
+    output_code = outputs['proposed_code' if planning_only else 'code']
     output_plans = outputs['plans']
+    if planning_only:
+        # Failed planning calls stay in history, but are not code producers
+        # from which a resumed loop could accidentally recover an invalid plan.
+        if output_code.node_id() != input_code.node_id():
+            raise CrispError('Planning step modified source files', n_op)
+        if 'SAFETY_PLAN.md' not in output_plans.files:
+            raise CrispError('Planner did not produce SAFETY_PLAN.md', n_op)
+        old = mvir.node(planning_files.files['SAFETY_PLAN.md']).body_str()
+        new = mvir.node(output_plans.files['SAFETY_PLAN.md']).body_str()
+        validate_plan(old, new)
+        # Only SAFETY_PLAN.md is editable; keep any other planning files.
+        output_plans = TreeNode.new(mvir, files=planning_files.files | {
+            'SAFETY_PLAN.md': output_plans.files['SAFETY_PLAN.md']})
+        accepted = CodexAgentOpNode.new(mvir, inputs=n_op.inputs,
+            outputs={'code': input_code.node_id(), 'plans': output_plans.node_id()},
+            cmds=n_op.cmds, exit_code=0, raw_output_files=n_op.raw_output_files,
+            json_session=n_op.json_session, body=n_op.body())
+        mvir.set_tag('op_history', accepted.node_id(), accepted.kind)
+    message_files = outputs['last_message'].files
+    final_message = (
+        mvir.node(message_files[last_message_path]).body().decode('utf-8', errors='replace')
+        if last_message_path in message_files else '')
 
-    return (output_code, output_plans)
+    return (output_code, output_plans, final_message)
 
 
 def run_review_op(
@@ -521,13 +556,15 @@ def run_review_op(
     extra_code: TreeNode | dict[str, TreeNode] = {},
     cwd: str = '.',
     env: dict | None = None,
+    effort: str = 'high',
 ) -> CodexAgentOpNode:
     """
     Run `codex exec review` over the change from `old_code` to `new_code`.
 
     `codex exec review` is used rather than a plain `codex exec` prompt
-    because review mode reports findings in a fixed, machine-parseable format
-    (it overrides any output convention requested in the prompt).  Codex's own
+    because review mode reports findings in a fixed, machine-parseable format.
+    Its renderer preserves the overall_explanation field, where CRISP asks
+    for an explicit verdict. Codex's own
     sandbox is bypassed (it cannot start inside the CRISP sandbox).
 
     Review mode can only review a git diff.  The review runs in its own
@@ -544,9 +581,13 @@ def run_review_op(
     }
     if cfg.codex_login:
         inputs['codex_auth'] = _codex_auth_input()
+    extra_paths = set()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
+        if tree.files.keys() & (old_code.files.keys() | new_code.files.keys()):
+            raise CrispError('review context overlaps candidate files')
         inputs[name] = Input(tree)
+        extra_paths.update(tree.files)
 
     setup_cmds = [
         ['git', 'init', '--quiet'],
@@ -559,6 +600,14 @@ def run_review_op(
         # `$GIT_WORK_TREE` set will compare the committed state against `.`,
         # thus comparing the old code to the new code.
         ['env', 'GIT_WORK_TREE=crisp_old_code', 'git', 'add', '--all'],
+    ]
+    # Keep the original sources/tests at their normal paths, as in the
+    # planner and worker. Include them in the baseline so they are context,
+    # not untracked candidate additions. No second checkout is needed.
+    if extra_paths:
+        setup_cmds.append(
+            ['git', '--literal-pathspecs', 'add', '--force', '--', *sorted(extra_paths)])
+    setup_cmds += [
         ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
         # Old files are no longer needed.
         ['rm', '-rf', 'crisp_old_code'],
@@ -572,9 +621,9 @@ def run_review_op(
         '--dangerously-bypass-approvals-and-sandbox',
         # Structured events let us verify the reviewer ran commands.
         '--json',
-        '--output-last-message', last_message_path,
+        '--output-last-message', os.path.relpath(last_message_path, cwd),
         prompt,
-    ], model=model)
+    ], model=model, effort=effort)
 
     n_op, outputs = run_agent(
         cfg, mvir,

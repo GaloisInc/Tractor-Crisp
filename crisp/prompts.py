@@ -15,6 +15,8 @@ AGENT_REPLAN = _prompt('agent_replan.md')
 
 AGENT_SAFETY_REVIEW = _prompt('safety_review.md')
 
+AGENT_WARNING_CLEANUP = _prompt('warning_cleanup.md')
+
 # Prose statement of the gates `check-unsafe2` enforces; update it
 # alongside any checker gate change.
 CHECKER_RULES = _prompt('checker_rules.md').strip()

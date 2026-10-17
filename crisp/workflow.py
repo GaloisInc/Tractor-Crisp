@@ -1289,6 +1289,44 @@ class Workflow:
         return new_ffi_defs
 
     @step
+    def agent_warning_cleanup(self, n_code: TreeNode, n_c_code: TreeNode) -> TreeNode:
+        """Keep one cleanup only if it reduces warnings and passes tests and safety review."""
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        def warnings(code):
+            check = self.cargo_check_json_op(code)
+            if not check.passed:
+                raise CrispError('warning cleanup build failed', check)
+            return [item['message']['rendered']
+                for item in mvir.node(check.json).body_json()
+                if item.get('reason') == 'compiler-message'
+                    and item['message']['level'] == 'warning']
+
+        before = warnings(n_code)
+        if not before:
+            return n_code
+        diagnostics = TreeNode.new(mvir, files={
+            'COMPILER_WARNINGS.txt': FileNode.new(mvir, '\n'.join(before)).node_id()})
+        prompt = prompts.AGENT_WARNING_CLEANUP.format(
+            cargo_dir_path = cargo_dir,
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        candidate, _, _ = agent.run_rewrite(cfg, mvir, prompt, cfg.models.agent_warning_cleanup,
+            n_code, extra_code={'c_code': n_c_code, 'warnings': diagnostics},
+            clean_cmds=[['cargo', 'clean', '--manifest-path',
+                os.path.join(cargo_dir, 'Cargo.toml')]],
+            effort='xhigh')
+        if (candidate.node_id() == n_code.node_id()
+                or len(warnings(candidate)) >= len(before)):
+            return n_code
+        # Cleanup output is the safety loop's baseline, so the unsafe checker doesn't apply.
+        if not self.test(candidate, n_c_code):
+            return n_code
+        if not self.do_safety_review(n_code, candidate, n_c_code, None)[0]:
+            return n_code
+        return candidate
+
+    @step
     def agent_safety(
         self,
         n_code: TreeNode,
@@ -1379,7 +1417,7 @@ class Workflow:
         n_old_code: TreeNode,
         n_new_code: TreeNode,
         n_c_code: TreeNode | None,
-        n_op_unsafe: CheckUnsafe2AnalysisNode,
+        n_op_unsafe: CheckUnsafe2AnalysisNode | None,
     ) -> CodexReviewAnalysisNode:
         cfg, mvir = self.cfg, self.mvir
         reference_instruction = (
@@ -1394,7 +1432,8 @@ class Workflow:
         prompt = prompts.AGENT_SAFETY_REVIEW.format(
             cargo_dir_path = cfg.relative_path(cfg.transpile.output_dir),
             reference_instruction = reference_instruction,
-            checker_findings = analysis.check_unsafe2_findings(n_op_unsafe) or '(none)',
+            checker_findings = (n_op_unsafe is not None
+                and analysis.check_unsafe2_findings(n_op_unsafe)) or '(none)',
             safety_review_rules = prompts.SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         prompt = FileNode.new(mvir, prompt)
@@ -1407,7 +1446,7 @@ class Workflow:
         n_old_code: TreeNode,
         n_new_code: TreeNode,
         n_c_code: TreeNode | None,
-        n_op_unsafe: CheckUnsafe2AnalysisNode,
+        n_op_unsafe: CheckUnsafe2AnalysisNode | None,
     ) -> tuple[bool, str | None]:
         """Review every changed candidate that passed the mechanical gates."""
         if n_old_code.node_id() == n_new_code.node_id():

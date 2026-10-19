@@ -348,6 +348,8 @@ pub struct FunctionOutputs {
 pub struct TypeOutputs {
     /// Name of the file that contains this type.
     pub filename: String,
+    /// Size of the type definition in lines of code.
+    pub size: usize,
 
     /// Progress: a field of this type contains a raw pointer.
     ///
@@ -415,7 +417,7 @@ impl FunctionOutputs {
 impl TypeOutputs {
     fn total_unsafe(&self) -> usize {
         let TypeOutputs {
-            filename: _,
+            filename: _, size: _,
             // Progress, not safety
             field_contains_raw_ptr: _,
         } = *self;
@@ -773,8 +775,10 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
 
     for td in crate_type_defs(tcx) {
         let key: String = scrub_crate_name(td.name());
+        let lines = td.span().get_lines();
         let value = TypeOutputs {
             filename: td.span().get_filename(),
+            size: lines.end_line + 1 - lines.start_line,
             field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),
         };
         out.total_unsafe += value.total_unsafe();

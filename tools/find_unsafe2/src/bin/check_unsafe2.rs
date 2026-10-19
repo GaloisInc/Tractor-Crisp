@@ -75,6 +75,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
 
     let empty_type = TypeOutputs {
         filename: String::new(),
+        size: 0,
         field_contains_raw_ptr: IndexMap::new(),
     };
     for (type_name, new_type) in types {
@@ -138,7 +139,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
 
 fn check_type_outputs(name: &str, old: &TypeOutputs, new: &TypeOutputs) -> bool {
     let TypeOutputs {
-        filename: _,
+        filename: _, size: _,
         ref field_contains_raw_ptr,
     } = *new;
     let mut ok = true;

@@ -1,13 +1,25 @@
 from pathlib import Path
 import re
 
+from jinja2 import Environment, FileSystemLoader
 
 _PROMPT_DIR = Path(__file__).parent / 'prompts'
+
 def _prompt(name: str) -> str:
     """
     Load a prompt from `crisp/prompts/{name}`.
     """
     return (_PROMPT_DIR / name).read_text()
+
+
+jinja_env = Environment(
+    loader = FileSystemLoader(str(_PROMPT_DIR)),
+    autoescape = False,
+    keep_trailing_newline = True,
+    trim_blocks = True,
+    lstrip_blocks = True,
+)
+
 
 AGENT_PLAN = _prompt('agent_plan.md')
 

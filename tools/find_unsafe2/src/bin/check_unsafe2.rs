@@ -31,6 +31,7 @@ fn check_outputs(old: &Outputs, new: &Outputs) -> bool {
     let empty_fn = FunctionOutputs {
         total_unsafe: 0,
         filename: String::new(),
+        size: 0,
         is_unsafe_fn: false,
         is_mut_static: false,
         derefs_raw_ptr: 0,
@@ -96,7 +97,7 @@ fn check_function_outputs(name: &str, old: &FunctionOutputs, new: &FunctionOutpu
     let FunctionOutputs {
         // Don't check the total.  Each element that feeds into this total is checked individually.
         total_unsafe: _,
-        filename: _,
+        filename: _, size: _,
         is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
         ref uses_static_mut, ref uses_union_field, ref uses_foreign_fn, ref uses_ffi_entry_point,
         casts_int_to_ptr, sig_contains_raw_ptr,

@@ -705,6 +705,7 @@ class CodexAgentOpNode(Node):
     # Codex stats
     call_duration_sec: Metadata[float]
     output_tokens: Metadata[int]
+    agent_logs: Metadata[list[dict[str, Any]]]
 
     inputs = property(lambda self: self._metadata['inputs'])
     outputs = property(lambda self: self._metadata['outputs'])
@@ -714,6 +715,7 @@ class CodexAgentOpNode(Node):
     json_session = property(lambda self: self._metadata['json_session'])
     call_duration_sec = property(lambda self: self._metadata['call_duration_sec'])
     output_tokens = property(lambda self: self._metadata['output_tokens'])
+    agent_logs = property(lambda self: self._metadata['agent_logs'])
 
     old_code = property(lambda self: self.inputs['code'])
     new_code = property(lambda self: self.outputs['code'])

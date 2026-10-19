@@ -240,6 +240,7 @@ def run_agent(
 
     codex_call_duration_sec = 0.
     codex_output_tokens = 0
+    codex_agent_logs = []
 
     with run_sandbox(cfg, mvir) as sb:
         gitignore_lines = [
@@ -315,6 +316,7 @@ def run_agent(
                         event = json.loads(line)
                         if not isinstance(event, dict):
                             continue
+                        codex_agent_logs.append(event)
                         if event.get('type') == 'turn.completed' and 'usage' in event:
                             codex_output_tokens += (event['usage'].get('output_tokens', 0) + event['usage'].get('reasoning_output_tokens', 0))
                     except json.decoder.JSONDecodeError:
@@ -385,6 +387,7 @@ def run_agent(
         body = logs if logs is not None else b'',
         call_duration_sec = codex_call_duration_sec,
         output_tokens = codex_output_tokens,
+        agent_logs = codex_agent_logs,
     )
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)

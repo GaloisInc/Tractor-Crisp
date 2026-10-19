@@ -281,10 +281,24 @@ def do_main(args, cfg):
 def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # Look up the node which produced `n_code` and return the planning files for that step.
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
-    matches = [
-        ie for ie in mvir.index(n_code.node_id())
-        if ie.kind == CodexAgentOpNode.KIND and ie.key == 'new_code'
-    ]
+    matches = []
+    for ie in mvir.index(n_code.node_id()):
+        # Look for a `CodexAgentOpNode` with `n_code` as the output code and
+        # nonempty output `planning_files`.
+        if ie.kind != CodexAgentOpNode.KIND or ie.key != 'outputs':
+            continue
+        op_node = mvir.node(ie.node_id)
+        if op_node.outputs.get('code') != n_code.node_id():
+            continue
+        plans_id = op_node.outputs.get('plans')
+        if plans_id is None:
+            continue
+        plans = mvir.node(plans_id)
+        if len(plans.files) == 0:
+            continue
+        # All checks passed - this is a valid candidate.
+        matches.append(ie)
+
 
     match matches:
         case [ie]:
@@ -534,6 +548,13 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     unsafe_count = w.count_unsafe2(n_code)
     print('final unsafe count = %d' % unsafe_count)
     print('final test exit code = %d' % n_op_test.exit_code)
+    if n_op_test.exit_code != 0:
+        status = 'TEST_FAILED'
+    elif unsafe_count != 0:
+        status = 'BUDGET_EXHAUSTED'
+    else:
+        status = 'COMPLETE_SAFE'
+    print('status: %s' % status)
 
 
 class PickTarget:
@@ -616,7 +637,7 @@ def pick_file_and_list_targets(w, n_code):
     for n_json_file in w.find_unsafe2_json_files(n_code):
         j = n_json_file.body_json()
         for fn_name, j_fn in j['fns'].items():
-            if j_fn['total_unsafe'] == 0 or j_fn['is_ffi_entry_point']:
+            if j_fn['total_unsafe'] == 0 or j_fn.get('ffi_symbol') is not None:
                 continue
             files[j_fn['filename']].functions.append(AgentTargetFunction(fn_name))
         for type_name, j_type in j['types'].items():

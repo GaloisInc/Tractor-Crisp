@@ -13,6 +13,7 @@ use std::hash::Hash;
 use std::ops::ControlFlow;
 use std::path::Path;
 use indexmap::IndexMap;
+use regex::Regex;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
@@ -671,6 +672,15 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
         Some(rustc_internal::stable(expn.def_site))
     };
 
+    let crate_name_str = rustc_public::local_crate().name.to_string();
+    let crate_name_regex = Regex::new(
+        &format!(r"([^:a-zA-Z0-9_]|^){crate_name_str}([^a-zA-Z0-9_]|$)"),
+    ).unwrap();
+    let scrub_crate_name = |s: String| -> String {
+        // Append `$2` to avoid deleting the non-ident character after the crate name.
+        crate_name_regex.replace(&s, "crate$2").into_owned()
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -684,7 +694,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
-            let key: String = item.name();
+            let key: String = scrub_crate_name(item.name());
             let value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
@@ -715,7 +725,8 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
             // Record all closure->parent relationships here.  Additional filtering is applied
             // below when doing the actual folding of closure metrics into parents.
             if let Some(parent) = closure_parent(item) {
-                rollup_map.insert(key.clone(), parent.name());
+                let parent_name = scrub_crate_name(parent.name());
+                rollup_map.insert(key.clone(), parent_name);
             }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());

@@ -808,10 +808,7 @@ class Workflow:
 
     @step
     def count_unsafe2(self, n_code: TreeNode) -> int:
-        n_json = self.find_unsafe2_json(n_code)
-        total = 0
-        for n_json_file in self.find_unsafe2_json_files(n_code):
-            total += n_json_file.body_json()['total_unsafe']
+        total = sum(j['total_unsafe'] for j in self.find_unsafe2_json_dicts(n_code))
         print('%d unsafe operations remaining' % total)
         return total
 
@@ -820,10 +817,12 @@ class Workflow:
         n_op = self.find_unsafe2_op(n_code)
         return self.mvir.node(n_op.unsafe_json)
 
-    @step
     def find_unsafe2_json_files(self, n_code: TreeNode) -> list[FileNode]:
         n_json = self.find_unsafe2_json(n_code)
         return [self.mvir.node(file_id) for file_id in n_json.files.values()]
+
+    def find_unsafe2_json_dicts(self, n_code: TreeNode) -> list[dict]:
+        return [f.body_json() for f in self.find_unsafe2_json_files(n_code)]
 
     @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:

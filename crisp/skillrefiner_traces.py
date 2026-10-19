@@ -14,11 +14,21 @@ def get_output_text_from_agent_logs(
     get_command_execution: bool = False
 ) -> str:
     output_text = ""
+
     for event in agent_logs:
-        if "item" in event and event["item"].get("type") == "agent_message":
-            output_text += (event["item"].get("text", "") + "\n\n")
-        if "item" in event and get_command_execution and event["item"].get("type") == "command_execution":
-            output_text += (event["item"].get("command", "") + "\n\n")
+        item = event.get("item")
+
+        if item is None:
+            continue
+
+        if isinstance(item, list): # sometimes the dict `item` gets converted to a list of 2-element lists, so we have to convert it back to a dict
+            item = dict(item)
+
+        if item.get("type") == "agent_message":
+            output_text += (item.get("text", "") + "\n\n")
+        if get_command_execution and item.get("type") == "command_execution":
+            output_text += (item.get("command", "") + "\n\n")
+
     return output_text
 
 

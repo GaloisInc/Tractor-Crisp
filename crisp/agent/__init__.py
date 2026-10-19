@@ -441,6 +441,44 @@ def run_agent(
 
     return n_op, outputs
 
+def run_agent_for_workflow(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    inputs: dict[str, Input],
+    output_filters: dict[str, Callable[[str], bool]],
+    cwd: str = '.',
+    clean_cmds: list[list[str]] = [],
+    env: dict | None = None,
+    http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
+    codex_agents: Sequence[str] = (),
+    model: str | None = None,
+    effort: str = 'high',
+) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
+    inputs = inputs.copy()
+    if cfg.codex_login:
+        inputs['codex_auth'] = _codex_auth_input()
+    _add_codex_agent_inputs(inputs, codex_agents)
+
+    if model is None:
+        model = cfg.models.agent_loop
+    codex_cmd = _codex_command(cfg, 'exec', [
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+        prompt,
+    ], model=model, effort=effort)
+
+    return run_agent(
+        cfg, mvir,
+        inputs,
+        codex_cmd,
+        output_filters,
+        cwd = cwd,
+        clean_cmds = clean_cmds,
+        env = env,
+        http_build_app = http_build_app,
+    )
+
 def run_rewrite(
     cfg: Config,
     mvir: MVIR,

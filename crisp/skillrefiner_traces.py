@@ -72,7 +72,7 @@ def save_traces_individual_project(
     dataset_path: Path,
     repeats: int = 5,
     starting_node_tag: str = "current",
-    output_path: Path = Path(__file__).parent.parent / 'skillrefiner_artifacts/new.jsonl'
+    output_path: Path = Path(__file__).parent.parent / 'skillrefiner_artifacts/traces/new.jsonl'
 ):
     prompts = [prompt_path.read_text() for prompt_path in prompt_paths]
 

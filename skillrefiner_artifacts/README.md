@@ -1,10 +1,8 @@
 # SkillRefiner artifacts
 
-Documentation in this README is in reverse chronological order.
+## Traces
 
----
-
-## `20261019.jsonl`
+### `20261019.jsonl`
 Run using:
 ```python
 crisp.skillrefiner_traces.save_traces_individual_project(

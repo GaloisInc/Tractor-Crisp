@@ -16,3 +16,4 @@ crisp.skillrefiner_traces.save_traces_individual_project(
     starting_node_tag = "current"
 )
 ```
+Model used = GPT-5.6-terra

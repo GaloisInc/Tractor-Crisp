@@ -1,9 +1,35 @@
 #!/usr/bin/env python3
-"""Render a Codex JSONL session: python3 scripts/read_codex_log.py < log.json.
+"""
+Render a Codex JSONL session:
 
-Uses only the standard library and processes one record at a time. Response
-items are authoritative; duplicate UI events and runtime metadata are omitted.
-Encrypted content cannot be decoded and is represented by a placeholder.
+    python3 scripts/read_codex_log.py < log.json
+
+
+To read the logs of a `CodexAgentOpNode` `aabb1122`, run:
+
+    crisp show --body aabb1122.json_session | \
+        python3 /path/to/tractor-crisp/scripts/read_codex_log.py
+
+This is usually more readable than `crisp show --body aabb1122`, which shows
+the stdout/stderr from the `codex` run, because Codex often re-prints the same
+output (such as diffs or command results) many times during its run.
+
+
+If the previous command returns no output, then `aabb1122.json_session` may be
+empty because there were multiple session logs found in the agent sandbox (this
+happens when using subagents).  In this case, you can instead run this command
+to see all of the logs (among other outputs):
+
+    crisp show aabb1122.raw_output_files
+
+Output should include entries like:
+
+    '.codex/sessions/2026/10/21/rollout-2026-10-21T21-51-53-[...].jsonl': NodeId(ccdd3344...),
+
+You can then view the log with
+
+    crisp show --body ccdd3344 | \
+        python3 /path/to/tractor-crisp/scripts/read_codex_log.py
 """
 
 import argparse

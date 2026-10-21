@@ -8,6 +8,7 @@ Encrypted content cannot be decoded and is represented by a placeholder.
 
 import argparse
 import json
+import re
 import sys
 
 
@@ -32,8 +33,61 @@ def readable(content):
 
 
 def emit(role, text):
-    if text:
+    if text and text.strip() != "[encrypted reasoning unavailable]":
         print(f"<{role}>\n{text}\n")
+
+
+def tool_detail(item):
+    """Return a bounded preview; never execute code from a tool call."""
+    raw = item.get("arguments", item.get("input", ""))
+    if isinstance(raw, str):
+        try:
+            args = json.loads(raw)
+        except ValueError:
+            args = raw
+    else:
+        args = raw
+
+    detail = ""
+    if isinstance(args, dict):
+        for field in ("cmd", "command", "path", "file_path", "filename",
+                      "query", "url", "task_name", "target"):
+            if args.get(field):
+                value = args[field]
+                if isinstance(value, list):
+                    value = " ".join(map(str, value))
+                detail = f"{field}: {value}"
+                break
+        if not detail:
+            # Some tools wrap a patch or script in a JSON argument.
+            detail = str(args.get("patch", args.get("code", "")))
+    elif isinstance(args, str):
+        detail = args
+
+    # Prefer filenames over the body of an apply_patch request.
+    paths = re.findall(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", detail, re.M)
+    if paths:
+        detail = ", ".join(paths)
+    else:
+        # The exec wrapper often contains JavaScript invoking exec_command.
+        commands = []
+        for match in re.finditer(
+            r'''(?:["']?\b(?:cmd|command)["']?)\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')''',
+            detail,
+        ):
+            quoted = match.group(1)
+            try:
+                command = json.loads(quoted) if quoted.startswith('"') else quoted[1:-1]
+            except ValueError:
+                command = quoted[1:-1]
+            commands.append(command)
+        if commands:
+            detail = "; ".join(commands)
+
+    # Uncomment this to reduce tool call details to one line and truncate them.
+    #detail = " ".join(detail.split())
+    #return detail[:157] + "..." if len(detail) > 160 else detail
+    return detail
 
 
 class Formatter:
@@ -45,8 +99,8 @@ class Formatter:
         text = readable(item.get("content") or item.get("raw_content"))
         summary = readable(item.get("summary") or item.get("summary_text"))
         body = "\n".join(filter(None, (text, summary)))
-        if not body and item.get("encrypted_content"):
-            body = "[encrypted reasoning unavailable]"
+        if body.strip() == "[encrypted reasoning unavailable]":
+            return
         key = item.get("id")
         if body and (not key or key not in self.reasoning_ids):
             emit("assistant thinking", body)
@@ -85,7 +139,9 @@ class Formatter:
             namespace = item.get("namespace")
             if namespace:
                 name = f"{namespace}.{name}"
-            emit("assistant", f"[tool call: {name}]")
+            detail = tool_detail(item)
+            suffix = f" — {detail}" if detail else ""
+            emit("assistant", f"[tool call: {name}{suffix}]")
         elif kind.endswith("_call_output"):
             # The call itself is enough to show the interaction.
             pass

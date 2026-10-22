@@ -9,6 +9,7 @@ from crisp import agent, analysis, prompts
 from crisp.config import ModelsConfig
 from crisp.error import AgentQuotaError, CrispError
 from crisp.mvir import FileNode, MVIR, TreeNode
+from crisp.workflow import describe_c_sources
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -66,7 +67,7 @@ class CodexAgentProfilesTest(unittest.TestCase):
             agent._inject_codex_agents(object(), object(), ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
-        prompt = prompts.agent_plan('translated_rust')
+        prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR)
         for name in agent.PLANNING_CODEX_AGENTS:
             self.assertIn(f'`{name}`', prompt)
         self.assertIn('fork_turns="none"', prompt)
@@ -84,6 +85,32 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## Status', prompt)
         # The plan must not carry verification commands; the harness does.
         self.assertIn('the harness supplies all validation', prompt)
+        # The planner is pointed at the C code docs.
+        self.assertIn(f'`{agent.C_DOCS_DIR}/README.md`', prompt)
+        # The planner gets the C sources as well as the docs.
+        self.assertNotIn('not in the workspace', prompt)
+
+    def test_c_code_docs_prompt_formats(self):
+        prompt = prompts.c_code_docs(
+            docs_dir = agent.C_DOCS_DIR,
+            c_sources = '`lib/a.c`, `lib/a.h`')
+        self.assertIn(f'`{agent.C_DOCS_DIR}/README.md`', prompt)
+        self.assertIn(f'`{agent.C_DOCS_DIR}/TESTING.md`', prompt)
+        self.assertIn('`lib/a.c`, `lib/a.h`', prompt)
+
+    def test_describe_c_sources(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+            empty = FileNode.new(mvir, '').node_id()
+            paths = ['zlib.h', 'deflate.c', 'Makefile', 'test/example.c'] + \
+                [f'contrib/x{i}.c' for i in range(3)]
+            tree = TreeNode.new(mvir, files = {p: empty for p in paths})
+            # Root files first and listed by name; non-C files left out; big
+            # directories counted.
+            self.assertEqual(describe_c_sources(tree, max_listed = 2),
+                '`deflate.c`, `zlib.h`; 3 files under `contrib/`; `test/example.c`')
+            no_c = TreeNode.new(mvir, files = {'Makefile': empty})
+            self.assertEqual(describe_c_sources(no_c), 'none found')
 
 
 class QuotaErrorDetectionTest(unittest.TestCase):

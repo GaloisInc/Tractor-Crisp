@@ -221,6 +221,33 @@ def step(f):
     return g
 
 
+def describe_c_sources(n_c_code: TreeNode, max_listed: int = 30) -> str:
+    """
+    Summarize the C files in `n_c_code` for an agent prompt: the files of each
+    top-level directory are listed by name, or just counted if there are more
+    than `max_listed`.  (`cfg.src_globs` can't be used for this, since it
+    describes the transpiled Rust sources.)
+    """
+    groups = {}
+    for path in sorted(n_c_code.files):
+        p = Path(path)
+        if p.suffix not in ('.c', '.h'):
+            continue
+        top = p.parts[0] + '/' if len(p.parts) > 1 else ''
+        groups.setdefault(top, []).append(path)
+    if not groups:
+        return 'none found'
+    parts = []
+    # Root files first, then directories in order.
+    for top in sorted(groups, key = lambda t: (t != '', t)):
+        files = groups[top]
+        if len(files) <= max_listed:
+            parts.append(', '.join(f'`{f}`' for f in files))
+        else:
+            parts.append(f'{len(files)} files under `{top}`')
+    return '; '.join(parts)
+
+
 class Workflow:
     def __init__(self, cfg: Config, mvir: MVIR):
         self.cfg = cfg
@@ -1360,6 +1387,18 @@ class Workflow:
         return self.do_validate_and_repair(n_code, n_new_code, n_test_code)
 
     @step
+    def do_c_code_docs_agent(self, n_c_code: TreeNode) -> TreeNode:
+        cfg, mvir = self.cfg, self.mvir
+        prompt = prompts.c_code_docs(
+            docs_dir = agent.C_DOCS_DIR,
+            c_sources = describe_c_sources(n_c_code))
+        n_docs = agent.run_docs(cfg, mvir, prompt, cfg.models.agent_plan,
+            n_c_code, op_label = 'c_code_docs')
+        if len(n_docs.files) == 0:
+            print(f'warning: agent wrote no C code docs under {agent.C_DOCS_DIR}/')
+        return n_docs
+
+    @step
     def do_safety_plan_agent(
         self,
         n_code: TreeNode,
@@ -1369,21 +1408,27 @@ class Workflow:
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
         extra_code = {}
+        n_c_docs = None
         if n_test_code is not None:
             # In planning mode, we do provide the entire C code to the planner
-            # since that might increase the quality of the plan. However, if
-            # we later run the safety loop in `agent_sim_no_tests` mode the
-            # safety agent will not have access to the C code, and the plan
-            # might contain references to it. This might confuse the agent and
-            # break the `agent_sim_no_tests` mode.
+            # since that might increase the quality of the plan, along with
+            # docs written from it.  The docs are passed in as planning files,
+            # so they end up in the planner's `plans` output and carry over to
+            # later steps.  However, if we later run the safety loop in
+            # `agent_sim_no_tests` mode the safety agent will not have access
+            # to the C code, and the plan might contain references to it; it
+            # still sees the docs (including their description of the tests).
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
+            n_c_docs = self.do_c_code_docs_agent(n_test_code)
 
-        prompt = prompts.agent_plan(cargo_dir_path = cargo_dir)
+        prompt = prompts.agent_plan(
+            cargo_dir_path = cargo_dir,
+            c_docs_dir = agent.C_DOCS_DIR)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),
-            planning_files = None,
+            planning_files = n_c_docs,
             effort = 'high',
             codex_agents=agent.PLANNING_CODEX_AGENTS,
             clean_cmds = [

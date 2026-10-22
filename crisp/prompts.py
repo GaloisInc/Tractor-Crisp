@@ -193,11 +193,20 @@ def agent_target_function(
     )
 
 
-def agent_plan(cargo_dir_path: str) -> str:
+def agent_plan(cargo_dir_path: str, c_docs_dir: str) -> str:
     """Render the agent plan prompt with the FFI entry point rules."""
     return jinja_env.get_template('agent_plan.jinja').render(
         cargo_dir_path = cargo_dir_path,
+        c_docs_dir = c_docs_dir,
         ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
+    )
+
+
+def c_code_docs(docs_dir: str, c_sources: str) -> str:
+    """Render the prompt for documenting the original C code base."""
+    return jinja_env.get_template('c_code_docs.jinja').render(
+        docs_dir = docs_dir,
+        c_sources = c_sources,
     )
 
 

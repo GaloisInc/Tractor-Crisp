@@ -33,6 +33,10 @@ PLANNING_CODEX_AGENTS = (
     'strings_analyst',
 )
 
+# Sandbox-relative directory holding the agent-written docs for the original C
+# code.  These are carried along with the planning files.
+C_DOCS_DIR = 'crisp_docs'
+
 # Print the warning in red so it stands out
 WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
     "the sandbox and could theoretically be leaked " \
@@ -273,6 +277,7 @@ def run_agent(
     clean_cmds: list[list[str]] = [],
     env: dict | None = None,
     http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
+    op_label: str | None = None,
 ) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
     """
     Run the agent on some input files to produce some outputs.
@@ -308,6 +313,8 @@ def run_agent(
     - cwd: Working directory (relative to sandbox root) used for all commands.
     - http_build_app: If set, this will be called to set up an HTTP API that
       will be available to the agent while it runs.
+    - op_label: If set, appended to the op kind in the `op_history` reflog
+      entry, to tell this op apart from other agent runs.
     """
 
     if env is None:
@@ -433,7 +440,8 @@ def run_agent(
         body = logs if logs is not None else b'',
     )
     # Record operations and timestamps in the `op_history` reflog.
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    reason = n_op.kind if op_label is None else f'{n_op.kind} {op_label}'
+    mvir.set_tag('op_history', n_op.node_id(), reason)
 
     if n_op.exit_code != 0:
         raise CrispError(
@@ -498,7 +506,8 @@ def run_rewrite(
             'code': lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
-                and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+                and (Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md')
+                    or p.startswith(C_DOCS_DIR + '/')),
         },
         cwd = cwd,
         clean_cmds = clean_cmds,
@@ -510,6 +519,44 @@ def run_rewrite(
     output_plans = outputs['plans']
 
     return (output_code, output_plans)
+
+
+def run_docs(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    model: str,
+    c_code: TreeNode,
+    effort: str = 'high',
+    op_label: str | None = None,
+) -> TreeNode:
+    """
+    Run the agent over `c_code` to document it.  Returns the files the agent
+    wrote under `C_DOCS_DIR`.
+    """
+    inputs = {
+        'c_code': Input(c_code),
+    }
+    if cfg.codex_login:
+        inputs['codex_auth'] = _codex_auth_input()
+
+    codex_cmd = _codex_command(cfg, 'exec', [
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+        prompt,
+    ], model=model, effort=effort)
+
+    n_op, outputs = run_agent(
+        cfg, mvir,
+        inputs,
+        codex_cmd,
+        {
+            'docs': lambda p: p.startswith(C_DOCS_DIR + '/'),
+        },
+        op_label = op_label,
+    )
+
+    return outputs['docs']
 
 
 def run_review_op(

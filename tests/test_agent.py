@@ -1,9 +1,12 @@
+import tempfile
 import tomllib
 import unittest
 from unittest.mock import patch
 
 from crisp import agent, prompts
 from crisp.error import CrispError
+from crisp.mvir import FileNode, MVIR, TreeNode
+from crisp.workflow import describe_c_sources
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -78,6 +81,32 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## Status', prompts.AGENT_PLAN)
         # The plan must not carry verification commands; the harness does.
         self.assertIn('the harness supplies all validation', prompts.AGENT_PLAN)
+        # The planner is pointed at the C code docs.
+        self.assertIn('`{c_docs_dir}/README.md`', prompts.AGENT_PLAN)
+        # The planner gets the C sources as well as the docs.
+        self.assertNotIn('not in the workspace', prompts.AGENT_PLAN)
+
+    def test_c_code_docs_prompt_formats(self):
+        prompt = prompts.AGENT_C_CODE_DOCS.format(
+            docs_dir = agent.C_DOCS_DIR,
+            c_sources = '`lib/a.c`, `lib/a.h`')
+        self.assertIn(f'`{agent.C_DOCS_DIR}/README.md`', prompt)
+        self.assertIn(f'`{agent.C_DOCS_DIR}/TESTING.md`', prompt)
+        self.assertIn('`lib/a.c`, `lib/a.h`', prompt)
+
+    def test_describe_c_sources(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+            empty = FileNode.new(mvir, '').node_id()
+            paths = ['zlib.h', 'deflate.c', 'Makefile', 'test/example.c'] + \
+                [f'contrib/x{i}.c' for i in range(3)]
+            tree = TreeNode.new(mvir, files = {p: empty for p in paths})
+            # Root files first and listed by name; non-C files left out; big
+            # directories counted.
+            self.assertEqual(describe_c_sources(tree, max_listed = 2),
+                '`deflate.c`, `zlib.h`; 3 files under `contrib/`; `test/example.c`')
+            no_c = TreeNode.new(mvir, files = {'Makefile': empty})
+            self.assertEqual(describe_c_sources(no_c), 'none found')
 
 
 if __name__ == '__main__':

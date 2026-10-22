@@ -1,6 +1,8 @@
 Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{cargo_dir_path}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
 
-This is a planning-only step.  Do not modify, create, rename, or delete any source files; your only output is `SAFETY_PLAN.md` at the repository root.
+This is a planning-only step.  Do not modify, create, rename, or delete any source files or anything under `{c_docs_dir}/`; your only output is `SAFETY_PLAN.md` at the repository root.
+
+If `{c_docs_dir}/` is present, it documents the original C code base: a module map and walkthrough, design decisions, data structures, memory ownership, concurrency, portability, performance, and testing.  Start at `{c_docs_dir}/README.md` and read the relevant parts before planning.  The original C sources may also be in the workspace; consult them where the docs fall short.  If they are, the agents executing the plan normally have them too, so the plan may refer to them.
 
 # How the plan will be used
 
@@ -24,8 +26,9 @@ Use the following read-only custom sub-agents, one per independent analysis lens
 
 Spawn exactly one fresh instance of each named agent with `fork_turns="none"`.  Each agent already carries its lens instructions and the shared constraints (`.codex/safety_constraints.md`); keep spawn messages short, containing only the run-specific facts:
 - the Rust project path: `{cargo_dir_path}`;
-- the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`; and
-- whether the original C sources are present in the workspace, and where.
+- the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`;
+- whether the original C sources are present in the workspace, and where; and
+- whether docs for the original C code are present in `{c_docs_dir}/`.
 
 Wait for all agents to finish.  If an agent fails or returns an unusably thin report, note the gap and proceed with the remaining reports.  Reconcile overlaps, dependencies, and disagreements between the reports rather than concatenating them.  Cross-check coverage against the inventory: every file with unsafe findings must be covered by exactly one cluster in the plan.  Then have only the parent agent write `SAFETY_PLAN.md`; do not delegate the writing.
 

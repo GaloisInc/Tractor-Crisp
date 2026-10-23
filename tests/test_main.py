@@ -1,12 +1,15 @@
 import contextlib
 import io
+import os
 from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from crisp import llm
 from crisp.__main__ import (
-    FuelLimits, parse_args, prior_agent_plans, safety_loop_common)
+    FuelLimits, check_codex_login_fallback, parse_args, prior_agent_plans,
+    safety_loop_common)
 from crisp.error import AgentQuotaError
 from crisp.mvir import CodexAgentOpNode, FileNode, MVIR, TreeNode
 from crisp.workflow import FuelCounter
@@ -67,6 +70,37 @@ class SafetyLoopQuotaTest(unittest.TestCase):
         # Other errors are retried, but this one would just fail again.
         self.assertEqual(len(steps), 1)
         self.assertIn('status: API_QUOTA_EXHAUSTED', out.getvalue())
+
+
+class CodexLoginFallbackCheckTest(unittest.TestCase):
+    def cfg(self, **kwargs):
+        return SimpleNamespace(**{'codex_login': True, 'codex_login_fallback': True, **kwargs})
+
+    def test_disabled_fallback_needs_nothing(self):
+        with patch.dict(os.environ, {}, clear = True):
+            check_codex_login_fallback(self.cfg(codex_login_fallback = False))
+
+    def test_requires_codex_login_and_api_key(self):
+        with patch.dict(os.environ, {'CRISP_API_KEY': 'sk-test'}, clear = True):
+            with self.assertRaisesRegex(SystemExit, 'requires --codex-login'):
+                check_codex_login_fallback(self.cfg(codex_login = False))
+        with patch.dict(os.environ, {}, clear = True):
+            with self.assertRaisesRegex(SystemExit, 'requires CRISP_API_KEY'):
+                check_codex_login_fallback(self.cfg())
+        with patch.dict(os.environ, {'CRISP_API_KEY': ''}, clear = True):
+            with self.assertRaisesRegex(SystemExit, 'requires CRISP_API_KEY'):
+                check_codex_login_fallback(self.cfg())
+        with patch.dict(os.environ, {'CRISP_API_KEY': 'sk-test',
+                'CRISP_API_BASE': 'https://api.openai.com/v1'}, clear = True):
+            check_codex_login_fallback(self.cfg())
+
+    def test_empty_api_base_is_rejected(self):
+        # `llm.API_BASE` is read at import time, so set it directly.
+        with patch.dict(os.environ, {'CRISP_API_KEY': 'sk-test',
+                'CRISP_API_BASE': ''}, clear = True), \
+                patch.object(llm, 'API_BASE', ''):
+            with self.assertRaisesRegex(SystemExit, 'CRISP_API_BASE'):
+                check_codex_login_fallback(self.cfg())
 
 
 if __name__ == '__main__':

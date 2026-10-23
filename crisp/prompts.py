@@ -13,6 +13,8 @@ AGENT_PLAN = _prompt('agent_plan.md')
 
 AGENT_C_CODE_DOCS = _prompt('c_code_docs.md')
 
+AGENT_RUST_REIMPL_PLAN = _prompt('rust_reimpl_plan.md')
+
 AGENT_FFI_REVIEW = _prompt('ffi_review.md')
 
 FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()

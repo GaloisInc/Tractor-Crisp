@@ -2,7 +2,7 @@ Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{carg
 
 This is a planning-only step.  Do not modify, create, rename, or delete any source files or anything under `{c_docs_dir}/`; your only output is `SAFETY_PLAN.md` at the repository root.
 
-If `{c_docs_dir}/` is present, it documents the original C code base: a module map and walkthrough, design decisions, data structures, memory ownership, concurrency, portability, performance, and testing.  Start at `{c_docs_dir}/README.md` and read the relevant parts before planning.  The original C sources may also be in the workspace; consult them where the docs fall short.  If they are, the agents executing the plan normally have them too, so the plan may refer to them.
+If `{c_docs_dir}/` is present, it documents the original C code base: a module map and walkthrough, design decisions, data structures, memory ownership, concurrency, portability, performance, and testing.  Start at `{c_docs_dir}/README.md` and read the relevant parts before planning.  The original C sources may also be in the workspace; consult them where the docs fall short.  If they are, the agents executing the plan normally have them too, so the plan may refer to them.  `{rust_reimpl_plan_path}`, if present, plans a separate from-scratch Rust reimplementation of the project.  You may borrow its target types, ownership model, and module boundaries where they fit, but this migration refactors the existing Rust code in place: do not adopt its from-scratch approach.
 
 # How the plan will be used
 

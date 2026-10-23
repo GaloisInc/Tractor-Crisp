@@ -108,6 +108,23 @@ class CodexAgentProfilesTest(unittest.TestCase):
             no_c = TreeNode.new(mvir, files = {'Makefile': empty})
             self.assertEqual(describe_c_sources(no_c), 'none found')
 
+    def test_rust_reimpl_plan_prompt_formats(self):
+        prompt = prompts.AGENT_RUST_REIMPL_PLAN.format(
+            plan_path = agent.RUST_REIMPL_PLAN_PATH,
+            sources = '- SOURCE LIST',
+            ffi_entry_point_rules = 'FFI RULES')
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', prompt)
+        self.assertIn('- SOURCE LIST', prompt)
+        # The migration section is planned under the safety loop's FFI rules.
+        self.assertIn('FFI RULES', prompt)
+        self.assertIn('## C ABI shim', prompt)
+        self.assertIn('## Milestones', prompt)
+        # The plan is also the safety migration's target design.
+        self.assertIn('## Migration from the C2Rust translation', prompt)
+        # The plan lives with the docs, so it carries over with them.
+        self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
+        self.assertIn('`{rust_reimpl_plan_path}`', prompts.AGENT_PLAN)
+
 
 if __name__ == '__main__':
     unittest.main()

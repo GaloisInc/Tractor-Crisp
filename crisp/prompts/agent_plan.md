@@ -1,8 +1,19 @@
-Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{cargo_dir_path}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{cargo_dir_path}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.  If a Rust reimplementation plan is present (see below), its design refines this goal state.
 
 This is a planning-only step.  Do not modify, create, rename, or delete any source files or anything under `{c_docs_dir}/`; your only output is `SAFETY_PLAN.md` at the repository root.
 
-If `{c_docs_dir}/` is present, it documents the original C code base: a module map and walkthrough, design decisions, data structures, memory ownership, concurrency, portability, performance, and testing.  Start at `{c_docs_dir}/README.md` and read the relevant parts before planning.  The original C sources may also be in the workspace; consult them where the docs fall short.  If they are, the agents executing the plan normally have them too, so the plan may refer to them.  `{rust_reimpl_plan_path}`, if present, plans a separate from-scratch Rust reimplementation of the project.  You may borrow its target types, ownership model, and module boundaries where they fit, but this migration refactors the existing Rust code in place: do not adopt its from-scratch approach.
+If `{c_docs_dir}/` is present, it documents the original C code base: a module map and walkthrough, design decisions, data structures, memory ownership, concurrency, portability, performance, and testing.  Start at `{c_docs_dir}/README.md` and read the relevant parts before planning.  The original C sources may also be in the workspace; consult them where the docs fall short.  If they are, the agents executing the plan normally have them too, so the plan may refer to them.
+
+# The reimplementation plan as target
+
+`{rust_reimpl_plan_path}`, if present, plans a from-scratch reimplementation of the project in safe, idiomatic Rust, with a C ABI shim for existing callers.  Read all of it, starting with its `## Migration from the C2Rust translation` section, which maps this code's structs and functions to the target design and separates what in-place refactoring can reach from what applies only to a from-scratch build.  It describes the design this code would have if written from scratch, so treat it as both inspiration and the target for this migration's end state: when choosing safe types, ownership and borrowing, error handling, callback and concurrency models, and module boundaries, converge on its design wherever that is reachable from the existing code.
+
+The migration still refactors the existing Rust code in place, in small, behavior-preserving steps.  These take precedence over the reimplementation plan:
+- the FFI entry point rules below, which are immutable; the reimplementation plan's C ABI shim corresponds to the FFI entry points here;
+- the dependency policy (see Conventions): reach the target design incrementally, never by rewriting a module from scratch; and
+- the existing code's externally visible behavior.
+
+Where its design conflicts with these, or cannot be reached incrementally, plan the closest reachable design and record the deviation and why.  Do not copy the reimplementation plan into `SAFETY_PLAN.md`; executing agents can read it, so refer to its sections and milestones by heading.
 
 # How the plan will be used
 
@@ -27,8 +38,9 @@ Use the following read-only custom sub-agents, one per independent analysis lens
 Spawn exactly one fresh instance of each named agent with `fork_turns="none"`.  Each agent already carries its lens instructions and the shared constraints (`.codex/safety_constraints.md`); keep spawn messages short, containing only the run-specific facts:
 - the Rust project path: `{cargo_dir_path}`;
 - the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`;
-- whether the original C sources are present in the workspace, and where; and
-- whether docs for the original C code are present in `{c_docs_dir}/`.
+- whether the original C sources are present in the workspace, and where;
+- whether docs for the original C code are present in `{c_docs_dir}/`; and
+- whether the reimplementation plan is present at `{rust_reimpl_plan_path}`, which the agent should use as the target design for its lens.
 
 Wait for all agents to finish.  If an agent fails or returns an unusably thin report, note the gap and proceed with the remaining reports.  Reconcile overlaps, dependencies, and disagreements between the reports rather than concatenating them.  Cross-check coverage against the inventory: every file with unsafe findings must be covered by exactly one cluster in the plan.  Then have only the parent agent write `SAFETY_PLAN.md`; do not delegate the writing.
 
@@ -37,8 +49,8 @@ Wait for all agents to finish.  If an agent fails or returns an unusably thin re
 `SAFETY_PLAN.md` must contain exactly these four sections:
 
 1. `## FFI entry point rules` -- the rules block below, copied verbatim and marked as immutable.
-2. `## Conventions` -- the crate-wide decisions every step must follow: standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them.  Also state the dependency policy: a Rust crate may replace a dependency of the original C project (with one line of justification), but must never replace the project under migration itself, in whole or in module-sized parts.
-3. `## Cluster guide` -- the codebase partitioned into dependency-ordered clusters (a module or data-structure family plus the functions around it).  For each cluster: the files it covers; prerequisites (clusters or conventions that must land first); a table mapping each struct field that contains raw pointers to its recommended safe type with a one-line rationale; the key functions and how they change; pitfalls and risky edge cases; and semantic done-criteria.  Group same-shaped migrations into a single unit: if migrating `f` to `String` implies the same change in `g`, plan them together.
+2. `## Conventions` -- the crate-wide decisions every step must follow: standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them.  Also state the dependency policy: a Rust crate may replace a dependency of the original C project (with one line of justification), but must never replace the project under migration itself, in whole or in module-sized parts.  If the reimplementation plan is present, align these decisions with its design and list each deliberate deviation with a one-line reason.
+3. `## Cluster guide` -- the codebase partitioned into dependency-ordered clusters (a module or data-structure family plus the functions around it).  For each cluster: the files it covers; prerequisites (clusters or conventions that must land first); a table mapping each struct field that contains raw pointers to its recommended safe type with a one-line rationale; the key functions and how they change; pitfalls and risky edge cases; the matching sections or milestones of the reimplementation plan, if present, and where the cluster's target deviates from them; and semantic done-criteria.  Group same-shaped migrations into a single unit: if migrating `f` to `String` implies the same change in `g`, plan them together.
 4. `## Status` -- the working log.  Initialize it with "no work started" plus the recommended first units; executing instances append what they did, what is in flight, and dead ends to avoid.
 
 # FFI entry point rules (copy verbatim into the plan)

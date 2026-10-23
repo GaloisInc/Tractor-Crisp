@@ -121,9 +121,12 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## Milestones', prompt)
         # The plan is also the safety migration's target design.
         self.assertIn('## Migration from the C2Rust translation', prompt)
+        # The safety planner is pointed at the section written for it.
+        self.assertIn('## Migration from the C2Rust translation', prompts.AGENT_PLAN)
         # The plan lives with the docs, so it carries over with them.
         self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
         self.assertIn('`{rust_reimpl_plan_path}`', prompts.AGENT_PLAN)
+        self.assertIn('# The reimplementation plan as target', prompts.AGENT_PLAN)
 
 
 if __name__ == '__main__':

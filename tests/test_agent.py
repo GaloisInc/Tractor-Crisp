@@ -127,8 +127,12 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## Migration from the C2Rust translation', prompt)
         # The plan lives with the docs, so it carries over with them.
         self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
-        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', prompts.agent_plan(
-            'translated_rust', agent.C_DOCS_DIR, agent.RUST_REIMPL_PLAN_PATH))
+        plan_prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR,
+            agent.RUST_REIMPL_PLAN_PATH)
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', plan_prompt)
+        self.assertIn('# The reimplementation plan as target', plan_prompt)
+        # The safety planner is pointed at the section written for it.
+        self.assertIn('## Migration from the C2Rust translation', plan_prompt)
 
 
 class QuotaErrorDetectionTest(unittest.TestCase):

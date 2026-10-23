@@ -350,18 +350,23 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
     matches = []
     for ie in mvir.index(n_code.node_id()):
-        # Look for a `CodexAgentOpNode` with `n_code` as the output code and
-        # nonempty output `planning_files`.
+        # Look for a successful `CodexAgentOpNode` with `n_code` as the output
+        # code and output `planning_files` that contain a plan.
         if ie.kind != CodexAgentOpNode.KIND or ie.key != 'outputs':
             continue
         op_node = mvir.node(ie.node_id)
         if op_node.outputs.get('code') != n_code.node_id():
             continue
+        # Failed ops are still recorded, possibly with partial outputs.
+        if op_node.exit_code != 0:
+            continue
         plans_id = op_node.outputs.get('plans')
         if plans_id is None:
             continue
         plans = mvir.node(plans_id)
-        if len(plans.files) == 0:
+        # The planning files may also hold other files, such as the C code
+        # docs, so check for the plan itself rather than for any files.
+        if not any(Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md') for p in plans.files):
             continue
         # All checks passed - this is a valid candidate.
         matches.append(ie)

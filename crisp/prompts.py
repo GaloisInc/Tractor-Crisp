@@ -111,11 +111,15 @@ def llm_repair_call_sites(
 
 
 def agent_safety(
+    c_docs_dir: str,
+    rust_reimpl_plan_path: str,
     target_goal: str,
     after_refactoring_instruction: str,
 ) -> str:
     """Render the agent safety prompt."""
     return jinja_env.get_template('agent_safety.jinja').render(
+        c_docs_dir = c_docs_dir,
+        rust_reimpl_plan_path = rust_reimpl_plan_path,
         target_goal = target_goal,
         after_refactoring_instruction = after_refactoring_instruction,
     )

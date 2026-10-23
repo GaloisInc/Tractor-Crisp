@@ -105,7 +105,8 @@ class PlanSizeTest(unittest.TestCase):
     def test_plan_and_step_prompts_share_status_layout(self):
         plan = prompts.agent_plan('translated_rust', 'crisp_docs',
             'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         for section in self.STATUS_SECTIONS:
             self.assertIn(f'`{section}`', plan)
             self.assertIn(f'`{section}`', step)
@@ -124,7 +125,8 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('unless an existing dead end already covers it', prompt)
         # Dead ends name the rule, not the function, so a variant of the
         # same mistake elsewhere is covered, and steps don't reword them.
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         self.assertIn('general rule', prompt)
         self.assertIn('general rule', step)
         plan = prompts.agent_plan('translated_rust', 'crisp_docs',
@@ -136,7 +138,8 @@ class PlanSizeTest(unittest.TestCase):
     def test_finished_clusters_are_collapsed(self):
         plan = prompts.agent_plan('translated_rust', 'crisp_docs',
             'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         self.assertIn('replace its Cluster guide entry with a one-line note', plan)
         self.assertIn("replace that cluster's Cluster guide entry with one line", step)
 

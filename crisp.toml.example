@@ -22,6 +22,15 @@ cargo build --manifest-path rust/Cargo.toml
 """
 
 
+# With `--codex-login`, use CRISP_API_KEY (and CRISP_API_BASE) while the codex
+# login is out of quota, switching back once the quota resets.  Also available
+# as the `--codex-login-fallback` flag.
+#codex_login_fallback = true
+# How often to try the login again when its quota has no known reset time,
+# e.g. a spend cap set by the workspace owner.
+#codex_login_probe_minutes = 30
+
+
 # Choose the models used by the different CRISP operations.
 [models]
 # Coordinates the planning analysts and writes the initial SAFETY_PLAN.md.

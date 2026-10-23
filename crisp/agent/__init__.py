@@ -3,7 +3,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import re
@@ -85,11 +85,11 @@ def _snapshot_to_family_alias(model: str) -> str:
     m = _SNAPSHOT_SUFFIX.match(model)
     return m.group("alias") if m else model
 
-def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, effort: str = 'high') -> list[str]:
+def _codex_command(subcmd: str, args: list[str], model: str,
+                   effort: str = 'high', use_login: bool = False) -> list[str]:
     cmd = ['codex', subcmd]
 
-    if cfg.codex_login:
+    if use_login:
         # Use the host's `codex login` credentials (auth.json).  We only
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
@@ -257,6 +257,71 @@ def _session_quota_state(session: bytes) -> tuple[bool, datetime | None]:
         if isinstance(w.get('resets_at'), (int, float))]
     resets_at = datetime.fromtimestamp(max(reset_times)) if reset_times else None
     return exhausted, resets_at
+
+def _op_window_resets(mvir: MVIR, n_op: CodexAgentOpNode) -> list[datetime]:
+    """Reset times of the usage windows (e.g. 5-hour and weekly) in the last
+    `rate_limits` report of each of `n_op`'s session logs."""
+    resets = []
+    for session in _op_sessions(mvir, n_op):
+        rate_limits = _last_rate_limits(session) or {}
+        for w in (rate_limits.get('primary'), rate_limits.get('secondary')):
+            if isinstance(w, dict) and isinstance(w.get('resets_at'), (int, float)):
+                resets.append(datetime.fromtimestamp(w['resets_at']))
+    return resets
+
+
+class CodexAuth:
+    """
+    Tracks whether codex runs use the host's `codex login` credentials or
+    `CRISP_API_KEY`.  With `cfg.codex_login_fallback`, runs use the API key
+    after the login runs out of quota, until the quota resets.
+    """
+
+    def __init__(self, now: Callable[[], datetime] = datetime.now):
+        self._now = now
+        # While set, the login is out of quota and runs use the API key.
+        self.login_unavailable_until: datetime | None = None
+        # Reset times of the login's usage windows, as reported by the last
+        # successful login run.  A quota failure may not report a reset time
+        # (e.g. a workspace spend cap), but such caps can lift when a window
+        # resets.
+        self.window_resets: list[datetime] = []
+
+    def note_window_resets(self, resets: list[datetime]):
+        self.window_resets = resets
+
+    def use_login(self, cfg: Config) -> bool:
+        if not cfg.codex_login:
+            return False
+        if self.login_unavailable_until is None:
+            return True
+        if self._now() < self.login_unavailable_until:
+            return False
+        print('codex login quota should have reset; switching back to the codex login')
+        self.login_unavailable_until = None
+        return True
+
+    def mark_login_exhausted(self, cfg: Config, resets_at: datetime | None):
+        now = self._now()
+        if resets_at is None or resets_at <= now:
+            # A spend cap has no reset time, so try the login again after a
+            # while (a failed attempt only costs a few seconds), or sooner at
+            # the next usage-window reset seen in a successful run.
+            probe = now + timedelta(minutes = cfg.codex_login_probe_minutes)
+            window = min((t for t in self.window_resets if t > now), default = None)
+            if window is not None and window < probe:
+                resets_at = window
+                what = 'no reset time reported; trying the login again at the window reset,'
+            else:
+                resets_at = probe
+                what = 'no reset time known; trying the login again at'
+        else:
+            what = 'quota resets at'
+        self.login_unavailable_until = resets_at
+        print(f'codex login is out of quota; using CRISP_API_KEY instead ({what} '
+            f'{resets_at:%Y-%m-%d %H:%M})')
+
+CODEX_AUTH = CodexAuth()
 
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
@@ -535,6 +600,49 @@ def run_agent(
 
     return n_op, outputs
 
+def _run_codex(
+    cfg: Config,
+    mvir: MVIR,
+    inputs: dict[str, Input],
+    exec_args: list[str],
+    model: str,
+    effort: str,
+    output_filters: dict[str, Callable[[str], bool]],
+    op_label: str | None = None,
+    **run_agent_kwargs,
+) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
+    """
+    Run `codex exec` with `exec_args` via `run_agent`, authenticating as
+    `CODEX_AUTH` currently dictates.  If the codex login is out of quota and
+    `cfg.codex_login_fallback` is set, rerun once with `CRISP_API_KEY`.
+    """
+    def run(use_login):
+        run_inputs = dict(inputs)
+        label = op_label
+        if use_login:
+            assert 'codex_auth' not in run_inputs, "duplicate input name 'codex_auth'"
+            run_inputs['codex_auth'] = _codex_auth_input()
+        elif cfg.codex_login:
+            label = 'api_key_fallback' if label is None else f'{label} api_key_fallback'
+        codex_cmd = _codex_command('exec', exec_args, model = model,
+            effort = effort, use_login = use_login)
+        result = run_agent(cfg, mvir, run_inputs, codex_cmd, output_filters,
+            op_label = label, **run_agent_kwargs)
+        if use_login:
+            CODEX_AUTH.note_window_resets(_op_window_resets(mvir, result[0]))
+        return result
+
+    use_login = CODEX_AUTH.use_login(cfg)
+    try:
+        return run(use_login)
+    except AgentQuotaError as e:
+        if not (use_login and cfg.codex_login_fallback):
+            raise
+        CODEX_AUTH.mark_login_exhausted(cfg, e.resets_at)
+    print(f'rerunning with CRISP_API_KEY (model {llm.API_MODEL or model})')
+    return run(False)
+
+
 def run_rewrite(
     cfg: Config,
     mvir: MVIR,
@@ -567,8 +675,6 @@ def run_rewrite(
         inputs['plans'] = Input(planning_files)
     if unsafe_json is not None:
         inputs['unsafe_json'] = Input(unsafe_json, git_ignore=True)
-    if cfg.codex_login:
-        inputs['codex_auth'] = _codex_auth_input()
     _add_codex_agent_inputs(inputs, codex_agents)
     # Add `extra_code` last so we can report errors if there are any name
     # conflicts.
@@ -578,16 +684,15 @@ def run_rewrite(
         inputs[name] = Input(tree)
         extra_code_files.update(tree.files.keys())
 
-    codex_cmd = _codex_command(cfg, 'exec', [
-        '--dangerously-bypass-approvals-and-sandbox',
-        '--skip-git-repo-check',
-        prompt,
-    ], model=model, effort=effort)
-
-    n_op, outputs = run_agent(
+    n_op, outputs = _run_codex(
         cfg, mvir,
         inputs,
-        codex_cmd,
+        [
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--skip-git-repo-check',
+            prompt,
+        ],
+        model, effort,
         {
             'code': lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
@@ -626,19 +731,16 @@ def run_docs(
     if docs is not None:
         assert 'docs' not in inputs, "duplicate input name 'docs'"
         inputs['docs'] = Input(docs)
-    if cfg.codex_login:
-        inputs['codex_auth'] = _codex_auth_input()
 
-    codex_cmd = _codex_command(cfg, 'exec', [
-        '--dangerously-bypass-approvals-and-sandbox',
-        '--skip-git-repo-check',
-        prompt,
-    ], model=model, effort=effort)
-
-    n_op, outputs = run_agent(
+    n_op, outputs = _run_codex(
         cfg, mvir,
         inputs,
-        codex_cmd,
+        [
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--skip-git-repo-check',
+            prompt,
+        ],
+        model, effort,
         {
             'docs': lambda p: p.startswith(C_DOCS_DIR + '/'),
         },
@@ -680,8 +782,6 @@ def run_review_op(
         'new_code': Input(new_code),
         'old_code': Input(old_code, path = 'crisp_old_code/'),
     }
-    if cfg.codex_login:
-        inputs['codex_auth'] = _codex_auth_input()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
         inputs[name] = Input(tree)
@@ -703,21 +803,20 @@ def run_review_op(
     ]
 
     last_message_path = 'codex_last_message.txt'
-    codex_cmd = _codex_command(cfg, 'exec', [
-        'review',
-        # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
-        # sandbox; the CRISP sandbox is the containment layer.
-        '--dangerously-bypass-approvals-and-sandbox',
-        # Structured events let us verify the reviewer ran commands.
-        '--json',
-        '--output-last-message', last_message_path,
-        prompt,
-    ], model=model, effort=effort)
-
-    n_op, outputs = run_agent(
+    n_op, outputs = _run_codex(
         cfg, mvir,
         inputs,
-        codex_cmd,
+        [
+            'review',
+            # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
+            # sandbox; the CRISP sandbox is the containment layer.
+            '--dangerously-bypass-approvals-and-sandbox',
+            # Structured events let us verify the reviewer ran commands.
+            '--json',
+            '--output-last-message', last_message_path,
+            prompt,
+        ],
+        model, effort,
         {
             'last_message': lambda p: p == last_message_path,
         },

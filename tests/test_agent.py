@@ -1,12 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import tempfile
+from types import SimpleNamespace
 import tomllib
 import unittest
 from unittest.mock import patch
 
 from crisp import agent, prompts
-from crisp.error import CrispError
+from crisp.error import AgentQuotaError, CrispError
 from crisp.mvir import FileNode, MVIR, TreeNode
 from crisp.workflow import describe_c_sources
 
@@ -201,6 +202,153 @@ class SessionQuotaStateTest(unittest.TestCase):
     def test_missing_or_malformed_session(self):
         self.assertEqual(agent._session_quota_state(b''), (False, None))
         self.assertEqual(agent._session_quota_state(b'not json\n[1, 2]\n'), (False, None))
+
+
+def _fallback_cfg(**kwargs):
+    defaults = dict(codex_login = True, codex_login_fallback = True,
+        codex_login_probe_minutes = 30)
+    return SimpleNamespace(**{**defaults, **kwargs})
+
+
+class _Clock:
+    def __init__(self):
+        self.t = datetime(2026, 10, 23, 12, 0)
+
+    def __call__(self):
+        return self.t
+
+
+class CodexAuthTest(unittest.TestCase):
+    def test_known_reset_time(self):
+        clock = _Clock()
+        auth = agent.CodexAuth(now = clock)
+        cfg = _fallback_cfg()
+        self.assertTrue(auth.use_login(cfg))
+        auth.mark_login_exhausted(cfg, clock.t + timedelta(hours = 2))
+        clock.t += timedelta(hours = 1)
+        self.assertFalse(auth.use_login(cfg))
+        clock.t += timedelta(hours = 1)
+        self.assertTrue(auth.use_login(cfg))
+        self.assertIsNone(auth.login_unavailable_until)
+
+    def test_unknown_or_past_reset_time_probes_after_interval(self):
+        clock = _Clock()
+        auth = agent.CodexAuth(now = clock)
+        cfg = _fallback_cfg(codex_login_probe_minutes = 10)
+        for resets_at in (None, clock.t - timedelta(minutes = 1)):
+            auth.mark_login_exhausted(cfg, resets_at)
+            self.assertEqual(auth.login_unavailable_until,
+                clock.t + timedelta(minutes = 10))
+
+    def test_without_codex_login(self):
+        auth = agent.CodexAuth(now = _Clock())
+        self.assertFalse(auth.use_login(_fallback_cfg(codex_login = False)))
+
+    def test_unknown_reset_uses_earlier_window_reset(self):
+        clock = _Clock()
+        auth = agent.CodexAuth(now = clock)
+        cfg = _fallback_cfg(codex_login_probe_minutes = 30)
+        past, soon, later = (clock.t + timedelta(minutes = m) for m in (-5, 11, 300))
+        auth.note_window_resets([past, later, soon])
+        auth.mark_login_exhausted(cfg, None)
+        self.assertEqual(auth.login_unavailable_until, soon)
+        # A window reset after the probe time doesn't delay the probe.
+        auth.note_window_resets([later])
+        auth.mark_login_exhausted(cfg, None)
+        self.assertEqual(auth.login_unavailable_until, clock.t + timedelta(minutes = 30))
+
+
+class CodexCommandTest(unittest.TestCase):
+    def test_login_uses_model_alias(self):
+        cmd = agent._codex_command('exec', ['prompt'], 'gpt-5.4-2026-03-05',
+            use_login = True)
+        self.assertEqual(cmd[cmd.index('--model') + 1], 'gpt-5.4')
+        self.assertNotIn('model_provider=crisp', cmd)
+
+    def test_api_key_uses_crisp_provider(self):
+        cmd = agent._codex_command('exec', ['prompt'], 'gpt-5.4-2026-03-05',
+            use_login = False)
+        self.assertNotIn('--model', cmd)
+        self.assertIn('model_provider=crisp', cmd)
+        self.assertIn('model_providers.crisp.env_key=CRISP_API_KEY', cmd)
+
+
+class CodexFallbackTest(unittest.TestCase):
+    def setUp(self):
+        self.clock = _Clock()
+        self.auth = agent.CodexAuth(now = self.clock)
+        self.calls = []
+        self.results = []
+        patches = [
+            patch.object(agent, 'CODEX_AUTH', self.auth),
+            patch.object(agent, '_codex_auth_input',
+                lambda: agent.Input(b'{}', path = '.codex/auth.json')),
+            patch.object(agent, 'run_agent', self.fake_run_agent),
+            patch.object(agent, '_op_window_resets', lambda mvir, n_op: self.window_resets),
+        ]
+        self.window_resets = []
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def fake_run_agent(self, cfg, mvir, inputs, codex_cmd, output_filters, **kwargs):
+        self.calls.append(dict(login = 'codex_auth' in inputs,
+            cmd = codex_cmd, op_label = kwargs.get('op_label')))
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def run_codex(self, cfg, op_label = 'c_code_docs'):
+        return agent._run_codex(cfg, None, {'code': agent.Input(b'')},
+            ['prompt'], 'gpt-x', 'high', {}, op_label = op_label)
+
+    def test_quota_error_reruns_with_api_key_until_reset(self):
+        reset = self.clock.t + timedelta(hours = 2)
+        self.results = [AgentQuotaError('quota', resets_at = reset), 'api', 'api', 'login']
+        cfg = _fallback_cfg()
+        self.assertEqual(self.run_codex(cfg), 'api')
+        self.assertEqual([c['login'] for c in self.calls], [True, False])
+        self.assertEqual(self.calls[1]['op_label'], 'c_code_docs api_key_fallback')
+        self.assertIn('model_provider=crisp', self.calls[1]['cmd'])
+
+        # Before the reset, runs go straight to the API key.
+        self.clock.t += timedelta(hours = 1)
+        self.assertEqual(self.run_codex(cfg, op_label = None), 'api')
+        self.assertEqual(self.calls[2]['login'], False)
+        self.assertEqual(self.calls[2]['op_label'], 'api_key_fallback')
+
+        # After the reset, back to the login.
+        self.clock.t += timedelta(hours = 1)
+        self.assertEqual(self.run_codex(cfg), 'login')
+        self.assertEqual(self.calls[3]['login'], True)
+        self.assertEqual(self.calls[3]['op_label'], 'c_code_docs')
+
+    def test_successful_login_run_records_window_resets(self):
+        reset = self.clock.t + timedelta(hours = 5)
+        self.window_resets = [reset]
+        self.results = ['login']
+        self.run_codex(_fallback_cfg())
+        self.assertEqual(self.auth.window_resets, [reset])
+
+    def test_without_fallback_quota_error_propagates(self):
+        self.results = [AgentQuotaError('quota')]
+        with self.assertRaises(AgentQuotaError):
+            self.run_codex(_fallback_cfg(codex_login_fallback = False))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_api_key_quota_error_propagates(self):
+        self.results = [AgentQuotaError('login quota'), AgentQuotaError('api quota')]
+        with self.assertRaisesRegex(AgentQuotaError, 'api quota'):
+            self.run_codex(_fallback_cfg())
+        self.assertEqual([c['login'] for c in self.calls], [True, False])
+
+    def test_other_errors_do_not_fall_back(self):
+        self.results = [CrispError('agent failed')]
+        with self.assertRaises(CrispError):
+            self.run_codex(_fallback_cfg())
+        self.assertEqual(len(self.calls), 1)
+        self.assertIsNone(self.auth.login_unavailable_until)
 
 
 if __name__ == '__main__':

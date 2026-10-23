@@ -81,5 +81,34 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('the harness supplies all validation', prompt)
 
 
+class QuotaErrorDetectionTest(unittest.TestCase):
+    def test_spend_cap_error_is_detected(self):
+        logs = (b'tokens used\n'
+            b'ERROR: You hit your spend cap set in your workspace. '
+            b'Increase your spend cap to continue.\n')
+        self.assertTrue(agent._is_quota_error(logs))
+
+    def test_marker_outside_error_line_is_ignored(self):
+        # Agent logs include file contents and command output, which may
+        # mention the same words.
+        logs = b'cat notes.md\nYou hit your spend cap if you run too long.\n'
+        self.assertFalse(agent._is_quota_error(logs))
+
+    def test_other_errors_are_not_quota_errors(self):
+        logs = b'ERROR: stream disconnected before completion\n'
+        self.assertFalse(agent._is_quota_error(logs))
+
+    def test_json_error_events_are_detected(self):
+        # `codex exec review --json` output from a real spend-cap failure.
+        logs = (b'{"type":"turn.started"}\n'
+            b'{"type":"error","message":"You hit your spend cap set in your '
+            b'workspace. Increase your spend cap to continue."}\n')
+        self.assertTrue(agent._is_quota_error(logs))
+        # The same words in other JSON events (e.g. agent output) don't count.
+        logs = (b'{"type":"item.completed","item":{"type":"agent_message",'
+            b'"text":"You hit your spend cap if you run too long."}}\n')
+        self.assertFalse(agent._is_quota_error(logs))
+
+
 if __name__ == '__main__':
     unittest.main()

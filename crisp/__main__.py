@@ -21,7 +21,7 @@ import traceback
 from . import analysis, inline_errors, llm, prompts, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .error import CrispError
+from .error import AgentQuotaError, CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
     CodexAgentOpNode
@@ -421,6 +421,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     pick_target = PickTarget(limits)
 
     prev_fuel = None
+    stopped_by_quota = False
     while True:
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
@@ -533,6 +534,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 ffi_seen_findings = merge_ffi_finding_titles(
                     ffi_seen_findings, ffi_report)
 
+        except AgentQuotaError as e:
+            # Retrying would just fail the same way, burning through fuel.
+            print(f'exiting due to API spend cap or quota: {e}')
+            stopped_by_quota = True
+            break
+
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
             traceback.print_exc()
@@ -550,6 +557,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     print('final test exit code = %d' % n_op_test.exit_code)
     if n_op_test.exit_code != 0:
         status = 'TEST_FAILED'
+    elif unsafe_count != 0 and stopped_by_quota:
+        status = 'API_QUOTA_EXHAUSTED'
     elif unsafe_count != 0:
         status = 'BUDGET_EXHAUSTED'
     else:

@@ -105,7 +105,8 @@ class PlanSizeTest(unittest.TestCase):
     def test_plan_and_step_prompts_share_status_layout(self):
         plan = prompts.agent_plan('translated_rust', 'crisp_docs',
             'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         for section in self.STATUS_SECTIONS:
             self.assertIn(f'`{section}`', plan)
             self.assertIn(f'`{section}`', step)
@@ -127,7 +128,8 @@ class PlanSizeTest(unittest.TestCase):
     def test_finished_clusters_are_collapsed(self):
         plan = prompts.agent_plan('translated_rust', 'crisp_docs',
             'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         self.assertIn('replace its Cluster guide entry with a one-line note', plan)
         self.assertIn("replace that cluster's Cluster guide entry with one line", step)
 

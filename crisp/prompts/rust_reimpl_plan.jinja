@@ -1,0 +1,116 @@
+Write `{{ plan_path }}`: a detailed plan for reimplementing this C project from
+scratch in safe, idiomatic Rust.  Do not modify, create, or delete any other
+file, and do not build or run the code.
+
+This workspace contains:
+{{ sources }}
+
+Use the docs, if present, as the main source, and consult the code to
+resolve gaps, ambiguities, and details the plan depends on.  If you find the
+docs wrong or incomplete, say so in the plan's `## Risks and open questions`
+section rather than editing them.
+
+# Goal
+
+The reimplementation is a new Rust crate with:
+- an idiomatic, safe Rust API as its primary interface; and
+- a thin C ABI shim on top of it that exports the original public API, so
+  existing C callers can link against it unchanged.
+It must preserve the externally visible behavior of the C library, including
+behavior exercised by the C test suite, and its performance and memory
+characteristics.  All `unsafe` code is confined to the shim.
+
+The scope is the project's primary sources: what its build turns into the
+library or program, as identified in the docs.  Examples, tests, and
+contributed or vendored code are clients of that library or validation
+material, not components to reimplement; mention them only in those roles.
+
+# How the plan will be used
+
+The plan serves two kinds of readers, neither of which sees this
+conversation:
+- Agents reimplementing the project from scratch, milestone by milestone,
+  consulting the same sources as needed.  Write the plan so that an agent can
+  pick up any milestone and know what to build, which C code it replaces, and
+  when it is done.
+- A safety-migration planner, and the agents carrying out its steps, who
+  refactor the existing C2Rust translation into safe Rust in place, in small
+  behavior-preserving steps.  They use this plan as the target design for
+  the migration's end state, converging on it wherever the existing code can
+  reach it.  Since C2Rust keeps the C names of functions, structs, fields,
+  and globals, they find the parts of the plan that apply to the code they
+  are changing by those names.
+
+For both:
+- Refer to C code by its exact identifiers and files, so readers can find
+  the matching docs, sources, and translated code by grep.
+- Be specific: name the Rust modules, types, traits, and key function
+  signatures, and the ownership model for each.  Explain any decision that
+  departs from the C design.
+- Prefer tables and lists to prose.
+
+# Required plan structure
+
+1. `## Overview`: what is being built, the crate layout (library crate,
+   shim crate or module, `cdylib`/`staticlib` outputs), and a map from C
+   files and modules to Rust modules.
+2. `## Core design`: the Rust data model for each core C data structure,
+   with ownership and lifetimes (who owns what, where borrowing replaces
+   back-pointers or aliasing); how strings, buffers, and encodings are
+   represented; how callbacks and `void *` user data map to closures or
+   traits; the error-handling model; and how macro-generated code and
+   lookup tables are reproduced.
+3. `## Public Rust API`: the types and functions the crate exposes, and how
+   they map to the C public API.
+4. `## C ABI shim`: every exported C symbol and how it is implemented on top
+   of the Rust API: opaque handles vs. caller-visible struct layouts
+   (`#[repr(C)]`), callback trampolines, error codes, allocator hooks,
+   header compatibility, and panic containment at the FFI boundary.
+5. `## Concurrency and reentrancy`: `Send`/`Sync` for each public type,
+   how global and static state is handled, and how callbacks that re-enter
+   the library are supported without aliasing violations.
+6. `## Portability and configuration`: how C build-time options and
+   platform-specific code map to Cargo features and `cfg`, and which
+   configurations change the API or ABI.
+7. `## Performance and memory`: the hot paths, the C optimizations the
+   design must preserve, allocation strategy, and limits and
+   amplification protections, with how each is kept at parity.
+8. `## Dependencies`: any crates used and why.  Crates may replace
+   dependencies of the C project, but never the project itself.
+9. `## Testing and validation`: how the C test suite is ported or run
+   against the C ABI shim, differential testing and fuzzing against the C
+   implementation, and benchmarks for performance and memory parity.
+10. `## Milestones`: an ordered, dependency-aware list of implementable
+    units.  For each: what it builds, the C code it replaces, its
+    prerequisites, and semantic done-criteria.
+11. `## Migration from the C2Rust translation`: for the safety migration.
+    If the C2Rust output is not in the workspace, say so and leave the
+    section otherwise empty.  Otherwise:
+    - map each translated struct and its pointer-carrying fields, and each
+      key function or function family, to its target type, signature, and
+      ownership model elsewhere in this plan, keyed by the translated names;
+    - split the design into what refactoring the translation in place can
+      reach (data model, ownership and borrowing, error handling, module
+      boundaries, safe replacements for globals, unions, and libc calls) and
+      what only applies to a from-scratch build (e.g. a separate crate layout
+      or shim structure, byte-for-byte output gates), so the migration does
+      not attempt the latter; and
+    - give a dependency-ordered sequence of migration units that converge on
+      the reachable design, noting where the translation's current structure
+      (exported entry points, macro-expanded code, C-style allocation) forces
+      intermediate states.
+
+    The migration must follow the FFI entry point rules below, which the
+    safety migration enforces and cannot change: unsafe code may remain only
+    in the translation's exported entry points, not in a separate shim
+    module, helper, or callback.  Describe the reachable end state in those
+    terms.  Where the rules block part of the target design (for example,
+    C callbacks such as default allocator hooks that would need unsafe code
+    outside an entry point), say so explicitly and give the closest design
+    the rules allow, rather than planning around them.
+12. `## Risks and open questions`: hard-to-match behavior, places where the
+    docs were insufficient, and decisions left to the implementer.
+
+# FFI entry point rules (for the migration section)
+
+{{ ffi_entry_point_rules }}

@@ -158,6 +158,8 @@ AGENT_SAFETY_PROMPT = '''
 Continue the plan from `SAFETY_PLAN.md`.
 **Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
 
+If present, `{c_docs_dir}/` documents the original C code base (start at `{c_docs_dir}/README.md`), and `{rust_reimpl_plan_path}` is the target design that `SAFETY_PLAN.md` refers to; consult them as needed, but do not edit them.
+
 {target_goal}
 
 {after_refactoring_instruction}
@@ -1303,6 +1305,8 @@ class Workflow:
 
         prompt = AGENT_SAFETY_PROMPT.format(
             cargo_dir_path = cargo_dir,
+            c_docs_dir = agent.C_DOCS_DIR,
+            rust_reimpl_plan_path = agent.RUST_REIMPL_PLAN_PATH,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
         )

@@ -3,6 +3,7 @@ Rewrite operations using AI agent tools, such as codex-cli
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import os
 import re
@@ -15,7 +16,7 @@ from pathspec.pathspec import PathSpec
 
 from .. import http_server, llm
 from ..config import Config
-from ..error import CrispError
+from ..error import AgentQuotaError, CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from ..sandbox import run_sandbox, Sandbox
 
@@ -187,6 +188,75 @@ def _add_codex_agent_inputs(
             profile.read_bytes(),
             path = f'.codex/agents/{profile.name}',
         )
+
+# Messages codex-cli reports when the API account is out of budget: on lines
+# starting with `ERROR:`, or with `--json` (e.g. `codex exec review`), in
+# `error`/`turn.failed` events.  Only those lines are checked, since the logs
+# also contain arbitrary file contents and command output from the agent.
+_QUOTA_ERROR_MARKERS = (
+    b'You hit your spend cap',
+    b'insufficient_quota',
+    b'exceeded your current quota',
+)
+
+def _is_error_line(line: bytes) -> bool:
+    line = line.lstrip()
+    if line.startswith(b'ERROR:'):
+        return True
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(ev, dict) and ev.get('type') in ('error', 'turn.failed')
+
+def _is_quota_error(logs: bytes) -> bool:
+    return any(
+        any(m in line for m in _QUOTA_ERROR_MARKERS) and _is_error_line(line)
+        for line in logs.splitlines())
+
+def _last_rate_limits(session: bytes) -> dict | None:
+    """The last `rate_limits` report in a codex session log (codex records
+    them in `token_count` events), if any."""
+    rate_limits = None
+    for line in session.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        payload = ev.get('payload') if isinstance(ev, dict) else None
+        if isinstance(payload, dict) and isinstance(payload.get('rate_limits'), dict):
+            rate_limits = payload['rate_limits']
+    return rate_limits
+
+def _op_sessions(mvir: MVIR, n_op: CodexAgentOpNode) -> list[bytes]:
+    """All codex session logs written by `n_op`.  A run can write several
+    (e.g. a review and its sub-agent), in which case `n_op.json_session` is
+    left empty."""
+    raw = mvir.node(n_op.raw_output_files).files
+    return [mvir.node(f).body() for p, f in sorted(raw.items())
+        if p.startswith('.codex/sessions/') and p.endswith('.jsonl')]
+
+def _session_quota_state(session: bytes) -> tuple[bool, datetime | None]:
+    """
+    Check the most recent `rate_limits` report in a codex session log.
+    Returns whether it shows a limit that was reached, and when that limit
+    resets if known.  A spend cap set by the workspace owner, for example, has
+    no reset time.
+    """
+    rate_limits = _last_rate_limits(session)
+    if rate_limits is None:
+        return False, None
+
+    full_windows = [w for w in (rate_limits.get('primary'), rate_limits.get('secondary'))
+        if isinstance(w, dict) and (w.get('used_percent') or 0) >= 100]
+    exhausted = bool(rate_limits.get('rate_limit_reached_type')
+        or rate_limits.get('spend_control_reached')
+        or full_windows)
+    # If several windows are full, the quota is only back once all have reset.
+    reset_times = [w['resets_at'] for w in full_windows
+        if isinstance(w.get('resets_at'), (int, float))]
+    resets_at = datetime.fromtimestamp(max(reset_times)) if reset_times else None
+    return exhausted, resets_at
 
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
@@ -446,6 +516,19 @@ def run_agent(
     reason = n_op.kind if op_label is None else f'{n_op.kind} {op_label}'
     mvir.set_tag('op_history', n_op.node_id(), reason)
 
+    if n_op.exit_code != 0:
+        # Prefer codex's structured rate-limit report; fall back to its error
+        # messages, e.g. if no session log was captured.
+        states = [_session_quota_state(s) for s in _op_sessions(mvir, n_op)]
+        exhausted = any(e for e, _ in states)
+        reset_times = [r for e, r in states if e and r is not None]
+        resets_at = max(reset_times) if reset_times else None
+        if exhausted or _is_quota_error(n_op.body()):
+            reset_msg = f'resets at {resets_at}' if resets_at else 'reset time unknown'
+            raise AgentQuotaError(
+                f'agent invocation failed: API spend cap or quota exhausted '
+                f'({reset_msg}; exit code {exit_code})', n_op,
+                resets_at = resets_at)
     if n_op.exit_code != 0:
         raise CrispError(
             f'agent invocation failed: exit code {exit_code}', n_op)

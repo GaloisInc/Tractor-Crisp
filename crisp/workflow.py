@@ -16,7 +16,7 @@ from typing import Any, Callable
 from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .error import CrispError
+from .error import AgentQuotaError, CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
@@ -1538,6 +1538,9 @@ class Workflow:
         try:
             n_new_docs = agent.run_docs(cfg, mvir, prompt, cfg.models.agent_plan,
                 code, docs = n_docs, op_label = 'rust_reimpl_plan')
+        except AgentQuotaError:
+            # Later steps would hit the same limit, so stop here.
+            raise
         except CrispError as e:
             # The reimplementation plan isn't needed by the safety loop, so
             # don't let a failure here stop it.

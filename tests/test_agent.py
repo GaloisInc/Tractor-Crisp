@@ -1,3 +1,5 @@
+from datetime import datetime
+import json
 import tempfile
 import tomllib
 import unittest
@@ -127,6 +129,78 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
         self.assertIn('`{rust_reimpl_plan_path}`', prompts.AGENT_PLAN)
         self.assertIn('# The reimplementation plan as target', prompts.AGENT_PLAN)
+
+
+class QuotaErrorDetectionTest(unittest.TestCase):
+    def test_spend_cap_error_is_detected(self):
+        logs = (b'tokens used\n'
+            b'ERROR: You hit your spend cap set in your workspace. '
+            b'Increase your spend cap to continue.\n')
+        self.assertTrue(agent._is_quota_error(logs))
+
+    def test_marker_outside_error_line_is_ignored(self):
+        # Agent logs include file contents and command output, which may
+        # mention the same words.
+        logs = b'cat notes.md\nYou hit your spend cap if you run too long.\n'
+        self.assertFalse(agent._is_quota_error(logs))
+
+    def test_other_errors_are_not_quota_errors(self):
+        logs = b'ERROR: stream disconnected before completion\n'
+        self.assertFalse(agent._is_quota_error(logs))
+
+    def test_json_error_events_are_detected(self):
+        # `codex exec review --json` output from a real spend-cap failure.
+        logs = (b'{"type":"turn.started"}\n'
+            b'{"type":"error","message":"You hit your spend cap set in your '
+            b'workspace. Increase your spend cap to continue."}\n')
+        self.assertTrue(agent._is_quota_error(logs))
+        # The same words in other JSON events (e.g. agent output) don't count.
+        logs = (b'{"type":"item.completed","item":{"type":"agent_message",'
+            b'"text":"You hit your spend cap if you run too long."}}\n')
+        self.assertFalse(agent._is_quota_error(logs))
+
+
+def _session(*rate_limits):
+    # One codex `token_count` event per `rate_limits` report, as in real
+    # session logs.
+    return '\n'.join(json.dumps({'type': 'event_msg', 'payload': {
+        'type': 'token_count', 'info': None, 'rate_limits': rl}})
+        for rl in rate_limits).encode()
+
+def _window(used_percent, resets_at):
+    return {'used_percent': used_percent, 'window_minutes': 300,
+        'resets_at': resets_at}
+
+
+class SessionQuotaStateTest(unittest.TestCase):
+    def test_under_limits(self):
+        session = _session({'limit_id': 'codex',
+            'primary': _window(14.0, 1792813819),
+            'secondary': _window(18.0, 1793382528),
+            'rate_limit_reached_type': None})
+        self.assertEqual(agent._session_quota_state(session), (False, None))
+
+    def test_workspace_spend_cap_has_no_reset_time(self):
+        # As seen in a real run: an earlier report under the limits, then the
+        # owner-set limit with no windows.
+        session = _session(
+            {'limit_id': 'codex', 'primary': _window(82.0, 1792746682),
+                'secondary': None, 'rate_limit_reached_type': None},
+            {'limit_id': 'premium', 'primary': None, 'secondary': None,
+                'rate_limit_reached_type': 'workspace_owner_usage_limit_reached'})
+        self.assertEqual(agent._session_quota_state(session), (True, None))
+
+    def test_full_windows_report_the_latest_reset(self):
+        session = _session({'limit_id': 'codex',
+            'primary': _window(100.0, 1792813819),
+            'secondary': _window(100.0, 1793382528),
+            'rate_limit_reached_type': None})
+        self.assertEqual(agent._session_quota_state(session),
+            (True, datetime.fromtimestamp(1793382528)))
+
+    def test_missing_or_malformed_session(self):
+        self.assertEqual(agent._session_quota_state(b''), (False, None))
+        self.assertEqual(agent._session_quota_state(b'not json\n[1, 2]\n'), (False, None))
 
 
 if __name__ == '__main__':

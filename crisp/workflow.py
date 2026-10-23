@@ -1211,6 +1211,8 @@ class Workflow:
                     else f'{prompt_suffix}\n\n{size_prompt}'
 
         prompt = prompts.agent_safety(
+            c_docs_dir = agent.C_DOCS_DIR,
+            rust_reimpl_plan_path = agent.RUST_REIMPL_PLAN_PATH,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
         )

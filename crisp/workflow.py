@@ -16,7 +16,7 @@ from typing import Any, Callable
 from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .error import CrispError
+from .error import AgentQuotaError, CrispError
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
@@ -1393,10 +1393,63 @@ class Workflow:
             docs_dir = agent.C_DOCS_DIR,
             c_sources = describe_c_sources(n_c_code))
         n_docs = agent.run_docs(cfg, mvir, prompt, cfg.models.agent_plan,
-            n_c_code, op_label = 'c_code_docs')
+            {'c_code': n_c_code}, op_label = 'c_code_docs')
         if len(n_docs.files) == 0:
             print(f'warning: agent wrote no C code docs under {agent.C_DOCS_DIR}/')
         return n_docs
+
+    @step
+    def do_rust_reimpl_plan_agent(
+        self,
+        n_c_code: TreeNode | None,
+        n_rust_code: TreeNode | None,
+        n_docs: TreeNode | None,
+    ) -> TreeNode | None:
+        """
+        Add a plan for a from-scratch Rust reimplementation to `n_docs`, based
+        on the docs and whichever of the original C code (`n_c_code`) and the
+        C2Rust output (`n_rust_code`) are available.  Returns the updated docs,
+        or `n_docs` unchanged if there is no code or the agent fails.
+        """
+        cfg, mvir = self.cfg, self.mvir
+
+        code = {}
+        sources = []
+        if n_docs is not None and len(n_docs.files) > 0:
+            sources.append(f'- `{agent.C_DOCS_DIR}/`: documentation of the C code base.  '
+                f'Start at `{agent.C_DOCS_DIR}/README.md` and read all of it.')
+        if n_c_code is not None:
+            code['c_code'] = n_c_code
+            sources.append(f'- The original C sources: {describe_c_sources(n_c_code)}.')
+        if n_rust_code is not None:
+            code['rust_code'] = n_rust_code
+            cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+            sources.append(f'- `{cargo_dir}`: the output of C2Rust, a mechanical, unsafe '
+                'translation of the C code to Rust.  It keeps the C names of functions, '
+                'structs, fields, and globals, expands macros inline, and reflects only '
+                'the build configuration it was translated with.  Use it as a precise '
+                'reference for behavior, not as a design to copy.')
+        if not code:
+            print('warning: no code available for the Rust reimplementation plan')
+            return n_docs
+
+        prompt = prompts.rust_reimpl_plan(
+            plan_path = agent.RUST_REIMPL_PLAN_PATH,
+            sources = '\n'.join(sources))
+        try:
+            n_new_docs = agent.run_docs(cfg, mvir, prompt, cfg.models.agent_plan,
+                code, docs = n_docs, op_label = 'rust_reimpl_plan')
+        except AgentQuotaError:
+            # Later steps would hit the same limit, so stop here.
+            raise
+        except CrispError as e:
+            # The reimplementation plan isn't needed by the safety loop, so
+            # don't let a failure here stop it.
+            print(f'warning: Rust reimplementation plan failed: {e}')
+            return n_docs
+        if agent.RUST_REIMPL_PLAN_PATH not in n_new_docs.files:
+            print(f'warning: agent did not write {agent.RUST_REIMPL_PLAN_PATH}')
+        return n_new_docs
 
     @step
     def do_safety_plan_agent(
@@ -1421,10 +1474,14 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
             n_c_docs = self.do_c_code_docs_agent(n_test_code)
+        # The reimplementation plan goes in with the docs, so it carries over
+        # the same way.
+        n_c_docs = self.do_rust_reimpl_plan_agent(n_test_code, n_code, n_c_docs)
 
         prompt = prompts.agent_plan(
             cargo_dir_path = cargo_dir,
-            c_docs_dir = agent.C_DOCS_DIR)
+            c_docs_dir = agent.C_DOCS_DIR,
+            rust_reimpl_plan_path = agent.RUST_REIMPL_PLAN_PATH)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),

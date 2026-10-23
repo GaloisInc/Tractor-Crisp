@@ -103,7 +103,8 @@ class PlanSizeTest(unittest.TestCase):
     STATUS_SECTIONS = ('### Last iteration', '### Completed', '### Next', '### Dead ends')
 
     def test_plan_and_step_prompts_share_status_layout(self):
-        plan = prompts.agent_plan('translated_rust', 'crisp_docs')
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
         step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
         for section in self.STATUS_SECTIONS:
             self.assertIn(f'`{section}`', plan)
@@ -124,7 +125,8 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('dead ends that still apply', status_size_prompt(STATUS_SIZE_LIMIT + 1))
 
     def test_finished_clusters_are_collapsed(self):
-        plan = prompts.agent_plan('translated_rust', 'crisp_docs')
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
         step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
         self.assertIn('replace its Cluster guide entry with a one-line note', plan)
         self.assertIn("replace that cluster's Cluster guide entry with one line", step)

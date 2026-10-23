@@ -67,7 +67,8 @@ class CodexAgentProfilesTest(unittest.TestCase):
             agent._inject_codex_agents(object(), object(), ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
-        prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR)
+        prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR,
+            agent.RUST_REIMPL_PLAN_PATH)
         for name in agent.PLANNING_CODEX_AGENTS:
             self.assertIn(f'`{name}`', prompt)
         self.assertIn('fork_turns="none"', prompt)
@@ -111,6 +112,23 @@ class CodexAgentProfilesTest(unittest.TestCase):
                 '`deflate.c`, `zlib.h`; 3 files under `contrib/`; `test/example.c`')
             no_c = TreeNode.new(mvir, files = {'Makefile': empty})
             self.assertEqual(describe_c_sources(no_c), 'none found')
+
+    def test_rust_reimpl_plan_prompt_formats(self):
+        prompt = prompts.rust_reimpl_plan(
+            plan_path = agent.RUST_REIMPL_PLAN_PATH,
+            sources = '- SOURCE LIST')
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', prompt)
+        self.assertIn('- SOURCE LIST', prompt)
+        # The migration section is planned under the safety loop's FFI rules.
+        self.assertIn(prompts.FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('## C ABI shim', prompt)
+        self.assertIn('## Milestones', prompt)
+        # The plan is also the safety migration's target design.
+        self.assertIn('## Migration from the C2Rust translation', prompt)
+        # The plan lives with the docs, so it carries over with them.
+        self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', prompts.agent_plan(
+            'translated_rust', agent.C_DOCS_DIR, agent.RUST_REIMPL_PLAN_PATH))
 
 
 class QuotaErrorDetectionTest(unittest.TestCase):

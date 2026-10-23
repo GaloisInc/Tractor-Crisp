@@ -37,6 +37,9 @@ PLANNING_CODEX_AGENTS = (
 # Sandbox-relative directory holding the agent-written docs for the original C
 # code.  These are carried along with the planning files.
 C_DOCS_DIR = 'crisp_docs'
+# Agent-written plan for a from-scratch Rust reimplementation, kept with the
+# C code docs.
+RUST_REIMPL_PLAN_PATH = f'{C_DOCS_DIR}/RUST_REIMPLEMENTATION_PLAN.md'
 
 # Print the warning in red so it stands out
 WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
@@ -627,17 +630,20 @@ def run_docs(
     mvir: MVIR,
     prompt: str,
     model: str,
-    c_code: TreeNode,
+    code: dict[str, TreeNode],
+    docs: TreeNode | None = None,
     effort: str = 'high',
     op_label: str | None = None,
 ) -> TreeNode:
     """
-    Run the agent over `c_code` to document it.  Returns the files the agent
-    wrote under `C_DOCS_DIR`.
+    Run the agent over the trees in `code` and existing `docs`, if any, to
+    write docs under `C_DOCS_DIR`.  Returns all the files under `C_DOCS_DIR`
+    afterward, including any existing `docs`.
     """
-    inputs = {
-        'c_code': Input(c_code),
-    }
+    inputs = {name: Input(tree) for name, tree in code.items()}
+    if docs is not None:
+        assert 'docs' not in inputs, "duplicate input name 'docs'"
+        inputs['docs'] = Input(docs)
 
     n_op, outputs = _run_codex(
         cfg, mvir,

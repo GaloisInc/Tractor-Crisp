@@ -15,7 +15,7 @@ from pathspec.pathspec import PathSpec
 
 from .. import http_server, llm
 from ..config import Config
-from ..error import CrispError
+from ..error import AgentQuotaError, CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from ..sandbox import run_sandbox, Sandbox
 
@@ -180,6 +180,31 @@ def _add_codex_agent_inputs(
             profile.read_bytes(),
             path = f'.codex/agents/{profile.name}',
         )
+
+# Messages codex-cli reports when the API account is out of budget: on lines
+# starting with `ERROR:`, or with `--json` (e.g. `codex exec review`), in
+# `error`/`turn.failed` events.  Only those lines are checked, since the logs
+# also contain arbitrary file contents and command output from the agent.
+_QUOTA_ERROR_MARKERS = (
+    b'You hit your spend cap',
+    b'insufficient_quota',
+    b'exceeded your current quota',
+)
+
+def _is_error_line(line: bytes) -> bool:
+    line = line.lstrip()
+    if line.startswith(b'ERROR:'):
+        return True
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(ev, dict) and ev.get('type') in ('error', 'turn.failed')
+
+def _is_quota_error(logs: bytes) -> bool:
+    return any(
+        any(m in line for m in _QUOTA_ERROR_MARKERS) and _is_error_line(line)
+        for line in logs.splitlines())
 
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
@@ -435,6 +460,10 @@ def run_agent(
     # Record operations and timestamps in the `op_history` reflog.
     mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
 
+    if n_op.exit_code != 0 and _is_quota_error(n_op.body()):
+        raise AgentQuotaError(
+            f'agent invocation failed: API spend cap or quota exhausted '
+            f'(exit code {exit_code})', n_op)
     if n_op.exit_code != 0:
         raise CrispError(
             f'agent invocation failed: exit code {exit_code}', n_op)

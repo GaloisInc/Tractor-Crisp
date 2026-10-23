@@ -1,14 +1,5 @@
-class CrispError(Exception):
-    """
-    Custom error type for CRISP operations.  Operations in `analysis`, `llm`,
-    `workflow`, etc, should throw `CrispError` when something goes wrong in a
-    way that can't reasonably be recovered from locally, such as an LLM query
-    producing malformed output.  The error may be caught at a higher level to
-    attempt recovery there if possible.
-
-    If CRISP operations throw any kind of exception other than `CrispError`,
-    that indicates a bug in CRISP.
-    """
+class _NodeError(Exception):
+    """An error with an optional MVIR node that gives more detail."""
 
     def __init__(self, message, node_id = None):
         super().__init__(message)
@@ -24,3 +15,26 @@ class CrispError(Exception):
         if self.node_id is not None:
             msg += f'\nnode_id: {self.node_id}'
         return msg
+
+
+class CrispError(_NodeError):
+    """
+    Custom error type for CRISP operations.  Operations in `analysis`, `llm`,
+    `workflow`, etc, should throw `CrispError` when something goes wrong in a
+    way that can't reasonably be recovered from locally, such as an LLM query
+    producing malformed output.  The error may be caught at a higher level to
+    attempt recovery there if possible.
+
+    If CRISP operations throw any kind of exception other than `CrispError`
+    or `AgentQuotaError`, that indicates a bug in CRISP.
+    """
+
+
+class AgentQuotaError(_NodeError):
+    """
+    The agent's API provider refused the request because the account is out
+    of budget (e.g. a workspace spend cap was hit).  This is not a
+    `CrispError`: code that catches `CrispError` retries or carries on, and
+    neither helps here, so this one propagates to the safety loop, which
+    stops.
+    """

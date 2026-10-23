@@ -193,11 +193,16 @@ def agent_target_function(
     )
 
 
-def agent_plan(cargo_dir_path: str, c_docs_dir: str) -> str:
+def agent_plan(
+    cargo_dir_path: str,
+    c_docs_dir: str,
+    rust_reimpl_plan_path: str,
+) -> str:
     """Render the agent plan prompt with the FFI entry point rules."""
     return jinja_env.get_template('agent_plan.jinja').render(
         cargo_dir_path = cargo_dir_path,
         c_docs_dir = c_docs_dir,
+        rust_reimpl_plan_path = rust_reimpl_plan_path,
         ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
     )
 
@@ -207,6 +212,18 @@ def c_code_docs(docs_dir: str, c_sources: str) -> str:
     return jinja_env.get_template('c_code_docs.jinja').render(
         docs_dir = docs_dir,
         c_sources = c_sources,
+    )
+
+
+def rust_reimpl_plan(plan_path: str, sources: str) -> str:
+    """
+    Render the prompt for planning a from-scratch Rust reimplementation, with
+    the FFI entry point rules.
+    """
+    return jinja_env.get_template('rust_reimpl_plan.jinja').render(
+        plan_path = plan_path,
+        sources = sources,
+        ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
     )
 
 

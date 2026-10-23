@@ -22,6 +22,13 @@ cargo build --manifest-path rust/Cargo.toml
 """
 
 
+# With `--codex-login`, rerun a codex run with CRISP_API_KEY (and
+# CRISP_API_BASE) if it fails because the codex login is out of quota.  Each
+# run tries the login first.  Also available as the `--codex-login-fallback`
+# flag.
+#codex_login_fallback = true
+
+
 # Choose the models used by the different CRISP operations.
 [models]
 # Coordinates the planning analysts and writes the initial SAFETY_PLAN.md.

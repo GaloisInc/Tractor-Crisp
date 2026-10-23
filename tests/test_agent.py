@@ -1,9 +1,13 @@
+from contextlib import contextmanager
+import tempfile
+from types import SimpleNamespace
 import tomllib
 import unittest
 from unittest.mock import patch
 
 from crisp import agent, prompts
-from crisp.error import CrispError
+from crisp.error import AgentQuotaError, CrispError
+from crisp.mvir import MVIR, TreeNode
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -108,6 +112,119 @@ class QuotaErrorDetectionTest(unittest.TestCase):
         logs = (b'{"type":"item.completed","item":{"type":"agent_message",'
             b'"text":"You hit your spend cap if you run too long."}}\n')
         self.assertFalse(agent._is_quota_error(logs))
+
+
+class CodexCommandTest(unittest.TestCase):
+    def test_login_uses_model_alias(self):
+        cmd = agent._codex_command('exec', ['prompt'], 'gpt-5.4-2026-03-05',
+            use_login = True)
+        self.assertEqual(cmd[cmd.index('--model') + 1], 'gpt-5.4')
+        self.assertNotIn('model_provider=crisp', cmd)
+
+    def test_api_key_uses_crisp_provider(self):
+        cmd = agent._codex_command('exec', ['prompt'], 'gpt-5.4-2026-03-05',
+            use_login = False)
+        self.assertNotIn('--model', cmd)
+        self.assertIn('model_provider=crisp', cmd)
+        self.assertIn('model_providers.crisp.env_key=CRISP_API_KEY', cmd)
+
+
+LOGIN_QUOTA = (1, b'ERROR: You hit your spend cap set in your workspace.\n')
+API_QUOTA = (1, b'ERROR: exceeded your current quota\n')
+
+
+class _FakeSandbox:
+    """Runs no commands; each `codex` command returns the next result."""
+    def __init__(self, mvir, results):
+        self.mvir = mvir
+        self.results = list(results)
+        self.cmds = []
+
+    def join(self, path):
+        return '/sandbox/' + path
+
+    def checkout(self, *args, **kwargs):
+        pass
+
+    checkout_file = checkout_file_untracked = checkout
+
+    def run(self, cmd, **kwargs):
+        self.cmds.append(cmd)
+        return self.results.pop(0) if cmd[0] == 'codex' else (0, b'')
+
+    def commit_dir(self, *args, **kwargs):
+        return TreeNode.new(self.mvir, files = {})
+
+
+class CodexFallbackTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.mvir = MVIR(tmp.name, '.')
+        for p in (
+            patch.object(agent, '_codex_auth_input',
+                lambda: agent.Input(b'{}', path = '.codex/auth.json')),
+            patch('builtins.print'),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def run_codex(self, results, fallback = True, **kwargs):
+        self.sb = _FakeSandbox(self.mvir, results)
+        @contextmanager
+        def run_sandbox(cfg, mvir):
+            yield self.sb
+        cfg = SimpleNamespace(codex_login = True, codex_login_fallback = fallback)
+        with patch.object(agent, 'run_sandbox', run_sandbox):
+            return agent._run_codex(cfg, self.mvir,
+                {'code': agent.Input(TreeNode.new(self.mvir, files = {}))},
+                ['prompt'], 'gpt-x', 'high', {}, **kwargs)
+
+    def codex_runs(self):
+        return ['login' if '--model' in c else 'api_key'
+            for c in self.sb.cmds if c[0] == 'codex']
+
+    def last_reason(self):
+        return self.mvir.tag_reflog('op_history')[-1].reason
+
+    def test_login_quota_error_reruns_in_the_same_sandbox(self):
+        n_op, _ = self.run_codex([LOGIN_QUOTA, (0, b'done')], op_label = 'c_code_docs')
+        self.assertEqual(self.codex_runs(), ['login', 'api_key'])
+        self.assertEqual(n_op.exit_code, 0)
+        # The checkout is reset to the inputs before the rerun.
+        i = self.sb.cmds.index(['git', 'reset', '--hard', '--quiet'])
+        self.assertEqual(self.sb.cmds[i + 2][0], 'codex')
+        self.assertEqual(self.last_reason(), 'codex_agent_op_v3 c_code_docs api_key_fallback')
+
+    def test_without_git_nothing_is_reset(self):
+        self.run_codex([LOGIN_QUOTA, (0, b'done')], init_git = False)
+        self.assertEqual(self.codex_runs(), ['login', 'api_key'])
+        self.assertFalse(any(c[0] == 'git' for c in self.sb.cmds))
+
+    def test_each_run_tries_the_login_first(self):
+        self.run_codex([LOGIN_QUOTA, (0, b'done')])
+        self.run_codex([(0, b'done')])
+        self.assertEqual(self.codex_runs(), ['login'])
+        self.assertEqual(self.last_reason(), 'codex_agent_op_v3')
+
+    def test_api_key_quota_error_stops(self):
+        with self.assertRaises(AgentQuotaError):
+            self.run_codex([LOGIN_QUOTA, API_QUOTA])
+
+    def test_other_api_key_errors_are_not_quota_errors(self):
+        with self.assertRaises(CrispError) as cm:
+            self.run_codex([LOGIN_QUOTA, (1, b'ERROR: stream disconnected\n')])
+        self.assertNotIsInstance(cm.exception, AgentQuotaError)
+
+    def test_without_fallback_login_quota_error_stops(self):
+        with self.assertRaises(AgentQuotaError):
+            self.run_codex([LOGIN_QUOTA], fallback = False)
+        self.assertEqual(self.codex_runs(), ['login'])
+
+    def test_other_errors_do_not_fall_back(self):
+        with self.assertRaises(CrispError):
+            self.run_codex([(1, b'ERROR: stream disconnected\n')])
+        self.assertEqual(self.codex_runs(), ['login'])
 
 
 if __name__ == '__main__':

@@ -76,6 +76,9 @@ def parse_args():
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
+    main.add_argument('--codex-login-fallback', action='store_true',
+        help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
+            'because the login is out of quota')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -88,6 +91,9 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
+    safety_loop.add_argument('--codex-login-fallback', action='store_true',
+        help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
+            'because the login is out of quota')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -142,6 +148,32 @@ def parse_args():
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
     return args
+
+
+def check_codex_login_fallback(cfg):
+    """
+    Check the API key fallback's settings up front, rather than at the first
+    quota error, possibly hours into a run.
+    """
+    if not cfg.codex_login_fallback:
+        return
+    if not cfg.codex_login:
+        sys.exit('error: codex_login_fallback requires --codex-login')
+    # Codex reads the key straight from `CRISP_API_KEY` (via `env_key`), and an
+    # empty key is as useless as a missing one, so reject both.
+    if not os.environ.get('CRISP_API_KEY'):
+        sys.exit('error: codex_login_fallback requires CRISP_API_KEY to be set')
+    # `llm.API_BASE` falls back to its default only when `CRISP_API_BASE` is
+    # unset; an empty value is used as is, which would give codex an empty
+    # `base_url`.  So check the value the run will actually use.
+    if not llm.API_BASE:
+        sys.exit('error: codex_login_fallback requires CRISP_API_BASE to be '
+            'non-empty if set')
+    # Unset is valid (the default is a local server), but rarely what's
+    # wanted for a fallback from a codex subscription, so point it out.
+    if 'CRISP_API_BASE' not in os.environ:
+        print('warning: CRISP_API_BASE is not set, so the codex login fallback '
+            f'will use {llm.API_BASE}')
 
 
 def parse_node_id_arg(mvir, s):
@@ -923,7 +955,10 @@ def main():
         cfg_kwargs['on_accept'] = args.on_accept
     if getattr(args, 'codex_login', None) is not None:
         cfg_kwargs['codex_login'] = args.codex_login
+    if getattr(args, 'codex_login_fallback', False):
+        cfg_kwargs['codex_login_fallback'] = True
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
+    check_codex_login_fallback(cfg)
 
     if args.cmd == 'main':
         do_main(args, cfg)

@@ -1,0 +1,10 @@
+Rules enforced against the step's starting baseline:
+
+- Functions with no unsafe code in the baseline must stay entirely safe, and the crate-wide total of unsafe operations must not increase.
+- Within functions that already contain unsafe code, unsafe operations may move or change kind, and may relocate into a new named implementation function (for example an ownership facade or constructor). Such moves are tolerated with a warning and will be reviewed; use them when they enable a later removal.
+- It is always an error to add "unsafe-adjacent" code: int-to-pointer casts, raw pointer fields on types, new uses of foreign functions, or uses of FFI entry points from implementation code.
+- `unsafe fn` signatures are unrestricted. An unsafe helper may take or return raw pointers, including `&mut <state struct>` while the struct still carries raw-pointer fields, so decomposing a large unsafe function into `unsafe` helpers that carry the state is legal. Each new `unsafe fn` adds one to the crate-wide total.
+- A safe function may not gain raw pointer types in its signature (`NonNull` included), and a function may be created safe only with a signature free of direct raw pointers — passing or returning a struct that carries raw-pointer fields is fine. A function may lose its `unsafe` qualifier only if its signature reaches no raw pointers, struct fields included: flipping a state-carrying helper to safe is never a reduction.
+- A new `unsafe impl` (for example `Send` on an owned-state registry) is tolerated with a warning and will be reviewed on its soundness.
+- FFI entry points are excluded from the unsafety count entirely; their exported symbols and signatures must not change, and unsafe operations accumulating inside one draw a warning — entry points must stay thin. Removing `unsafe` qualifiers from exported entry points gains nothing; leave them exactly as they are.
+- Diagnostics beginning `warning:` never block acceptance on their own; they are judged by the independent safety and compatibility review. Any other diagnostic is a hard error.

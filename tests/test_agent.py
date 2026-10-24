@@ -1,9 +1,16 @@
+from contextlib import nullcontext
+import os
+from pathlib import Path
+import subprocess
+import tempfile
 import tomllib
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from crisp import agent, prompts
 from crisp.error import CrispError
+from crisp.mvir import FileNode, MVIR, TreeNode
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -37,14 +44,9 @@ class CodexAgentProfilesTest(unittest.TestCase):
             )
 
     def test_planning_profiles_are_injected_under_codex_home(self):
-        written = {}
-
-        def capture(_sb, _mvir, rel_path, body):
-            written[rel_path] = body
-
-        with patch.object(agent, '_checkout_bytes', side_effect=capture):
-            agent._inject_codex_agents(
-                object(), object(), agent.PLANNING_CODEX_AGENTS)
+        inputs = {}
+        agent._add_codex_agent_inputs(inputs, agent.PLANNING_CODEX_AGENTS)
+        written = {item.path: item.item for item in inputs.values()}
 
         self.assertIn('.codex/safety_constraints.md', written)
         self.assertEqual(
@@ -58,7 +60,7 @@ class CodexAgentProfilesTest(unittest.TestCase):
 
     def test_unknown_profile_is_rejected(self):
         with self.assertRaisesRegex(CrispError, 'unknown Codex agent profile'):
-            agent._inject_codex_agents(object(), object(), ('missing',))
+            agent._add_codex_agent_inputs({}, ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
         for name in agent.PLANNING_CODEX_AGENTS:
@@ -75,9 +77,202 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## FFI entry point rules', prompts.AGENT_PLAN)
         self.assertIn('## Conventions', prompts.AGENT_PLAN)
         self.assertIn('## Cluster guide', prompts.AGENT_PLAN)
-        self.assertIn('## Status', prompts.AGENT_PLAN)
+        self.assertIn('{ffi_entry_point_rules}', prompts.AGENT_PLAN)
+        # The plan is read-only reference; it carries no mutable log.
+        self.assertNotIn('## Status', prompts.AGENT_PLAN)
         # The plan must not carry verification commands; the harness does.
         self.assertIn('the harness supplies all validation', prompts.AGENT_PLAN)
+
+
+class ReplanPromptTest(unittest.TestCase):
+    def test_replan_prompt_combines_progress_analysis_and_revision(self):
+        self.assertIn('single invocation', prompts.AGENT_REPLAN)
+        self.assertIn('Do not spawn sub-agents', prompts.AGENT_REPLAN)
+        self.assertIn('SAFETY_PROGRESS.json', prompts.AGENT_REPLAN)
+        self.assertIn('`{cargo_dir_path}`', prompts.AGENT_REPLAN)
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompts.AGENT_REPLAN)
+        # The required plan sections.
+        self.assertIn('## FFI entry point rules', prompts.AGENT_REPLAN)
+        self.assertIn('## Conventions', prompts.AGENT_REPLAN)
+        self.assertIn('## Cluster guide', prompts.AGENT_REPLAN)
+        self.assertIn('{ffi_entry_point_rules}', prompts.AGENT_REPLAN)
+        # The plan is read-only reference; it carries no mutable log.
+        self.assertNotIn('## Status', prompts.AGENT_REPLAN)
+        # The plan must not carry verification commands; the harness does.
+        self.assertIn('The harness supplies all', prompts.AGENT_REPLAN)
+
+
+class AgentExecutionTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.mvir = MVIR(temp.name, temp.name)
+        self.code = TreeNode.new(self.mvir, files={
+            'crate/src/lib.rs': FileNode.new(self.mvir, 'fn example() {}').node_id(),
+        })
+        self.files = {
+            'crate/src/lib.rs': b'fn example() {}',
+            'codex_last_message.txt': b'TARGET: example\nCONTINUE: finish callers',
+            '.codex/auth.json': b'ignored test credentials',
+        }
+        self.sb = Mock()
+        self.sb.join.side_effect = lambda *paths: os.path.join('/sandbox', *paths)
+        self.sb.run.return_value = (0, b'{"type":"item.completed","item":'
+            b'{"type":"command_execution","exit_code":0}}')
+
+        def commit_dir(_path, ignore_spec, path_filter=None):
+            return TreeNode.new(self.mvir, files={
+                path: FileNode.new(self.mvir, body).node_id()
+                for path, body in self.files.items()
+                if not ignore_spec.match_file(path)
+                and (path_filter is None or path_filter(path))
+            })
+
+        self.sb.commit_dir.side_effect = commit_dir
+        self.enterContext(patch.object(agent, 'run_sandbox',
+            return_value=nullcontext(self.sb)))
+        self.enterContext(patch('builtins.print'))
+
+    def test_rewrite_preserves_final_message_through_output_filter(self):
+        for cwd in ('.', 'crate'):
+            with self.subTest(cwd=cwd):
+                code, plans, message = agent.run_rewrite(
+                    SimpleNamespace(codex_login=False), self.mvir, 'rewrite', 'test-model', self.code,
+                    cwd=cwd, effort='medium')
+                self.assertEqual(code.files, self.code.files)
+                self.assertEqual(plans.files, {})
+                self.assertEqual(message, 'TARGET: example\nCONTINUE: finish callers')
+                cmd = next(call.args[0] for call in reversed(self.sb.run.call_args_list)
+                    if call.args[0][0] == 'codex')
+                output_path = cmd[cmd.index('--output-last-message') + 1]
+                self.assertEqual(os.path.normpath(os.path.join(cwd, output_path)),
+                    'codex_last_message.txt')
+                self.assertIn('model_reasoning_effort="medium"', cmd)
+
+    def test_planning_validates_before_publishing_a_recoverable_plan(self):
+        from crisp.__main__ import prior_agent_plans
+        from crisp.history import get_history
+
+        original = ('## FFI entry point rules\nimmutable rules\n\n'
+            '## Conventions\nkeep contracts\n\n## Cluster guide\nold task\n')
+        revised = original.replace('old task', 'new task')
+        plans = TreeNode.new(self.mvir, files={
+            'SAFETY_PLAN.md': FileNode.new(self.mvir, original).node_id(),
+            'PLAN.md': FileNode.new(self.mvir, 'keep other planning files').node_id()})
+        self.files['SAFETY_PLAN.md'] = revised.encode()
+        code, accepted, _ = agent.run_rewrite(
+            SimpleNamespace(codex_login=False), self.mvir, 'plan', 'test-model', self.code,
+            planning_files=plans, planning_only=True)
+        self.assertEqual(code.node_id(), self.code.node_id())
+        self.assertEqual(self.mvir.node(accepted.files['SAFETY_PLAN.md']).body_str(), revised)
+        self.assertEqual(accepted.files['PLAN.md'], plans.files['PLAN.md'])
+        self.assertEqual(prior_agent_plans(self.mvir, self.code).node_id(), accepted.node_id())
+
+        for invalid in ('missing', 'source_edit', 'rules_edit', 'empty_queue'):
+            with self.subTest(invalid=invalid):
+                self.files['SAFETY_PLAN.md'] = revised.encode()
+                self.files['crate/src/lib.rs'] = b'fn example() {}'
+                if invalid == 'missing':
+                    del self.files['SAFETY_PLAN.md']
+                elif invalid == 'source_edit':
+                    self.files['crate/src/lib.rs'] = b'fn changed() {}'
+                elif invalid == 'rules_edit':
+                    self.files['SAFETY_PLAN.md'] = revised.replace('immutable rules', 'weakened').encode()
+                else:
+                    self.files['SAFETY_PLAN.md'] = revised.replace('new task', '').encode()
+                with self.assertRaises(CrispError):
+                    agent.run_rewrite(SimpleNamespace(codex_login=False), self.mvir, 'plan', 'test-model',
+                        self.code, planning_files=accepted, planning_only=True)
+                # Failed planning artifacts cannot replace the last valid plan.
+                self.assertEqual(prior_agent_plans(self.mvir, self.code).node_id(), accepted.node_id())
+                self.assertEqual(get_history(self.mvir, self.code), [(self.code, None)])
+
+    def test_review_feedback_is_input_only_even_if_worker_edits_it(self):
+        path = 'SAFETY_REVIEW_FEEDBACK.md'
+        feedback = TreeNode.new(self.mvir, files={
+            path: FileNode.new(self.mvir, 'original report').node_id()})
+        self.files[path] = b'worker replacement'
+        code, plans, _ = agent.run_rewrite(
+            SimpleNamespace(codex_login=False), self.mvir, 'rewrite', 'test-model', self.code,
+            extra_code={'review_feedback': feedback})
+        self.assertNotIn(path, code.files)
+        self.assertNotIn(path, plans.files)
+        self.assertEqual(self.mvir.node(feedback.files[path]).body_str(),
+            'original report')
+
+    def test_missing_rewrite_message_is_empty(self):
+        del self.files['codex_last_message.txt']
+        _, _, message = agent.run_rewrite(
+            SimpleNamespace(codex_login=False), self.mvir, 'rewrite', 'test-model', self.code)
+        self.assertEqual(message, '')
+
+    def test_review_preserves_report_and_command_evidence(self):
+        self.files['codex_last_message.txt'] = b'No findings.'
+        n_op = agent.run_review_op(
+            SimpleNamespace(codex_login=False), self.mvir, 'review', 'test-model', self.code, self.code,
+            cwd='crate', effort='xhigh')
+        report, _, ran_commands = agent.review_op_results(self.mvir, n_op)
+        self.assertEqual(report.body_str(), 'No findings.')
+        self.assertTrue(ran_commands)
+
+    def test_missing_review_report_is_none(self):
+        del self.files['codex_last_message.txt']
+        n_op = agent.run_review_op(
+            SimpleNamespace(codex_login=False), self.mvir, 'review', 'test-model', self.code, self.code)
+        report, _, _ = agent.review_op_results(self.mvir, n_op)
+        self.assertIsNone(report)
+
+    def test_review_reuses_original_paths_without_changing_the_candidate_diff(self):
+        reference = TreeNode.new(self.mvir, files={
+            'api.h': FileNode.new(self.mvir, 'int example(void);').node_id(),
+        })
+        candidate = TreeNode.new(self.mvir, files={
+            'crate/src/lib.rs': FileNode.new(self.mvir, 'fn changed() {}').node_id(),
+        })
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+        def write_file(path, body):
+            dest = root / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+
+        def checkout(tree, rel_path):
+            for path, node_id in tree.files.items():
+                write_file(str(Path(rel_path) / path), self.mvir.node(node_id).body())
+
+        def run(cmd, **kwargs):
+            if cmd[0] == 'codex':
+                def git(*args):
+                    return subprocess.check_output(['git', *args], cwd=root).decode()
+                self.assertEqual(git('show', 'HEAD:api.h'), 'int example(void);')
+                self.assertEqual((root / 'api.h').read_text(), 'int example(void);')
+                self.assertEqual(git('diff', '--name-only', 'HEAD'), 'crate/src/lib.rs\n')
+                self.assertNotIn('api.h',
+                    git('ls-files', '--others', '--exclude-standard').splitlines())
+                self.assertFalse((root / 'crisp_old_code').exists())
+                return 0, b'{"type":"item.completed","item":' \
+                    b'{"type":"command_execution","exit_code":0}}'
+            result = subprocess.run(cmd, cwd=root, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            return result.returncode, result.stdout
+
+        self.sb.checkout.side_effect = checkout
+        self.sb.checkout_file_untracked.side_effect = write_file
+        self.sb.join.side_effect = lambda *paths: str(root.joinpath(*paths))
+        self.sb.run.side_effect = run
+        self.files['codex_last_message.txt'] = b'CRISP_REVIEW: PASS\nChecked API.'
+        n_op = agent.run_review_op(SimpleNamespace(codex_login=False), self.mvir, 'review',
+            'test-model', self.code, candidate, extra_code={'c_code': reference})
+        report, _, _ = agent.review_op_results(self.mvir, n_op)
+        self.assertTrue(report.body_str().startswith('CRISP_REVIEW: PASS'))
+        self.assertEqual(sum(call.args[0] == reference
+            for call in self.sb.checkout.call_args_list), 1)
+        self.sb.checkout.assert_any_call(reference, rel_path='.')
+
+    def test_review_context_cannot_overwrite_candidate_files(self):
+        with self.assertRaisesRegex(CrispError, 'review context overlaps'):
+            agent.run_review_op(SimpleNamespace(codex_login=False), self.mvir, 'review', 'test-model',
+                self.code, self.code, extra_code={'c_code': self.code})
 
 
 if __name__ == '__main__':

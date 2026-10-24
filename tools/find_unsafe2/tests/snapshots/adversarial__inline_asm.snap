@@ -2,4 +2,5 @@
 source: find_unsafe2/tests/adversarial.rs
 expression: out.stdout
 ---
-adv_inline_asm::spin: inline asm blocks increased: 0 -> 1
+warning: adv_inline_asm::spin: inline asm blocks increased: 0 -> 1
+total unsafe operations increased: 0 -> 1

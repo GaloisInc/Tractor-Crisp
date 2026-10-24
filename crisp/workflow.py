@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import functools
 import inspect
+import json
 import os
 from pathlib import Path
 import re
@@ -110,26 +111,6 @@ New signatures:
 {input_files}
 '''
 
-# Same format, capturing the title for `merge_ffi_finding_titles`.
-AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
-    r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
-# Trailing `— file:line` location; stripped because locations go stale.
-AGENT_FFI_REVIEW_FINDING_LOCATION_RE = re.compile(
-    r'\s+(?:—|--)\s+\S+:\d+(?:[-:]\d+)*$')
-
-FFI_SEEN_FINDINGS_CAP = 10
-
-def merge_ffi_finding_titles(seen: list[str], report: str) -> list[str]:
-    """
-    Merge finding titles from a rejecting FFI review `report` into `seen`,
-    deduplicated and bounded to the most recent `FFI_SEEN_FINDINGS_CAP`.
-    """
-    for m in AGENT_FFI_REVIEW_FINDING_TITLE_RE.finditer(report):
-        title = AGENT_FFI_REVIEW_FINDING_LOCATION_RE.sub('', m.group(1)).strip()
-        if title and title not in seen:
-            seen.append(title)
-    return seen[-FFI_SEEN_FINDINGS_CAP:]
-
 VA_LIST_IMPL_RE = re.compile(r'\bVaListImpl\b')
 
 def upgrade_toolchain_rust_src(src: str) -> str:
@@ -154,44 +135,101 @@ def upgrade_toolchain_rust_src(src: str) -> str:
     # rust-lang/rust#141980 merged `VaListImpl` into `VaList`
     return VA_LIST_IMPL_RE.sub('VaList', src)
 
+AGENT_SAFETY_PROGRESS_PROMPT = '''
+Aim for substantial, coherent progress toward safe representations. Use the chosen transformation as the unit of work; complete its related representation changes, caller migrations, and obsolete-code removal together. Your `TARGET:` line is a tracking label, not a limit on the scope of the transformation.
+
+When a transformation applies to several related sites, complete those sites in this invocation where the same safety argument holds. Before returning, check for remaining occurrences of that transformation; a first small reduction alone is not a reason to stop. Preserve all safety and compatibility obligations.
+
+If current source shows that every ready transformation in `SAFETY_PLAN.md` is complete or blocked, you may instead end with `PLAN_EXHAUSTED: <which transformations are complete or blocked, and why>`. Check partial work and independent alternatives first; one blocked target does not exhaust the plan. Use this only when returning no code changes. Any edits will be discarded, and the loop will replan before the next worker if budget remains.
+
+'''
+
 AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+Choose the next actionable transformation from `SAFETY_PLAN.md`, checking its prerequisites and whether it is already complete, then identify its affected symbols. Complete the related representation changes, caller migrations, and obsolete-code removal together. The plan is read-only reference: notes in it are guidance, not rules — only the rules stated below bind your work.
+
+Consult the full unsafe inventory in `$FIND_UNSAFE2_JSON_DIR` for exact symbols and evidence. Respect the safety rules and actual prerequisites.
 
 {target_goal}
 
 {after_refactoring_instruction}
 
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
+Check your work using this command:
 ```sh
 crisp_check_unsafe2.sh
 ```
-This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+{checker_rules}
+
+Every changed candidate receives independent safety and compatibility review
+under these binding rules, including count-neutral preparation:
+
+{safety_review_rules}
+
+FFI entry points are judged under these binding rules:
+
+{ffi_entry_point_rules}
+
+Each step uses one agent invocation. Complete a coherent change within this invocation; you may edit, build, and check repeatedly before returning.
+
+Begin your final message with a line `TARGET: <name>` naming one representative inventory function (or `Type.field`) involved in the transformation. That name identifies the work; it does not restrict the work to that symbol. End with one of these lines, or with another verdict offered below:
+- `DONE` — the step's work is complete and is judged against the code as it stood when the step began. Omitting the verdict also means DONE.
+- `BLOCKED: <target> — <verbatim gate diagnostic or one-line reason>` — no legal reduction exists at that target; your code edits will be discarded.
 '''
 
+class StepOutcome(typing.NamedTuple):
+    """
+    Result of one judged safety step.  `code` is the accepted tree, the
+    unchanged input tree for a blocked or plan-exhausted step, or `None`
+    when a gate or review rejected the step.
+
+    A tuple, so the step logger prints indexed `result[N]` lines; log
+    tooling keys on `result[0]` and `result[2]`, with new fields appended.
+    """
+    code: 'TreeNode | None'
+    plans: 'TreeNode | None'
+    report: str | None
+    target: str | None
+    note: str
+    plan_exhausted: bool = False
+
+
 AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
+A previous attempt at `{target}` was rejected by review. The reviewer reported:
 
 {report}
 
-Do not repeat this mistake.
+This report applies to `{target}`. If you choose a different target in this step, do not treat it as a rejection of that unrelated work. Address the report when you next work on `{target}`.
 '''.strip()
 
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
-AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
 
-{findings}
+def parse_verdict(final_message: str) -> tuple[str, str]:
+    """
+    The step verdict from the agent's final message: `('blocked', note)`,
+    `('plan_exhausted', note)`, or `('done', '')`. The verdict must be the
+    last non-empty line; anything else — including no verdict at all —
+    reads as `done` and is judged by the normal gates.
+    """
+    lines = [l.strip() for l in final_message.splitlines() if l.strip()]
+    if lines:
+        last = lines[-1]
+        if last.startswith('BLOCKED:'):
+            return 'blocked', last[len('BLOCKED:'):].strip()
+        if last.startswith('PLAN_EXHAUSTED:'):
+            return 'plan_exhausted', last[len('PLAN_EXHAUSTED:'):].strip()
+    return 'done', ''
 
-Do not repeat these mistakes.
-'''.strip()
+TARGET_LINE_RE = re.compile(r'^TARGET:\s*(\S+)\s*$', re.MULTILINE)
+
+def parse_target(final_message: str) -> str | None:
+    """The first `TARGET:` declaration in the agent's final message."""
+    m = TARGET_LINE_RE.search(final_message)
+    return m.group(1) if m else None
 
 AGENT_AFTER_REFACTORING_RUN_TESTS = '''
 After refactoring, make sure the code still passes the tests.  Run the tests using this command:
 ```sh
 crisp_run_tests.sh
 ```
+Run the full suite once, before you declare DONE. While work is in progress, `cargo build` and `crisp_check_unsafe2.sh` are the checks worth their cost; the full suite mid-step mostly re-proves what the build already shows.
 This will exit zero if the tests passed and nonzero if they failed.  In either case, it returns the test logs as the body.
 
 Note: this uses the current Rust code, but always uses the original version of the tests.  You MUST NOT edit the test code (or the original C code), and doing so will have no effect on the tests run by this command.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
@@ -1260,7 +1298,8 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode, TreeNode]:
+        review_feedback: dict[str, str] | None = None,
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1278,7 +1317,21 @@ class Workflow:
             cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            checker_rules = prompts.CHECKER_RULES,
+            safety_review_rules = prompts.SAFETY_REVIEW_RULES,
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES,
         )
+        if review_feedback:
+            reports = '\n\n'.join(
+                f'## {target}\n\n' + AGENT_FFI_REJECTED_PROMPT.format(
+                    target=target, report=report)
+                for target, report in review_feedback.items())
+            extra_code['review_feedback'] = TreeNode.new(mvir, files={
+                'SAFETY_REVIEW_FEEDBACK.md': FileNode.new(mvir, reports).node_id()})
+            prompt += ('\n\nBefore editing your chosen target, read its section in '
+                '`SAFETY_REVIEW_FEEDBACK.md` and address the prior findings. '
+                'Reports are keyed by the exact inventory target name. '
+                'This file is read-only guidance; do not edit it.')
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
 
@@ -1321,60 +1374,57 @@ class Workflow:
         )
 
     @step
-    def ffi_review_op(
+    def safety_review_op(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
-    ) -> CodexReviewAnalysisNode | None:
-        """
-        Run FFI review for the change from `n_old_code` to `n_new_code`.  If no
-        FFI functions were modified, this returns `None`.
-        """
+        n_c_code: TreeNode | None,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
+    ) -> CodexReviewAnalysisNode:
         cfg, mvir = self.cfg, self.mvir
-
-        old_defs = self.extract_ffi_defs(n_old_code).defs
-        new_defs = self.extract_ffi_defs(n_new_code).defs
-        if old_defs == new_defs:
-            return None
-
-        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = prompts.AGENT_FFI_REVIEW.format(
-            cargo_dir_path = cargo_dir,
+        reference_instruction = (
+            'Original C sources, headers, and available tests are checked out '
+            'at their original paths relative to the sandbox root, as in the '
+            'planner and safety worker. Consult the relevant contracts there; '
+            'these unchanged files are included in the Git baseline.'
+            if n_c_code is not None else
+            'Original C sources and tests are unavailable in this mode. '
+            'Use the baseline and available contracts; if essential evidence '
+            'is missing, report an incomplete review with CRISP_REVIEW: FAIL.')
+        prompt = prompts.AGENT_SAFETY_REVIEW.format(
+            cargo_dir_path = cfg.relative_path(cfg.transpile.output_dir),
+            reference_instruction = reference_instruction,
+            checker_findings = analysis.check_unsafe2_findings(n_op_unsafe) or '(none)',
+            safety_review_rules = prompts.SAFETY_REVIEW_RULES,
             ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
         prompt = FileNode.new(mvir, prompt)
-        return analysis.ffi_review(cfg, mvir,
-                n_old_code, n_new_code, prompt)
+        return analysis.safety_review(cfg, mvir,
+                n_old_code, n_new_code, n_c_code, prompt)
 
     @step
-    def do_ffi_review(
+    def do_safety_review(
         self,
         n_old_code: TreeNode,
         n_new_code: TreeNode,
+        n_c_code: TreeNode | None,
+        n_op_unsafe: CheckUnsafe2AnalysisNode,
     ) -> tuple[bool, str | None]:
-        """
-        Diff-triggered FFI review: if the change touched any FFI entry point,
-        have a reviewer agent check it against the FFI entry point rules.
-        Returns `(passed, report)`; `report` is the reviewer's findings when
-        the change is rejected, or `None` if there is no usable report.
-        """
-        n_op = self.ffi_review_op(n_old_code, n_new_code)
-
-        if n_op is None:
-            # No change to FFI defs
+        """Review every changed candidate that passed the mechanical gates."""
+        if n_old_code.node_id() == n_new_code.node_id():
             return True, None
-
+        n_op = self.safety_review_op(n_old_code, n_new_code, n_c_code, n_op_unsafe)
+        report = self.mvir.node(n_op.report).body_str()
+        print(report)
         if n_op.passed:
             return True, None
-        else:
-            report = self.mvir.node(n_op.report).body_str()
-            return False, report if report.strip() else None
+        return False, report if report.strip() else None
 
     @step
     def agent_safety_no_tests(
         self,
         n_code: TreeNode,
         n_plans: TreeNode,
-    ) -> tuple[TreeNode, TreeNode]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         return self.agent_safety(n_code, None, n_plans, provide_test_cmd = False)
 
 
@@ -1458,7 +1508,7 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode,
-    ) -> tuple[TreeNode | None, TreeNode | None]:
+    ) -> tuple[TreeNode, TreeNode, str]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
@@ -1490,6 +1540,43 @@ class Workflow:
         )
 
     @step
+    def do_safety_replan_agent(
+        self,
+        n_code: TreeNode,
+        n_test_code: TreeNode,
+        n_plans: TreeNode,
+        progress: dict,
+    ) -> tuple[TreeNode, TreeNode, str]:
+        """Revise the current plan from the progress recorded since it was written."""
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        extra_code = {'progress': TreeNode.new(mvir, files={
+            'SAFETY_PROGRESS.json': FileNode.new(mvir,
+                json.dumps(progress, indent=2)).node_id()})}
+        if n_test_code is not None:
+            # The same C context as the initial plan; see do_safety_plan_agent.
+            extra_code['c_code'] = n_test_code
+
+        prompt = prompts.AGENT_REPLAN.format(
+            cargo_dir_path = cargo_dir,
+            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES,
+            checker_rules = prompts.CHECKER_RULES,
+            safety_review_rules = prompts.SAFETY_REVIEW_RULES)
+        return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
+            extra_code = extra_code,
+            unsafe_json = self.find_unsafe2_json(n_code),
+            planning_files = n_plans,
+            planning_only = True,
+            effort = 'high',
+            clean_cmds = [
+                ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
+            ],
+            find_unsafe2_json_dir = analysis.UNSAFE_JSON_DIR,
+            find_unsafe2_src_dir = cargo_dir,
+        )
+
+    @step
     def do_safety_step_agent(
         self,
         n_code: TreeNode,
@@ -1497,24 +1584,44 @@ class Workflow:
         n_plans: TreeNode,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
-    ) -> tuple[TreeNode | None, TreeNode | None, str | None]:
+        review_feedback: dict[str, str] | None = None,
+    ) -> StepOutcome:
+        """Run one worker invocation, then judge its candidate against n_code."""
         self.fuel.use()
-
-        n_new_code, n_plans = self.agent_safety(n_code, n_test_code, n_plans,
+        n_cur, _, final_message = self.agent_safety(
+            n_code, n_test_code, n_plans,
             prompt_suffix = prompt_suffix,
-            target_goal = target_goal)
-        # The change must pass tests, must not regress any unsafe count, and
-        # must not break the FFI entry point rules.
-        n_op_test = self.test_op(n_new_code, n_test_code)
-        n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
-            return None, None, None
-        ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
-        if not ffi_ok:
+            target_goal = target_goal,
+            review_feedback = review_feedback)
+        target = parse_target(final_message)
+        verdict, note = parse_verdict(final_message)
+        if verdict in ('blocked', 'plan_exhausted'):
+            print(f'agent declared {verdict.replace("_", " ")}: {note}')
+            return StepOutcome(n_code, n_plans, None, target, note,
+                plan_exhausted=verdict == 'plan_exhausted')
+        if n_cur.node_id() == n_code.node_id():
+            return StepOutcome(n_code, n_plans, None, target, '')
+        # The step must pass tests, must not regress the unsafe counts, and
+        # must pass independent safety, behavior and FFI review, all judged
+        # against the step's start.  The cheap unsafe comparison runs first
+        # so a regressing attempt doesn't pay for the full test suite.
+        n_op_unsafe = self.compare_unsafe2_op(n_code, n_cur)
+        if n_op_unsafe.exit_code != 0:
+            # No findings means the build failed; its errors are in the log's tail.
+            return StepOutcome(None, None, None, target,
+                'Unsafe checker rejected the candidate:\n'
+                + (analysis.check_unsafe2_findings(n_op_unsafe)
+                    or n_op_unsafe.body_str()[-6000:]))
+        n_op_test = self.test_op(n_cur, n_test_code)
+        if n_op_test.exit_code != 0:
+            return StepOutcome(None, None, None, target,
+                'Tests rejected the candidate:\n' + n_op_test.body_str()[-6000:])
+        review_ok, report = self.do_safety_review(n_code, n_cur, n_test_code, n_op_unsafe)
+        if not review_ok:
             # Surface the reviewer's report so the caller can feed it back
             # into the next attempt's prompt.
-            return None, None, ffi_report
-        return n_new_code, n_plans, None
+            return StepOutcome(None, None, report, target, '')
+        return StepOutcome(n_cur, n_plans, None, target, '')
 
     @step
     def do_safety_step_agent_sim_no_tests(
@@ -1530,12 +1637,17 @@ class Workflow:
         # effect of not providing the original C code, since we
         # don't currently distinguish test code from the rest of
         # the C code.
-        n_new_code, n_plans = self.agent_safety_no_tests(n_code, n_plans)
+        n_new_code, _, final_message = self.agent_safety_no_tests(
+            n_code, n_plans)
+        if parse_verdict(final_message)[0] == 'blocked':
+            print(f'agent declared blocked: {final_message.strip()}')
+            return n_code, n_plans
         n_op_check = self.cargo_check_json_op(n_new_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
         if not (n_op_check.passed and n_op_unsafe.exit_code == 0):
             return None, None
-        if not self.do_ffi_review(n_code, n_new_code)[0]:
+        # Preserve this mode's deliberate lack of original C/test context.
+        if not self.do_safety_review(n_code, n_new_code, None, n_op_unsafe)[0]:
             return None, None
 
         # `agent_sim_no_tests` simulates the mode where no tests are

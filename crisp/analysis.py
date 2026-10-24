@@ -542,6 +542,14 @@ def check_unsafe2(cfg: Config, mvir: MVIR,
         n_op = _check_unsafe2_impl(cfg, mvir, sb, code, unsafe_json, cmd)
     return n_op
 
+# check-unsafe2 starts each finding with an item path; rustc diagnostics never do.
+CHECK_UNSAFE2_FINDING_RE = re.compile(r'^(?:warning: )?[A-Za-z_]\w*::')
+
+def check_unsafe2_findings(n_op: CheckUnsafe2AnalysisNode) -> str:
+    """Give prompts these, not the raw log: on large crates its rustc lints
+       run to megabytes, past what the sandbox can pass to an agent."""
+    return '\n'.join(line for line in n_op.body_str().splitlines()
+        if CHECK_UNSAFE2_FINDING_RE.match(line))
 
 @analysis
 def _split_rust_impl(
@@ -733,48 +741,57 @@ def related_decls(
     return n_op
 
 
+def review_passed(report: str, ran_commands: bool) -> bool:
+    """Require inspected code, one explicit approval, and no findings."""
+    lines = report.strip().splitlines()
+    return (ran_commands and bool(lines)
+        and re.match(r'^CRISP_REVIEW: PASS\b', lines[0]) is not None
+        and report.count('CRISP_REVIEW:') == 1
+        and prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report) is None)
+
 @analysis
-def ffi_review(
+def safety_review(
     cfg: Config,
     mvir: MVIR,
     old_code: TreeNode,
     new_code: TreeNode,
+    c_code: TreeNode | None,
     prompt: FileNode,
 ) -> CodexReviewAnalysisNode:
     """
-    Run FFI review pass.
+    Run safety and compatibility review, with `c_code` as reference context.
 
     As the review is LLM-based, this is not deterministic like most analyses
     are.  Results are still cached as normal, so calling this a second time
-    with the same `old_code`, `new_code`, and `prompt` will simply return the
-    cached value rather than running the review a second time.
+    with the same arguments will simply return the cached value rather than
+    running the review a second time.
     """
-    cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-
     op_agent = agent.run_review_op(cfg, mvir, prompt.body_str(),
-        cfg.models.agent_loop, old_code, new_code)
+        cfg.models.agent_review, old_code, new_code,
+        extra_code = {'c_code': c_code} if c_code is not None else {},
+        effort = 'xhigh')
 
-    report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
+    n_report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
+    report = n_report.body_str() if n_report is not None else ''
 
-    if report is None:
-        raise CrispError("FFI review didn't return a report", op_agent)
-
-    report_str = report.body_str()
-    if report_str.strip() == '':
-        raise CrispError('FFI review returned an empty report', op_agent)
-
-    if not ran_commands:
-        # The reviewer never successfully ran a command, so it cannot have
-        # inspected the diff.
-        raise CrispError('FFI review ran no commands; ignoring its report', op_agent)
-
-    passed = prompts.AGENT_FFI_REVIEW_FINDING_RE.search(report_str) is None
+    passed = review_passed(report, ran_commands)
+    if not passed:
+        if not report.strip():
+            report = 'CRISP_REVIEW: INCOMPLETE\nReview returned no report.'
+        elif not ran_commands:
+            report = ('CRISP_REVIEW: INCOMPLETE\nReviewer did not inspect the code.\n\n'
+                + report)
+        elif (re.match(r'^CRISP_REVIEW: FAIL\b', report.strip()) is None
+                or report.count('CRISP_REVIEW:') != 1):
+            report = ('CRISP_REVIEW: INCOMPLETE\nReview did not provide an '
+                'unambiguous, finding-free approval.\n\n' + report)
 
     op_review = CodexReviewAnalysisNode.new(mvir,
         old_code = old_code.node_id(),
         new_code = new_code.node_id(),
+        c_code = c_code.node_id() if c_code is not None else None,
         prompt = prompt.node_id(),
-        report = report.node_id(),
+        report = FileNode.new(mvir, report).node_id(),
         agent_op = op_agent.node_id(),
         passed = passed,
     )

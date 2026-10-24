@@ -760,7 +760,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
     }
 
     for td in crate_type_defs(tcx) {
-        let key: String = td.name();
+        let key: String = scrub_crate_name(td.name());
         let value = TypeOutputs {
             filename: td.span().get_filename(),
             field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),

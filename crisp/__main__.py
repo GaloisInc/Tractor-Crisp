@@ -79,6 +79,10 @@ def parse_args():
     main.add_argument('--codex-login-fallback', action='store_true',
         help='with --codex-login, use CRISP_API_KEY while the codex login is out '
             'of quota, switching back once the quota resets')
+    main.add_argument('--replan', action='store_true',
+        help='ignore any recorded safety plan for the starting code and plan '
+            'again (C docs, Rust reimplementation plan, and SAFETY_PLAN.md); '
+            'requires --llm-mode=agent or similar')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -94,6 +98,10 @@ def parse_args():
     safety_loop.add_argument('--codex-login-fallback', action='store_true',
         help='with --codex-login, use CRISP_API_KEY while the codex login is out '
             'of quota, switching back once the quota resets')
+    safety_loop.add_argument('--replan', action='store_true',
+        help='ignore any recorded safety plan for the starting code and plan '
+            'again (C docs, Rust reimplementation plan, and SAFETY_PLAN.md); '
+            'requires --llm-mode=agent or similar')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -147,6 +155,8 @@ def parse_args():
     AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
+    if getattr(args, 'replan', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
+        ap.error('--replan requires --llm-mode=agent or similar')
     return args
 
 
@@ -448,7 +458,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
     # never cleared by an accepted step.
     ffi_seen_findings = []
-    n_plans = prior_agent_plans(mvir, n_code)
+    if args.replan:
+        print('--replan: ignoring any recorded safety plan for this code')
+        n_plans = None
+    else:
+        n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
             n_plans = w.do_safety_plan_agent(n_code, n_c_code)[1]

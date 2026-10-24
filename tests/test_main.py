@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from crisp import llm
-from crisp.__main__ import check_codex_login_fallback, prior_agent_plans
+from crisp.__main__ import check_codex_login_fallback, parse_args, prior_agent_plans
 from crisp.mvir import CodexAgentOpNode, FileNode, MVIR, TreeNode
 
 
@@ -93,6 +93,17 @@ class CodexLoginFallbackCheckTest(unittest.TestCase):
                 patch.object(llm, 'API_BASE', ''):
             with self.assertRaisesRegex(SystemExit, 'CRISP_API_BASE'):
                 check_codex_login_fallback(self.cfg())
+
+
+class ReplanArgTest(unittest.TestCase):
+    def test_replan_requires_agent_mode(self):
+        for cmd in ('main', 'safety-loop'):
+            with patch('sys.argv', ['crisp', cmd, '--replan', '--llm-mode', 'agent']):
+                self.assertTrue(parse_args().replan)
+            with patch('sys.argv', ['crisp', cmd, '--replan']), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    parse_args()
 
 
 if __name__ == '__main__':

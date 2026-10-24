@@ -161,6 +161,17 @@ class RemainingUnsafePromptTest(unittest.TestCase):
         self.assertIsNone(self.prompt({}))
 
 
+class ReplanArgTest(unittest.TestCase):
+    def test_replan_requires_agent_mode(self):
+        for cmd in ('main', 'safety-loop'):
+            with patch('sys.argv', ['crisp', cmd, '--replan', '--llm-mode', 'agent']):
+                self.assertTrue(parse_args().replan)
+            with patch('sys.argv', ['crisp', cmd, '--replan']), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    parse_args()
+
+
 class TimeLimitTest(unittest.TestCase):
     def test_arg(self):
         for cmd in ('main', 'safety-loop'):
@@ -174,7 +185,7 @@ class TimeLimitTest(unittest.TestCase):
                     parse_args()
 
     def test_no_step_starts_after_the_deadline(self):
-        args = SimpleNamespace(llm_mode = 'agent', time_limit = 60)
+        args = SimpleNamespace(llm_mode = 'agent', replan = False, time_limit = 60)
         w = MagicMock()
         w.count_unsafe2.return_value = 5
         w.test_op.return_value.exit_code = 0

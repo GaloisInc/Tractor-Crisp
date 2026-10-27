@@ -8,7 +8,7 @@ Continue the plan from `SAFETY_PLAN.md`.
 Merge or delete older entries to stay within the limit, and convert a Status section with a different layout to this one. A pitfall that later work on a cluster must know goes in that cluster's pitfalls in the Cluster guide, stated once.
 When your work meets all of a cluster's done-criteria, also replace that cluster's Cluster guide entry with one line marking it done, since the details are now in the code; first move any of its pitfalls that still apply to unfinished clusters into their entries. Otherwise change the rest of the plan only to correct it.
 
-If present, `{{ c_docs_dir }}/` documents the original C code base (start at `{{ c_docs_dir }}/README.md`), and `{{ rust_reimpl_plan_path }}` is the target design that `SAFETY_PLAN.md` refers to; consult them as needed, but do not edit them.
+If present, `{{ c_docs_dir }}/` documents the original C code base, and `{{ rust_reimpl_plan_path }}` is the target design that `SAFETY_PLAN.md` refers to. Do not read them in full: read the sections that your cluster's entry in `SAFETY_PLAN.md` names, and look up anything else in them (by heading, using `{{ c_docs_dir }}/README.md` as the index) only when the plan and the code don't answer your question. Do not edit them.
 
 {{ target_goal }}
 

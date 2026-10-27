@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 
 from . import analysis, inline_errors, llm, prompts, sandbox
@@ -79,6 +80,11 @@ def parse_args():
             'code in the prompt once at most N unsafe operations remain '
             '(default: %(default)s; 0 disables).  They are also listed after '
             'two steps in a row without progress')
+    main.add_argument('--time-limit', type=float, metavar='MINUTES',
+        help='stop starting new safety steps once MINUTES have passed since '
+            'crisp started; the step in progress still finishes.  For '
+            'benchmarks, compare the states accepted by a fixed time using '
+            'the `current` reflog')
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
@@ -99,6 +105,11 @@ def parse_args():
             'code in the prompt once at most N unsafe operations remain '
             '(default: %(default)s; 0 disables).  They are also listed after '
             'two steps in a row without progress')
+    safety_loop.add_argument('--time-limit', type=float, metavar='MINUTES',
+        help='stop starting new safety steps once MINUTES have passed since '
+            'crisp started; the step in progress still finishes.  For '
+            'benchmarks, compare the states accepted by a fixed time using '
+            'the `current` reflog')
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
@@ -158,7 +169,19 @@ def parse_args():
     AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
+    if getattr(args, 'time_limit', None) is not None and args.time_limit <= 0:
+        ap.error('--time-limit must be positive')
     return args
+
+
+def time_limit_deadline(args) -> float | None:
+    """
+    The `time.monotonic()` value at which `--time-limit` runs out, counting
+    from now, or `None` without a time limit.
+    """
+    if args.time_limit is None:
+        return None
+    return time.monotonic() + args.time_limit * 60
 
 
 def check_codex_login_fallback(cfg):
@@ -271,6 +294,7 @@ def parse_node_id(mvir, s):
 
 
 def do_main(args, cfg):
+    deadline = time_limit_deadline(args)
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 
@@ -318,7 +342,7 @@ def do_main(args, cfg):
         return
     w.accept(n_code, ('main', 'cargo_fix'))
 
-    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code, deadline)
 
 
 def prior_agent_plans(mvir, n_code) -> TreeNode | None:
@@ -440,7 +464,11 @@ def get_fuel_limits(mvir, n_code):
                 defaults.safety_tries_per_file)),
     )
 
-def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
+def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code, deadline = None):
+    """
+    Run safety steps until the code is safe or a limit is reached.  `deadline`
+    is a `time.monotonic()` value after which no new step starts.
+    """
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
 
@@ -465,9 +493,15 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
     prev_fuel = None
     stopped_by_quota = False
+    stopped_by_time_limit = False
     while True:
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
+            break
+
+        if deadline is not None and time.monotonic() >= deadline:
+            print(f'stopping: time limit of {args.time_limit:g} minutes reached')
+            stopped_by_time_limit = True
             break
 
         # Update consecutive failure count
@@ -609,6 +643,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
         status = 'TEST_FAILED'
     elif unsafe_count != 0 and stopped_by_quota:
         status = 'API_QUOTA_EXHAUSTED'
+    elif unsafe_count != 0 and stopped_by_time_limit:
+        status = 'TIME_LIMIT_REACHED'
     elif unsafe_count != 0:
         status = 'BUDGET_EXHAUSTED'
     else:
@@ -802,6 +838,7 @@ def remaining_unsafe_prompt(w, n_code, max_functions = 40) -> str | None:
 
 
 def do_safety_loop(args, cfg):
+    deadline = time_limit_deadline(args)
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 
@@ -811,7 +848,7 @@ def do_safety_loop(args, cfg):
     code_node_id = parse_node_id_arg(mvir, args.node)
     n_code = mvir.node(code_node_id)
 
-    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+    safety_loop_common(args, cfg, mvir, w, n_code, n_c_code, deadline)
 
 
 def repl_locals(args, cfg, mvir, w):

@@ -138,6 +138,20 @@ def agent_ffi_seen_findings(
     )
 
 
+def agent_remaining_unsafe(
+    total: int,
+    functions: str,
+) -> str:
+    """
+    Render the prompt listing the functions that still contain unsafe code, so
+    the agent works on what the unsafe count measures.
+    """
+    return jinja_env.get_template('agent_remaining_unsafe.jinja').render(
+        total = total,
+        functions = functions,
+    )
+
+
 def agent_after_refactoring_run_tests() -> str:
     """Render the agent after refactoring run tests prompt."""
     return jinja_env.get_template('agent_after_refactoring_run_tests.jinja').render(

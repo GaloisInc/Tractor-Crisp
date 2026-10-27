@@ -61,23 +61,24 @@ class CodexAgentProfilesTest(unittest.TestCase):
             agent._inject_codex_agents(object(), object(), ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
+        prompt = prompts.agent_plan('translated_rust')
         for name in agent.PLANNING_CODEX_AGENTS:
-            self.assertIn(f'`{name}`', prompts.AGENT_PLAN)
-        self.assertIn('fork_turns="none"', prompts.AGENT_PLAN)
-        self.assertIn('Wait for all agents', prompts.AGENT_PLAN)
-        self.assertIn('only the parent agent write', prompts.AGENT_PLAN)
-        self.assertIn('`{cargo_dir_path}`', prompts.AGENT_PLAN)
-        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompts.AGENT_PLAN)
-        self.assertIn('.codex/safety_constraints.md', prompts.AGENT_PLAN)
+            self.assertIn(f'`{name}`', prompt)
+        self.assertIn('fork_turns="none"', prompt)
+        self.assertIn('Wait for all agents', prompt)
+        self.assertIn('only the parent agent write', prompt)
+        self.assertIn('`translated_rust`', prompt)
+        self.assertIn('$FIND_UNSAFE2_JSON_DIR', prompt)
+        self.assertIn('.codex/safety_constraints.md', prompt)
         self.assertIn('Do not modify, create, rename, or delete',
-                      prompts.AGENT_PLAN)
+                      prompt)
         # The required plan sections.
-        self.assertIn('## FFI entry point rules', prompts.AGENT_PLAN)
-        self.assertIn('## Conventions', prompts.AGENT_PLAN)
-        self.assertIn('## Cluster guide', prompts.AGENT_PLAN)
-        self.assertIn('## Status', prompts.AGENT_PLAN)
+        self.assertIn('## FFI entry point rules', prompt)
+        self.assertIn('## Conventions', prompt)
+        self.assertIn('## Cluster guide', prompt)
+        self.assertIn('## Status', prompt)
         # The plan must not carry verification commands; the harness does.
-        self.assertIn('the harness supplies all validation', prompts.AGENT_PLAN)
+        self.assertIn('the harness supplies all validation', prompt)
 
 
 if __name__ == '__main__':

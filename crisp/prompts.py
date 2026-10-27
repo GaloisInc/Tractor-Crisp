@@ -21,10 +21,6 @@ jinja_env = Environment(
 )
 
 
-AGENT_PLAN = _prompt('agent_plan.md')
-
-AGENT_FFI_REVIEW = _prompt('ffi_review.md')
-
 FFI_ENTRY_POINT_RULES = _prompt('ffi_entry_point_rules.md').strip()
 
 # `codex exec review` renders each finding as `- [P1] title — file:line`;
@@ -169,4 +165,20 @@ def agent_target_function(
     """Render the agent target function prompt."""
     return jinja_env.get_template('agent_target_function.jinja').render(
         func_name = func_name,
+    )
+
+
+def agent_plan(cargo_dir_path: str) -> str:
+    """Render the agent plan prompt with the FFI entry point rules."""
+    return jinja_env.get_template('agent_plan.jinja').render(
+        cargo_dir_path = cargo_dir_path,
+        ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
+    )
+
+
+def ffi_review(cargo_dir_path: str) -> str:
+    """Render the ffi review prompt with the FFI entry point rules."""
+    return jinja_env.get_template('ffi_review.jinja').render(
+        cargo_dir_path = cargo_dir_path,
+        ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
     )

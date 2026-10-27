@@ -1207,9 +1207,7 @@ class Workflow:
             return None
 
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = prompts.AGENT_FFI_REVIEW.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        prompt = prompts.ffi_review(cargo_dir_path = cargo_dir)
         prompt = FileNode.new(mvir, prompt)
         return analysis.ffi_review(cfg, mvir,
                 n_old_code, n_new_code, prompt)
@@ -1342,9 +1340,7 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
 
-        prompt = prompts.AGENT_PLAN.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        prompt = prompts.agent_plan(cargo_dir_path = cargo_dir)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),

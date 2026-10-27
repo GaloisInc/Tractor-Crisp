@@ -69,6 +69,9 @@ class BwrapSandbox:
 
     # Address used to access services on the host machine
     HOST_ADDR = '127.0.0.1'
+    # Commands still running in the sandbox end when crisp exits, because of
+    # `--die-with-parent`.
+    COMMANDS_END_ON_EXIT = True
 
     def __init__(self, mvir, work_dir):
         self.mvir = mvir
@@ -116,6 +119,8 @@ class BwrapSandbox:
             'bwrap',
             '--unshare-all', '--share-net',
             '--new-session',
+            # Kill the command if crisp exits (e.g. on SIGTERM) while it runs.
+            '--die-with-parent',
             # Make `/` and `/dev` visible
             '--ro-bind', '/', '/',
             '--dev-bind', '/dev', '/dev',

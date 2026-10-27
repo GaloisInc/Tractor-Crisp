@@ -453,6 +453,7 @@ def run_agent(
                 lambda app: http_build_app(asb, app),
                 lambda api_port, api_key: run_cmds(
                     lambda cmds: asb.run_all_with_api_port(api_port, api_key, cmds)),
+                wait_on_interrupt = not sb.COMMANDS_END_ON_EXIT,
             )
         else:
             exit_code, logs = run_cmds(asb.run_all)

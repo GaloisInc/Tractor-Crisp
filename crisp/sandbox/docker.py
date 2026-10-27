@@ -7,6 +7,8 @@ import sys
 import tarfile
 from typing import Callable
 import shlex
+import signal
+import threading
 
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
@@ -29,6 +31,9 @@ class WorkContainer:
 
     # Address used to access services on the host machine
     HOST_ADDR = 'host.docker.internal'
+    # Commands still running in the container end when crisp is stopped:
+    # `run_work_container` stops the container on the way out.
+    COMMANDS_END_ON_EXIT = True
 
     def __init__(self, mvir):
         self.mvir = mvir
@@ -202,17 +207,55 @@ class WorkContainer:
 
 KEEP_WORK_CONTAINER = False
 
+EXIT_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+@contextmanager
+def deferred_exit_signals():
+    """
+    Hold off Ctrl-C, SIGTERM, and SIGHUP until the block ends, so that a second
+    one can't interrupt cleanup; any that arrive are raised again afterward.
+    Signal handlers can only be changed on the main thread, so on other
+    threads this does nothing.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    received = []
+    old_handlers = {}
+    for sig in EXIT_SIGNALS:
+        handler = signal.getsignal(sig)
+        # Leave ignored signals ignored.  `None` means the handler wasn't set
+        # from Python, so it can't be restored.
+        if handler is signal.SIG_IGN or handler is None:
+            continue
+        old_handlers[sig] = handler
+        signal.signal(sig, lambda signum, frame: received.append(signum))
+    try:
+        yield
+    finally:
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
+        for sig in dict.fromkeys(received):
+            signal.raise_signal(sig)
+
 @contextmanager
 def run_work_container(cfg, mvir, require_consistent_path = False):
     # Ignore `require_consistent_path`; paths inside the docker container are
     # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
-    yield wc
-    if not KEEP_WORK_CONTAINER:
-        wc.stop()
-    else:
-        print('keeping work container %r' % (wc.container.name,))
+    # Stop the container even if the caller raises (including on Ctrl-C), or
+    # the agent running in it keeps going until its `sleep` ends.
+    try:
+        yield wc
+    finally:
+        # Usually we're here because of Ctrl-C or a signal; another one must
+        # not interrupt stopping the container.
+        with deferred_exit_signals():
+            if not KEEP_WORK_CONTAINER:
+                wc.stop()
+            else:
+                print('keeping work container %r' % (wc.container.name,))
 
 def set_keep_work_container(keep):
     global KEEP_WORK_CONTAINER

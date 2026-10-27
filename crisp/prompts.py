@@ -121,6 +121,17 @@ def agent_safety(
     )
 
 
+def agent_status_too_large(
+    size_kb: int,
+    limit_kb: int,
+) -> str:
+    """Render the prompt asking the agent to compact the plan's Status section."""
+    return jinja_env.get_template('agent_status_too_large.jinja').render(
+        size_kb = size_kb,
+        limit_kb = limit_kb,
+    )
+
+
 def agent_ffi_rejected(
     report: str,
 ) -> str:

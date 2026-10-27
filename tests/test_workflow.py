@@ -149,6 +149,18 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('Status section of `SAFETY_PLAN.md` is 155 KB, over the 24 KB limit', prompt)
 
 
+class CDocsReadingTest(unittest.TestCase):
+    def test_steps_read_docs_on_demand(self):
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
+        self.assertIn('Do not read them in full', step)
+        self.assertNotIn('start at', step)
+        self.assertIn('do not copy them into `SAFETY_PLAN.md`', plan)
+        self.assertIn('C docs sections for the cluster', plan)
+
+
 class UpgradeToolchainRustSrcTest(unittest.TestCase):
     def test_rewrites_va_list_api(self):
         out = upgrade_toolchain_rust_src(VA_RS)

@@ -5,9 +5,10 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
-from crisp import agent, prompts
+from crisp import agent, analysis, prompts
+from crisp.config import ModelsConfig
 from crisp.error import AgentQuotaError, CrispError
-from crisp.mvir import MVIR, TreeNode
+from crisp.mvir import FileNode, MVIR, TreeNode
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -252,6 +253,39 @@ class CodexFallbackTest(unittest.TestCase):
         with self.assertRaises(CrispError):
             self.run_codex([(1, b'ERROR: stream disconnected\n')])
         self.assertEqual(self.codex_runs(), ['login'])
+
+
+class FfiReviewModelTest(unittest.TestCase):
+    def review_model(self, **models):
+        """Run `ffi_review` up to the codex call and return the model it used."""
+        class Stop(Exception):
+            pass
+        used = []
+        def run_review_op(cfg, mvir, prompt, model, old_code, new_code):
+            used.append(model)
+            raise Stop()
+        cfg = SimpleNamespace(
+            models = ModelsConfig(**models),
+            transpile = SimpleNamespace(output_dir = 'rust'),
+            relative_path = lambda path: path,
+        )
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+            old_code = TreeNode.new(mvir, files = {})
+            new_code = TreeNode.new(mvir, files = {'a.rs': FileNode.new(mvir, 'a').node_id()})
+            prompt = FileNode.new(mvir, 'review')
+            with patch.object(agent, 'run_review_op', run_review_op), \
+                    self.assertRaises(Stop):
+                analysis.ffi_review(cfg, mvir, old_code, new_code, prompt)
+        return used[0]
+
+    def test_review_defaults_to_agent_loop(self):
+        self.assertEqual(self.review_model(agent_loop = 'loop'), 'loop')
+
+    def test_agent_review_overrides_agent_loop(self):
+        self.assertEqual(
+            self.review_model(agent_loop = 'loop', agent_review = 'review'),
+            'review')
 
 
 if __name__ == '__main__':

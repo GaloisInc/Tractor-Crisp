@@ -72,7 +72,6 @@ def llm_repair_tests(
         test_output = test_output,
     )
 
-
 def llm_repair_compile(
     output_instructions: str,
     output_instructions_lowercase: str,
@@ -85,7 +84,6 @@ def llm_repair_compile(
         input_files = input_files,
         stderr = stderr,
     )
-
 
 def llm_repair_safety(
     output_instructions: str,
@@ -100,7 +98,6 @@ def llm_repair_safety(
         logs = logs,
     )
 
-
 def llm_repair_call_sites(
     output_instructions: str,
     output_instructions_lowercase: str,
@@ -114,4 +111,62 @@ def llm_repair_call_sites(
         old_sigs = old_sigs,
         new_sigs = new_sigs,
         input_files = input_files,
+    )
+
+
+def agent_safety(
+    target_goal: str,
+    after_refactoring_instruction: str,
+) -> str:
+    """Render the agent safety prompt."""
+    return jinja_env.get_template('agent_safety.jinja').render(
+        target_goal = target_goal,
+        after_refactoring_instruction = after_refactoring_instruction,
+    )
+
+
+def agent_ffi_rejected(
+    report: str,
+) -> str:
+    """Render the agent ffi rejected prompt."""
+    return jinja_env.get_template('agent_ffi_rejected.jinja').render(
+        report = report,
+    )
+
+def agent_ffi_seen_findings(
+    findings: str,
+) -> str:
+    """Render the agent ffi seen findings prompt."""
+    return jinja_env.get_template('agent_ffi_seen_findings.jinja').render(
+        findings = findings,
+    )
+
+
+def agent_after_refactoring_run_tests() -> str:
+    """Render the agent after refactoring run tests prompt."""
+    return jinja_env.get_template('agent_after_refactoring_run_tests.jinja').render(
+    )
+
+def agent_after_refactoring_build() -> str:
+    """Render the agent after refactoring build prompt."""
+    return jinja_env.get_template('agent_after_refactoring_build.jinja').render(
+    )
+
+
+def agent_target_field(
+    field_name: str,
+    struct_name: str,
+) -> str:
+    """Render the agent target field prompt."""
+    return jinja_env.get_template('agent_target_field.jinja').render(
+        field_name = field_name,
+        struct_name = struct_name,
+    )
+
+def agent_target_function(
+    func_name: str,
+) -> str:
+    """Render the agent target function prompt."""
+    return jinja_env.get_template('agent_target_function.jinja').render(
+        func_name = func_name,
     )

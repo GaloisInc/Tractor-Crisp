@@ -1,5 +1,5 @@
+from abc import ABCMeta, abstractmethod
 import cbor
-import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 import functools
@@ -72,64 +72,10 @@ def upgrade_toolchain_rust_src(src: str) -> str:
     # rust-lang/rust#141980 merged `VaListImpl` into `VaList`
     return VA_LIST_IMPL_RE.sub('VaList', src)
 
-AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
-
-{target_goal}
-
-{after_refactoring_instruction}
-
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
-```sh
-crisp_check_unsafe2.sh
-```
-This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
-'''
-
-AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
-
-{report}
-
-Do not repeat this mistake.
-'''.strip()
-
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
-AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
-
-{findings}
-
-Do not repeat these mistakes.
-'''.strip()
-
-AGENT_AFTER_REFACTORING_RUN_TESTS = '''
-After refactoring, make sure the code still passes the tests.  Run the tests using this command:
-```sh
-crisp_run_tests.sh
-```
-This will exit zero if the tests passed and nonzero if they failed.  In either case, it returns the test logs as the body.
-
-Note: this uses the current Rust code, but always uses the original version of the tests.  You MUST NOT edit the test code (or the original C code), and doing so will have no effect on the tests run by this command.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
-'''.strip()
-
-AGENT_AFTER_REFACTORING_BUILD = '''
-After refactoring, make sure the code still builds.
-'''.strip()
-
-AGENT_TARGET_GOAL_FIELD = '''
-Your current target is the `{field_name}` field of `{struct_name}`, along with any similar or closely related fields.  Your goal is to change the field to use a safe type (such as `Box`, `Vec`, or `Rc`) instead of a raw pointer, and to update all uses of it to be as safe as possible (for example, use sites should not cast back to a raw pointer, since that defeats some of the safety checking).
-'''.strip()
-
-AGENT_TARGET_GOAL_FUNCTION = '''
-Your current target is the `{func_name}` function, along with any similar or closely related functions.  Your goal is to change the function in question to use only safe types (such as `Box`, `Vec`, or `Rc`) internally and in its signature, and to replace any unsafe FFI calls (e.g. `libc::printf`) with safe equivalents.  You should aim to make callees of the target function safe if it's feasible to do so, that way the entire call tree is safe.
-'''.strip()
-
-class AgentTarget:
+class AgentTarget(metaclass = ABCMeta):
+    @abstractmethod
     def prompt(self):
-        return self.PROMPT_FMT.format(**dataclasses.asdict(self))
+        ...
 
 @dataclass(frozen = True)
 class AgentTargetField(AgentTarget):
@@ -138,7 +84,11 @@ class AgentTargetField(AgentTarget):
     """
     struct_name: str
     field_name: str
-    PROMPT_FMT = AGENT_TARGET_GOAL_FIELD
+    def prompt(self):
+        return prompts.agent_target_field(
+            struct_name = self.struct_name,
+            field_name = self.field_name,
+        )
 
 @dataclass(frozen = True)
 class AgentTargetFunction(AgentTarget):
@@ -146,7 +96,8 @@ class AgentTargetFunction(AgentTarget):
     Make a function and all its callees safe.
     """
     func_name: str
-    PROMPT_FMT = AGENT_TARGET_GOAL_FUNCTION
+    def prompt(self):
+        return prompts.agent_target_function(func_name = self.func_name)
 
 @dataclass(frozen = True)
 class AgentTargetOther(AgentTarget):
@@ -156,7 +107,9 @@ class AgentTargetOther(AgentTarget):
     # The prompt asks the agent to continue the plan, so we
     # expect it to make a reasonable choice for the next target
     # based on that document.
-    PROMPT_FMT = ""
+    def prompt(self):
+        return ''
+
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -1183,17 +1136,15 @@ class Workflow:
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
         if provide_test_cmd and cfg.test_command is not None:
-            after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
-                    .format(test_cmd = cfg.test_command)
+            after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()
         else:
-            after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
+            after_refactoring_instruction = prompts.agent_after_refactoring_build()
 
         extra_code = {}
         if n_test_code is not None:
             extra_code['tests'] = n_test_code
 
-        prompt = AGENT_SAFETY_PROMPT.format(
-            cargo_dir_path = cargo_dir,
+        prompt = prompts.agent_safety(
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
         )

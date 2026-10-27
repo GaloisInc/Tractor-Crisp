@@ -18,7 +18,7 @@ import sys
 import tempfile
 import traceback
 
-from . import analysis, inline_errors, llm, sandbox
+from . import analysis, inline_errors, llm, prompts, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
 from .error import CrispError
@@ -29,7 +29,7 @@ from .sandbox import run_sandbox
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
-    AgentTargetOther, AGENT_FFI_REJECTED_PROMPT, AGENT_FFI_SEEN_FINDINGS_PROMPT,
+    AgentTargetOther,
     merge_ffi_finding_titles,
 )
 
@@ -449,10 +449,10 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
             ffi_report = None
             ffi_parts = []
             if ffi_seen_findings:
-                ffi_parts.append(AGENT_FFI_SEEN_FINDINGS_PROMPT.format(
+                ffi_parts.append(prompts.agent_ffi_seen_findings(
                     findings = '\n'.join(f'- {t}' for t in ffi_seen_findings)))
             if ffi_feedback is not None:
-                ffi_parts.append(AGENT_FFI_REJECTED_PROMPT.format(
+                ffi_parts.append(prompts.agent_ffi_rejected(
                     report = ffi_feedback))
             ffi_suffix = '\n\n'.join(ffi_parts) if ffi_parts else None
 

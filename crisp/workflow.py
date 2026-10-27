@@ -28,24 +28,6 @@ from .mvir import (
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
-LLM_SAFETY_PROMPT = '''
-This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
-
-HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
-
-After making the code safe, {output_instructions_lowercase}
-
-{input_files}
-'''
-
-LLM_SAFETY_PROMPT_NO_FFI = '''
-This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
-
-After making the code safe, {output_instructions_lowercase}
-
-{input_files}
-'''
-
 LLM_REPAIR_PROMPT = '''
 I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
 
@@ -971,7 +953,7 @@ class Workflow:
     def llm_safety(
         self,
         n_code: TreeNode,
-        prompt: str = LLM_SAFETY_PROMPT,
+        prompt: str | Callable[..., str] = prompts.llm_safety,
     ) -> TreeNode:
         n_new_code, n_op_llm = self.llm_safety_op(n_code, prompt = prompt)
         return n_new_code
@@ -980,7 +962,7 @@ class Workflow:
     def llm_safety_op(
         self,
         n_code: TreeNode,
-        prompt: str = LLM_SAFETY_PROMPT,
+        prompt: str | Callable[..., str] = prompts.llm_safety,
     ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
                 self.cfg, self.mvir, prompt, n_code,
@@ -1190,7 +1172,7 @@ class Workflow:
     def llm_safety_no_ffi(self, orig_code: TreeNode) -> TreeNode:
         main_code = self.erase_ffi(orig_code)
         # TODO: alternate safety prompt
-        new_main_code = self.llm_safety(main_code, prompt = LLM_SAFETY_PROMPT_NO_FFI)
+        new_main_code = self.llm_safety(main_code, prompt = prompts.llm_safety_no_ffi)
 
         orig_sigs = self.extract_sigs(orig_code)
         main_sigs = self.extract_sigs(new_main_code)

@@ -113,6 +113,12 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('under 40 KB', plan)
         self.assertLess(16 * 1024, STATUS_SIZE_LIMIT)
 
+    def test_finished_clusters_are_collapsed(self):
+        plan = prompts.agent_plan('translated_rust')
+        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        self.assertIn('replace its Cluster guide entry with a one-line note', plan)
+        self.assertIn("replace that cluster's Cluster guide entry with one line", step)
+
     def test_status_size_ends_at_next_section(self):
         status = b'## Status\n\n### Last iteration\n- done\n'
         plan = b'## Conventions\n\nrules\n\n' + status + b'## Later\n\nmore\n'

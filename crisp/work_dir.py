@@ -124,7 +124,14 @@ def lock_work_dir(cfg, mvir, dir_suffix = None):
         yield WorkDir(mvir, work_dir)
     finally:
         if not KEEP_WORK_DIR:
-            shutil.rmtree(work_dir)
+            # Only warn on failure, so it doesn't hide the error being handled.
+            # Under bwrap after Ctrl-C or a signal, the agent is still running
+            # (`--die-with-parent` ends it only when crisp exits) and may be
+            # writing files here.
+            try:
+                shutil.rmtree(work_dir)
+            except OSError as e:
+                print(f'warning: could not remove {work_dir!r}: {e}')
 
 def set_keep_work_dir(keep):
     global KEEP_WORK_DIR

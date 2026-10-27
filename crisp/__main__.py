@@ -74,6 +74,11 @@ def parse_args():
             'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    main.add_argument('--focus-below', type=int, metavar='N', default=100,
+        help='with --llm-mode=agent, list the functions that still have unsafe '
+            'code in the prompt once at most N unsafe operations remain '
+            '(default: %(default)s; 0 disables).  They are also listed after '
+            'two steps in a row without progress')
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
@@ -89,6 +94,11 @@ def parse_args():
             'agent_rand_target'),
         default='default',
         help='which style of LLM-based rewriting to use')
+    safety_loop.add_argument('--focus-below', type=int, metavar='N', default=100,
+        help='with --llm-mode=agent, list the functions that still have unsafe '
+            'code in the prompt once at most N unsafe operations remain '
+            '(default: %(default)s; 0 disables).  They are also listed after '
+            'two steps in a row without progress')
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
@@ -526,9 +536,16 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                                 'or this run will be terminated.'
                             )
 
-                    if ffi_suffix is not None:
-                        suffix = ffi_suffix if suffix is None \
-                            else f'{suffix}\n\n{ffi_suffix}'
+                    parts = [suffix]
+                    # Untargeted steps tend to drift to code that no longer
+                    # counts, so name the functions that still have unsafe
+                    # code once few remain or progress stalls.
+                    if consecutive_failures >= 2 \
+                            or unsafe_count <= args.focus_below:
+                        parts.append(remaining_unsafe_prompt(w, n_code))
+                    parts.append(ffi_suffix)
+                    parts = [p for p in parts if p is not None]
+                    suffix = '\n\n'.join(parts) if parts else None
 
                     n_new_code, n_new_plans, ffi_report = w.do_safety_step_agent(
                         n_code, n_c_code, n_plans,
@@ -756,6 +773,32 @@ def target_goal_is_done(w, n_code, target_goal):
             case AgentTargetOther():
                 total += j['total_unsafe']
     return total == 0
+
+def remaining_unsafe_prompt(w, n_code, max_functions = 40) -> str | None:
+    """
+    Build a prompt listing the non-FFI functions that still contain unsafe
+    operations, most first.  Returns `None` if there are none.
+    """
+    fns = []
+    for n_json_file in w.find_unsafe2_json_files(n_code):
+        j = n_json_file.body_json()
+        for fn_name, j_fn in j['fns'].items():
+            if j_fn['total_unsafe'] == 0 or j_fn.get('ffi_symbol') is not None:
+                continue
+            fns.append((j_fn['total_unsafe'], fn_name, j_fn['filename']))
+    if len(fns) == 0:
+        return None
+    fns.sort(key = lambda x: (-x[0], x[1]))
+
+    lines = [f'- {count} in `{name.rsplit("::", 1)[-1]}` (`{filename}`)'
+        for count, name, filename in fns[:max_functions]]
+    rest = fns[max_functions:]
+    if len(rest) > 0:
+        lines.append(f'- {sum(x[0] for x in rest)} more in {len(rest)} other functions')
+    print(f'listing {len(fns)} functions with unsafe code in the prompt')
+    return prompts.agent_remaining_unsafe(
+        total = sum(x[0] for x in fns),
+        functions = '\n'.join(lines))
 
 
 def do_safety_loop(args, cfg):

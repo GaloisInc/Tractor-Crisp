@@ -12,6 +12,7 @@ import pathspec.util
 import random
 import re
 import requests
+import signal
 import stat
 import subprocess
 import sys
@@ -942,7 +943,24 @@ def do_sandbox_run(args, cfg):
             sb.checkout(mvir.node(node_id))
         sb.run(args.run_cmd, stream = True)
 
+def exit_on_signal(signum, frame):
+    """
+    Exit normally on SIGTERM (e.g. from `kill` or `timeout`) or SIGHUP (e.g.
+    when the terminal or SSH session closes), so that cleanup such as stopping
+    the sandbox container still runs.
+    """
+    sys.exit(128 + signum)
+
+def install_exit_handlers():
+    signal.signal(signal.SIGTERM, exit_on_signal)
+    # Under `nohup`, SIGHUP is ignored so the run outlives the terminal; keep
+    # it that way.
+    if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, exit_on_signal)
+
+
 def main():
+    install_exit_handlers()
     args = parse_args()
 
     set_keep_work_dir(args.keep_work_dir)

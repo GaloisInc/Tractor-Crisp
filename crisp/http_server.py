@@ -27,6 +27,11 @@ class RunnerThread:
     `f` will not be called at all.  Otherwise, if `f` is started but throws an
     exception, the exception will be propagated when `result()` is called or on
     exit from the `with` block, whichever comes first.
+
+    Exiting the `with` block waits for `f` to finish, except when crisp is
+    being stopped (the block exits with `KeyboardInterrupt` or `SystemExit`):
+    then it returns right away, so the caller's cleanup can end `f`.  Every
+    sandbox's cleanup ends the commands still running in it.
     """
 
     def __init__(self, f):
@@ -47,7 +52,9 @@ class RunnerThread:
             if self._on_finish is not None:
                 self._on_finish()
 
-        self._thread = threading.Thread(target=run)
+        # A daemon thread, so a run of `f` that is still going doesn't keep
+        # crisp from exiting when it's stopped (see the class docstring).
+        self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
 
     def _take_exc(self):
@@ -70,6 +77,14 @@ class RunnerThread:
         # that the background thread can make progress and `join()` won't block
         # forever.
         self._start_event.set()
+
+        if exc_type is not None \
+                and issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            # crisp is being stopped (Ctrl-C or a signal).  Don't wait for `f`,
+            # which may be a long agent run: the caller's cleanup, such as
+            # stopping the sandbox container, should run now, and it ends `f`
+            # too.
+            return False
 
         self._thread.join()
 
@@ -137,7 +152,15 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
                 async def lifespan(app: FastAPI):
                     app.state.request_lock = asyncio.Lock()
                     def on_finish():
-                        loop.call_soon_threadsafe(finish_event.set)
+                        # After Ctrl-C or a signal, `f` may finish only once
+                        # the caller's cleanup ends it, when `asyncio.run` has
+                        # already closed the loop.
+                        if not loop.is_closed():
+                            try:
+                                loop.call_soon_threadsafe(finish_event.set)
+                            except RuntimeError:
+                                # Closed after the check.
+                                pass
                     # Call `rt.start()` as late as possible.  If the server
                     # crashes after this, `rt` may have already started a
                     # long-running call to `f()`, and `rt.__exit__` may block

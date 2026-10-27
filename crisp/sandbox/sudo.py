@@ -8,6 +8,8 @@ import shlex
 import subprocess
 import sys
 import tarfile
+import threading
+import time
 from typing import Callable
 from subprocess import CompletedProcess, Popen
 
@@ -35,29 +37,93 @@ class SudoSandbox:
             dir_name = f'{dir_name}.sb.{dir_suffix}'
         self.dir_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), dir_name)
 
+        # `sudo` processes that are still running, so `stop` can end them.
+        # Commands run on the agent's thread while `stop` runs on the main one.
+        self._procs = set()
+        self._lock = threading.Lock()
+        self._stopped = False
+
     def _sudo_cmd(self, cmd, env):
         env_args = (f"{k}={v}" for (k, v) in env.items())
         return ('sudo', '-u', self.user, *env_args, *cmd)
 
-    def _run_sudo(self, cmd, check=True, env={}, **kwargs) -> CompletedProcess[str]:
-        sudo_cmd = self._sudo_cmd(cmd, env)
-        p = subprocess.run(sudo_cmd, check=check, **kwargs)
-        return p
+    def _run_sudo(self, cmd, check=True, env={}, input=None, **kwargs) -> CompletedProcess[str]:
+        if input is not None:
+            kwargs['stdin'] = subprocess.PIPE
+        p = self._popen_sudo(cmd, env=env, **kwargs)
+        # On an exception (e.g. Ctrl-C), `p` stays in `_procs` for `stop`.
+        stdout, stderr = p.communicate(input)
+        self._forget(p)
+        if check and p.returncode != 0:
+            raise subprocess.CalledProcessError(p.returncode, p.args, stdout, stderr)
+        return CompletedProcess(p.args, p.returncode, stdout, stderr)
 
     def _popen_sudo(self, cmd, env={}, **kwargs) -> Popen[str]:
         sudo_cmd = self._sudo_cmd(cmd, env)
-        p = subprocess.Popen(sudo_cmd, **kwargs)
+        with self._lock:
+            if self._stopped:
+                raise RuntimeError(f'sandbox {self.dir_path!r} is stopped')
+            p = subprocess.Popen(sudo_cmd, **kwargs)
+            self._procs.add(p)
         return p
+
+    def _forget(self, p):
+        with self._lock:
+            self._procs.discard(p)
 
     def start(self):
         # This command will error if the directory already exists.
         p = self._run_sudo(('mkdir', self.dir_path))
 
     def stop(self):
-        if not KEEP_TEMP_DIR:
-            self._run_sudo(('rm', '-rf', self.dir_path))
-        else:
-            print('keeping temp dir %r' % self.dir_path)
+        with self._lock:
+            self._stopped = True
+            procs = list(self._procs)
+        try:
+            if procs and not self._end_commands(procs):
+                print(f'warning: commands are still running in {self.dir_path!r}; '
+                    'not removing it')
+                return
+            if not KEEP_TEMP_DIR:
+                # Only warn on failure (e.g. something the agent started still
+                # writing there), so it doesn't hide the error being handled.
+                p = subprocess.run(self._sudo_cmd(('rm', '-rf', self.dir_path), {}))
+                if p.returncode != 0:
+                    print(f'warning: could not remove {self.dir_path!r}')
+            else:
+                print('keeping temp dir %r' % self.dir_path)
+        except BaseException:
+            # Usually another Ctrl-C or signal while crisp is being stopped.
+            # Let it through, but say what is left to clean up by hand.
+            pids = [p.pid for p in procs if p.poll() is None]
+            if pids:
+                print(f'warning: exiting without cleaning up processes {pids}')
+            if not KEEP_TEMP_DIR:
+                print(f'warning: exiting without removing {self.dir_path!r}')
+            raise
+
+    def _end_commands(self, procs) -> bool:
+        """
+        End the commands started by the `sudo` processes `procs`.  Returns
+        whether they all ended.
+        """
+        # crisp can't signal the sandbox user's processes, but it can signal
+        # `sudo` (whose real UID is crisp's), and `sudo` relays SIGTERM to its
+        # command.  It can't relay SIGKILL, so a command that ignores SIGTERM
+        # keeps running, and so can processes a command started that outlive
+        # it.  Killing those would mean finding them in `/proc` and killing
+        # them as the sandbox user.  codex exits on SIGTERM, and leftovers
+        # don't use the API, so we don't.
+        for p in procs:
+            p.terminate()
+        deadline = time.monotonic() + STOP_TIMEOUT
+        ended = True
+        for p in procs:
+            try:
+                p.wait(timeout = max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                ended = False
+        return ended
 
     def _checkout_tar_file(self, tar_bytes):
         self.container.put_archive('/root/work/', tar_bytes)
@@ -144,7 +210,9 @@ class SudoSandbox:
 
         print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
 
-        cmd = 'cd {dir_path} && {cmd}'.format(
+        # `exec`, so that the signals `sudo` relays reach the command itself,
+        # not just the shell.
+        cmd = 'cd {dir_path} && exec {cmd}'.format(
             dir_path=shlex.quote(self.join(cwd)),
             cmd=shlex.join(cmd),
         )
@@ -177,7 +245,9 @@ class SudoSandbox:
             acc.extend(data)
         printer.finish()
 
+        p.stdout.close()
         p.wait()
+        self._forget(p)
 
         logs = bytes(acc)
 
@@ -185,6 +255,8 @@ class SudoSandbox:
 
 
 KEEP_TEMP_DIR = False
+# Seconds `stop` waits for commands to exit on SIGTERM.
+STOP_TIMEOUT = 10
 
 @contextmanager
 def run_sandbox(cfg, mvir, require_consistent_path = False):

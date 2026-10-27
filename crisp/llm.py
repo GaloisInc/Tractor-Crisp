@@ -233,7 +233,7 @@ def get_default_model() -> str:
 def run_rewrite(
         cfg: Config,
         mvir: MVIR,
-        prompt_fmt: str | Callable[..., str],
+        prompt_func: Callable[..., str],
         input_code: TreeNode,
         *,
         glob_filter: str | list[str] | None = None,
@@ -255,17 +255,14 @@ def run_rewrite(
         file_formatter = llm_format.get_file_formatter(LLM_FILE_FORMATTER)
     input_files_str, short_path_map = file_formatter.emit_files(
         mvir, input_code, glob_filter=glob_filter)
-    # For now we accept a plain `str` instead of a prompt function.
-    # TODO: Remove this once all callers are updated
-    render_prompt = prompt_fmt.format if isinstance(prompt_fmt, str) else prompt_fmt
     # Templates render after the file formatter supplies code and instructions.
-    prompt = render_prompt(
+    prompt = prompt_func(
         input_files=input_files_str,
         output_instructions=file_formatter.get_output_instructions(),
         output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
         **format_kwargs,
     )
-    prompt_without_files = render_prompt(
+    prompt_without_files = prompt_func(
         # Substitute in the literal string `{input_files}` for `{input_files}`,
         # producing a version of the prompt where all variables are substituted
         # except for `input_files`.  This is the version we record in the

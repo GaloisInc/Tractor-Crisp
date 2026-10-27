@@ -23,7 +23,7 @@ class RewritePromptTest(unittest.TestCase):
         cfg = SimpleNamespace(models=SimpleNamespace(rewriter='test'), model_options={})
         response = {'choices': [{'message': {'content': ''}}]}
         for prompt in (prompts.llm_safety, prompts.llm_safety_no_ffi,
-                       '{output_instructions}\n{input_files}'):
+                       '{output_instructions}\n{input_files}'.format):
             for separate_system in (False, True):
                 with self.subTest(prompt=prompt, separate_system=separate_system):
                     with tempfile.TemporaryDirectory() as tmp:

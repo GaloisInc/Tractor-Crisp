@@ -842,7 +842,7 @@ class Workflow:
     def llm_safety(
         self,
         n_code: TreeNode,
-        prompt: str | Callable[..., str] = prompts.llm_safety,
+        prompt: Callable[..., str] = prompts.llm_safety,
     ) -> TreeNode:
         n_new_code, n_op_llm = self.llm_safety_op(n_code, prompt = prompt)
         return n_new_code
@@ -851,7 +851,7 @@ class Workflow:
     def llm_safety_op(
         self,
         n_code: TreeNode,
-        prompt: str | Callable[..., str] = prompts.llm_safety,
+        prompt: Callable[..., str] = prompts.llm_safety,
     ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
                 self.cfg, self.mvir, prompt, n_code,
@@ -864,7 +864,7 @@ class Workflow:
         prompt: str,
     ) -> TreeNode:
         n_new_code, _ = llm.run_rewrite(
-            self.cfg, self.mvir, prompt, n_code,
+            self.cfg, self.mvir, prompt.format, n_code,
             glob_filter = self.cfg.src_globs,
             separate_system_prompt = True
         )

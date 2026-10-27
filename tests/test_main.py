@@ -1,10 +1,11 @@
 import contextlib
 import io
 import os
+import time
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from crisp import llm
 from crisp.__main__ import (
@@ -131,6 +132,36 @@ class RemainingUnsafePromptTest(unittest.TestCase):
 
     def test_nothing_left(self):
         self.assertIsNone(self.prompt({}))
+
+
+class TimeLimitTest(unittest.TestCase):
+    def test_arg(self):
+        for cmd in ('main', 'safety-loop'):
+            with patch('sys.argv', ['crisp', cmd, '--time-limit', '60']):
+                self.assertEqual(parse_args().time_limit, 60)
+            with patch('sys.argv', ['crisp', cmd]):
+                self.assertIsNone(parse_args().time_limit)
+            with patch('sys.argv', ['crisp', cmd, '--time-limit', '0']), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    parse_args()
+
+    def test_no_step_starts_after_the_deadline(self):
+        args = SimpleNamespace(llm_mode = 'agent', time_limit = 60)
+        w = MagicMock()
+        w.count_unsafe2.return_value = 5
+        w.test_op.return_value.exit_code = 0
+        out = io.StringIO()
+        with patch('crisp.__main__.get_fuel_limits',
+                    return_value = FuelLimits(10, 3, 2, 5)), \
+                patch('crisp.__main__.prior_agent_plans', return_value = MagicMock()), \
+                contextlib.redirect_stdout(out):
+            safety_loop_common(args, None, None, w, MagicMock(), MagicMock(),
+                deadline = time.monotonic() - 1)
+        self.assertIn('time limit of 60 minutes reached', out.getvalue())
+        self.assertIn('status: TIME_LIMIT_REACHED', out.getvalue())
+        w.do_safety_step_agent.assert_not_called()
+        w.accept.assert_not_called()
 
 
 if __name__ == '__main__':

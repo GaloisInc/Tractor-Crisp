@@ -28,70 +28,6 @@ from .mvir import (
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
-LLM_REPAIR_PROMPT = '''
-I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
-
-{output_instructions}
-
-{input_files}
-
-Build/test logs:
-
-```
-{test_output}
-```
-'''
-
-LLM_REPAIR_COMPILE_PROMPT = '''
-I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles.
-
-Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
-
-{output_instructions}
-
-{input_files}
-
-Compiler logs:
-
-```
-{stderr}
-```
-'''
-
-LLM_REPAIR_SAFETY_PROMPT = '''
-A recent change to this Rust code added new unsafety that wasn't present
-before.  See the report below and fix the indicated sources of unsafety.  Avoid
-adding new unsafe code, as it will be rejected by the same check.
-
-{output_instructions}
-
-{input_files}
-
-Unsafety report:
-
-```
-{logs}
-```
-'''
-
-LLM_PROMPT_REPAIR_CALL_SITES = '''
-The file `ffi.rs` below contains FFI wrapper functions, which expose various Rust functions to C. The signatures of the underlying Rust functions have changed; please update the wrappers to match.
-
-{output_instructions}
-
-Old signatures:
-```rust
-{old_sigs}
-```
-
-New signatures:
-```rust
-{new_sigs}
-```
-
-{input_files}
-'''
-
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
     r'^\s*-\s*\[P\d+\]\s*(.+?)\s*$', re.MULTILINE)
@@ -990,7 +926,7 @@ class Workflow:
     def llm_repair_op(self, n_code: TreeNode,
             n_op_test: TestResultNode) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_tests, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
@@ -1015,7 +951,7 @@ class Workflow:
         stderr = ''.join(j['message']['rendered']
             for j in json_errors if j.get('reason') == 'compiler-message')
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_compile, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'stderr': stderr},
                 think = True)
@@ -1036,7 +972,7 @@ class Workflow:
         n_op_check: CheckUnsafe2AnalysisNode,
     ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_SAFETY_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_safety, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'logs': n_op_check.body_str()},
                 think = True)
@@ -1207,7 +1143,7 @@ class Workflow:
         new_sigs_str = '\n'.join(mvir.node(v).body_str() for v in new_sigs.defs.values())
 
         new_ffi_tree, _llm_op = llm.run_rewrite(
-                cfg, mvir, LLM_PROMPT_REPAIR_CALL_SITES, ffi_tree,
+                cfg, mvir, prompts.llm_repair_call_sites, ffi_tree,
                 format_kwargs = dict(
                     old_sigs = old_sigs_str,
                     new_sigs = new_sigs_str,

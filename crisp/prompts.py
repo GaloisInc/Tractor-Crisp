@@ -57,3 +57,61 @@ def llm_safety(
         input_files = input_files,
         has_ffi = has_ffi,
     )
+
+
+def llm_repair_tests(
+    output_instructions: str,
+    output_instructions_lowercase: str,
+    input_files: str,
+    test_output: str,
+) -> str:
+    """Render the llm repair tests prompt."""
+    return jinja_env.get_template('llm_repair_tests.jinja').render(
+        output_instructions = output_instructions,
+        input_files = input_files,
+        test_output = test_output,
+    )
+
+
+def llm_repair_compile(
+    output_instructions: str,
+    output_instructions_lowercase: str,
+    input_files: str,
+    stderr: str,
+) -> str:
+    """Render the llm repair compile prompt."""
+    return jinja_env.get_template('llm_repair_compile.jinja').render(
+        output_instructions = output_instructions,
+        input_files = input_files,
+        stderr = stderr,
+    )
+
+
+def llm_repair_safety(
+    output_instructions: str,
+    output_instructions_lowercase: str,
+    input_files: str,
+    logs: str,
+) -> str:
+    """Render the llm repair safety prompt."""
+    return jinja_env.get_template('llm_repair_safety.jinja').render(
+        output_instructions = output_instructions,
+        input_files = input_files,
+        logs = logs,
+    )
+
+
+def llm_repair_call_sites(
+    output_instructions: str,
+    output_instructions_lowercase: str,
+    old_sigs: str,
+    new_sigs: str,
+    input_files: str,
+) -> str:
+    """Render the llm repair call sites prompt."""
+    return jinja_env.get_template('llm_repair_call_sites.jinja').render(
+        output_instructions = output_instructions,
+        old_sigs = old_sigs,
+        new_sigs = new_sigs,
+        input_files = input_files,
+    )

@@ -113,6 +113,16 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('under 40 KB', plan)
         self.assertLess(16 * 1024, STATUS_SIZE_LIMIT)
 
+    def test_ffi_rejections_are_recorded_as_dead_ends(self):
+        # The plan outlives the run, unlike the findings kept in memory, so
+        # a rejection recorded there is still avoided after a restart.
+        prompt = prompts.agent_ffi_rejected(report = 'logic in a wrapper closure')
+        self.assertIn('`### Dead ends`', prompt)
+        # Repeats of the same mistake don't add lines, and compacting Status
+        # may prune dead ends that no longer apply.
+        self.assertIn('unless an existing dead end already covers it', prompt)
+        self.assertIn('dead ends that still apply', status_size_prompt(STATUS_SIZE_LIMIT + 1))
+
     def test_finished_clusters_are_collapsed(self):
         plan = prompts.agent_plan('translated_rust')
         step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')

@@ -187,8 +187,26 @@ def main():
         # Use elapsed time (in seconds) rather than an absolute `datetime` for
         # the X axis, so we can compare results from different runs.
         base_date = points[0][0]
+        xs = [(x[0] - base_date).total_seconds() for x in points]
+        adj_xs = [xs[0]]
+        adj_amount = 0
+        for x in xs[1:]:
+            a = adj_xs[-1]
+            b = x - adj_amount
+            # If the gap exceeds 1 hour, assume the run was stopped and
+            # restarted, and reduce the gap to 10 minutes.  We adjust
+            # `base_date` as 
+            if b - a > 3600:
+                delta = (b - a) - 600
+                dt = points[len(adj_xs)]
+                print(f'{name}: detected large gap at {dt} - reduce by {delta} seconds')
+                adj_amount += delta
+                b -= delta
+            adj_xs.append(b)
+        print(adj_xs[:10], 'plot')
         ax.plot(
-            [(x[0] - base_date).total_seconds() for x in points],
+            #[(x[0] - base_date).total_seconds() for x in points],
+            adj_xs,
             [x[1] for x in points],
             linestyle='-',
             label=name,
@@ -199,6 +217,13 @@ def main():
     ax.xaxis.set_major_formatter(FuncFormatter(format_func))
     ax.set_ylabel("Unsafe operations")
     ax.legend()
+
+    #ax.set_xlim(0, 24 * 3600)
+    #ax.set_xticks(list(range(0, 24 * 3600, 2 * 3600)))
+    #ax.set_xlim(0, 120 * 3600)
+    #ax.set_xticks(list(range(0, 120 * 3600, 12 * 3600)))
+    ax.set_xlim(-3600, (96 + 1) * 3600)
+    ax.set_xticks(list(range(0, 96 * 3600 + 1, 12 * 3600)))
 
     plt.savefig('graph.png')
 

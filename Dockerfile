@@ -36,6 +36,7 @@ COPY scripts/cargo-docker-clean.sh /usr/local/bin/
 # Copy helper scripts for calling the CRISP internal HTTP API.
 COPY scripts/crisp_check_unsafe2.sh /usr/local/bin/
 COPY scripts/crisp_run_tests.sh /usr/local/bin/
+COPY scripts/crisp_ffi_review.sh /usr/local/bin/
 
 # `uv` is required for building `c2rust-refactor` and crisp scripts.
 # Make sure things are installed not under `/root/`

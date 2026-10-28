@@ -1,4 +1,4 @@
-Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{cargo_dir_path}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+Write `SAFETY_PLAN.md`: a migration plan for refactoring the Rust code in `{{ cargo_dir_path }}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
 
 This is a planning-only step.  Do not modify, create, rename, or delete any source files; your only output is `SAFETY_PLAN.md` at the repository root.
 
@@ -23,7 +23,7 @@ Use the following read-only custom sub-agents, one per independent analysis lens
 - `macro_analyst`: oversized or repetitive translated functions caused by C macro expansion.
 
 Spawn exactly one fresh instance of each named agent with `fork_turns="none"`.  Each agent already carries its lens instructions and the shared constraints (`.codex/safety_constraints.md`); keep spawn messages short, containing only the run-specific facts:
-- the Rust project path: `{cargo_dir_path}`;
+- the Rust project path: `{{ cargo_dir_path }}`;
 - the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`; and
 - whether the original C sources are present in the workspace, and where.
 
@@ -40,4 +40,4 @@ Wait for all agents to finish.  If an agent fails or returns an unusably thin re
 
 # FFI entry point rules (copy verbatim into the plan)
 
-{ffi_entry_point_rules}
+{{ ffi_entry_point_rules }}

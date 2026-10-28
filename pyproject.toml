@@ -7,6 +7,7 @@ dependencies = [
     "docker>=7.1.0",
     "fastapi>=0.116.0",
     "hypercorn>=0.17.3",
+    "jinja2>=3.1.6",
     "pathspec>=1.0.4",
     "pygit2>=1.19.0",
     "requests>=2.32.5",
@@ -30,7 +31,7 @@ crisp = "crisp.__main__:main"
 include = ["crisp*"]
 
 [tool.setuptools.package-data]
-"crisp" = ["prompts/*.md"]
+"crisp" = ["prompts/*.md", "prompts/*.jinja"]
 "crisp.agent" = ["codex/*.md", "codex/*.toml"]
 
 [tool.uv]

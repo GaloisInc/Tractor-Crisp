@@ -1,5 +1,5 @@
+from abc import ABCMeta, abstractmethod
 import cbor
-import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 import functools
@@ -27,88 +27,6 @@ from .mvir import (
 )
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
-
-LLM_SAFETY_PROMPT = '''
-This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
-
-HOWEVER, any function marked #[no_mangle] or #[export_name] is an FFI entry point, which means its signature must not be changed. If such a function has unsafe types (such as raw pointers) in its signature, you must leave them unmodified. You may still update the function body if needed to account for changes elsewhere in the code.
-
-After making the code safe, {output_instructions_lowercase}
-
-{input_files}
-'''
-
-LLM_SAFETY_PROMPT_NO_FFI = '''
-This Rust code was auto-translated from C, so it is partly unsafe. Your task is to convert it to safe Rust, without changing its behavior. You must replace all unsafe operations (such as raw pointer dereferences and libc calls) with safe ones, so that you can remove unsafe blocks from the code and convert unsafe functions to safe ones. You may adjust types and data structures (such as replacing raw pointers with safe references) as needed to accomplish this.
-
-After making the code safe, {output_instructions_lowercase}
-
-{input_files}
-'''
-
-LLM_REPAIR_PROMPT = '''
-I tried compiling this Rust code and running the tests, but I got an error. Please fix the error so the code compiles and passes the tests. Try to avoid introducing any more unsafe code beyond what's already there.
-
-{output_instructions}
-
-{input_files}
-
-Build/test logs:
-
-```
-{test_output}
-```
-'''
-
-LLM_REPAIR_COMPILE_PROMPT = '''
-I tried compiling this Rust code, but I got an error. Please fix the error so the code compiles.
-
-Don't add new unsafe blocks unless absolutely necessary. If the error is due to an unsafe function call or other operation, try to replace it with an equivalent safe operation instead.
-
-{output_instructions}
-
-{input_files}
-
-Compiler logs:
-
-```
-{stderr}
-```
-'''
-
-LLM_REPAIR_SAFETY_PROMPT = '''
-A recent change to this Rust code added new unsafety that wasn't present
-before.  See the report below and fix the indicated sources of unsafety.  Avoid
-adding new unsafe code, as it will be rejected by the same check.
-
-{output_instructions}
-
-{input_files}
-
-Unsafety report:
-
-```
-{logs}
-```
-'''
-
-LLM_PROMPT_REPAIR_CALL_SITES = '''
-The file `ffi.rs` below contains FFI wrapper functions, which expose various Rust functions to C. The signatures of the underlying Rust functions have changed; please update the wrappers to match.
-
-{output_instructions}
-
-Old signatures:
-```rust
-{old_sigs}
-```
-
-New signatures:
-```rust
-{new_sigs}
-```
-
-{input_files}
-'''
 
 # Same format, capturing the title for `merge_ffi_finding_titles`.
 AGENT_FFI_REVIEW_FINDING_TITLE_RE = re.compile(
@@ -154,64 +72,10 @@ def upgrade_toolchain_rust_src(src: str) -> str:
     # rust-lang/rust#141980 merged `VaListImpl` into `VaList`
     return VA_LIST_IMPL_RE.sub('VaList', src)
 
-AGENT_SAFETY_PROMPT = '''
-Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
-
-{target_goal}
-
-{after_refactoring_instruction}
-
-Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
-```sh
-crisp_check_unsafe2.sh
-```
-This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
-'''
-
-AGENT_FFI_REJECTED_PROMPT = '''
-A previous attempt at this step was rejected because it violated the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer reported:
-
-{report}
-
-Do not repeat this mistake.
-'''.strip()
-
-# Sticky reminder injected into every attempt after the first FFI review
-# rejection in a run, built from harvested reviewer finding titles.
-AGENT_FFI_SEEN_FINDINGS_PROMPT = '''
-Earlier attempts in this run were rejected for violating the FFI entry point rules (see `SAFETY_PLAN.md`). The reviewer's findings included:
-
-{findings}
-
-Do not repeat these mistakes.
-'''.strip()
-
-AGENT_AFTER_REFACTORING_RUN_TESTS = '''
-After refactoring, make sure the code still passes the tests.  Run the tests using this command:
-```sh
-crisp_run_tests.sh
-```
-This will exit zero if the tests passed and nonzero if they failed.  In either case, it returns the test logs as the body.
-
-Note: this uses the current Rust code, but always uses the original version of the tests.  You MUST NOT edit the test code (or the original C code), and doing so will have no effect on the tests run by this command.  Instead, you must ensure that your edits to the codebase preserve ALL externally-visible behavior that's exercised by the tests.
-'''.strip()
-
-AGENT_AFTER_REFACTORING_BUILD = '''
-After refactoring, make sure the code still builds.
-'''.strip()
-
-AGENT_TARGET_GOAL_FIELD = '''
-Your current target is the `{field_name}` field of `{struct_name}`, along with any similar or closely related fields.  Your goal is to change the field to use a safe type (such as `Box`, `Vec`, or `Rc`) instead of a raw pointer, and to update all uses of it to be as safe as possible (for example, use sites should not cast back to a raw pointer, since that defeats some of the safety checking).
-'''.strip()
-
-AGENT_TARGET_GOAL_FUNCTION = '''
-Your current target is the `{func_name}` function, along with any similar or closely related functions.  Your goal is to change the function in question to use only safe types (such as `Box`, `Vec`, or `Rc`) internally and in its signature, and to replace any unsafe FFI calls (e.g. `libc::printf`) with safe equivalents.  You should aim to make callees of the target function safe if it's feasible to do so, that way the entire call tree is safe.
-'''.strip()
-
-class AgentTarget:
+class AgentTarget(metaclass = ABCMeta):
+    @abstractmethod
     def prompt(self):
-        return self.PROMPT_FMT.format(**dataclasses.asdict(self))
+        ...
 
 @dataclass(frozen = True)
 class AgentTargetField(AgentTarget):
@@ -220,7 +84,11 @@ class AgentTargetField(AgentTarget):
     """
     struct_name: str
     field_name: str
-    PROMPT_FMT = AGENT_TARGET_GOAL_FIELD
+    def prompt(self):
+        return prompts.agent_target_field(
+            struct_name = self.struct_name,
+            field_name = self.field_name,
+        )
 
 @dataclass(frozen = True)
 class AgentTargetFunction(AgentTarget):
@@ -228,7 +96,8 @@ class AgentTargetFunction(AgentTarget):
     Make a function and all its callees safe.
     """
     func_name: str
-    PROMPT_FMT = AGENT_TARGET_GOAL_FUNCTION
+    def prompt(self):
+        return prompts.agent_target_function(func_name = self.func_name)
 
 @dataclass(frozen = True)
 class AgentTargetOther(AgentTarget):
@@ -238,7 +107,9 @@ class AgentTargetOther(AgentTarget):
     # The prompt asks the agent to continue the plan, so we
     # expect it to make a reasonable choice for the next target
     # based on that document.
-    PROMPT_FMT = ""
+    def prompt(self):
+        return ''
+
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -971,7 +842,7 @@ class Workflow:
     def llm_safety(
         self,
         n_code: TreeNode,
-        prompt: str = LLM_SAFETY_PROMPT,
+        prompt: Callable[..., str] = prompts.llm_safety,
     ) -> TreeNode:
         n_new_code, n_op_llm = self.llm_safety_op(n_code, prompt = prompt)
         return n_new_code
@@ -980,7 +851,7 @@ class Workflow:
     def llm_safety_op(
         self,
         n_code: TreeNode,
-        prompt: str = LLM_SAFETY_PROMPT,
+        prompt: Callable[..., str] = prompts.llm_safety,
     ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
                 self.cfg, self.mvir, prompt, n_code,
@@ -993,7 +864,7 @@ class Workflow:
         prompt: str,
     ) -> TreeNode:
         n_new_code, _ = llm.run_rewrite(
-            self.cfg, self.mvir, prompt, n_code,
+            self.cfg, self.mvir, prompt.format, n_code,
             glob_filter = self.cfg.src_globs,
             separate_system_prompt = True
         )
@@ -1008,7 +879,7 @@ class Workflow:
     def llm_repair_op(self, n_code: TreeNode,
             n_op_test: TestResultNode) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_tests, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'test_output': n_op_test.body_str()},
                 think = True)
@@ -1033,7 +904,7 @@ class Workflow:
         stderr = ''.join(j['message']['rendered']
             for j in json_errors if j.get('reason') == 'compiler-message')
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_COMPILE_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_compile, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'stderr': stderr},
                 think = True)
@@ -1054,7 +925,7 @@ class Workflow:
         n_op_check: CheckUnsafe2AnalysisNode,
     ) -> tuple[TreeNode, LlmOpNode]:
         return llm.run_rewrite(
-                self.cfg, self.mvir, LLM_REPAIR_SAFETY_PROMPT, n_code,
+                self.cfg, self.mvir, prompts.llm_repair_safety, n_code,
                 glob_filter = self.cfg.src_globs,
                 format_kwargs = {'logs': n_op_check.body_str()},
                 think = True)
@@ -1190,7 +1061,7 @@ class Workflow:
     def llm_safety_no_ffi(self, orig_code: TreeNode) -> TreeNode:
         main_code = self.erase_ffi(orig_code)
         # TODO: alternate safety prompt
-        new_main_code = self.llm_safety(main_code, prompt = LLM_SAFETY_PROMPT_NO_FFI)
+        new_main_code = self.llm_safety(main_code, prompt = prompts.llm_safety_no_ffi)
 
         orig_sigs = self.extract_sigs(orig_code)
         main_sigs = self.extract_sigs(new_main_code)
@@ -1225,7 +1096,7 @@ class Workflow:
         new_sigs_str = '\n'.join(mvir.node(v).body_str() for v in new_sigs.defs.values())
 
         new_ffi_tree, _llm_op = llm.run_rewrite(
-                cfg, mvir, LLM_PROMPT_REPAIR_CALL_SITES, ffi_tree,
+                cfg, mvir, prompts.llm_repair_call_sites, ffi_tree,
                 format_kwargs = dict(
                     old_sigs = old_sigs_str,
                     new_sigs = new_sigs_str,
@@ -1265,17 +1136,15 @@ class Workflow:
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
         if provide_test_cmd and cfg.test_command is not None:
-            after_refactoring_instruction = AGENT_AFTER_REFACTORING_RUN_TESTS \
-                    .format(test_cmd = cfg.test_command)
+            after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()
         else:
-            after_refactoring_instruction = AGENT_AFTER_REFACTORING_BUILD
+            after_refactoring_instruction = prompts.agent_after_refactoring_build()
 
         extra_code = {}
         if n_test_code is not None:
             extra_code['tests'] = n_test_code
 
-        prompt = AGENT_SAFETY_PROMPT.format(
-            cargo_dir_path = cargo_dir,
+        prompt = prompts.agent_safety(
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
         )
@@ -1338,9 +1207,7 @@ class Workflow:
             return None
 
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
-        prompt = prompts.AGENT_FFI_REVIEW.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        prompt = prompts.ffi_review(cargo_dir_path = cargo_dir)
         prompt = FileNode.new(mvir, prompt)
         return analysis.ffi_review(cfg, mvir,
                 n_old_code, n_new_code, prompt)
@@ -1473,9 +1340,7 @@ class Workflow:
             # TODO: un-break that mode somehow (without hiding the C code).
             extra_code['c_code'] = n_test_code
 
-        prompt = prompts.AGENT_PLAN.format(
-            cargo_dir_path = cargo_dir,
-            ffi_entry_point_rules = prompts.FFI_ENTRY_POINT_RULES)
+        prompt = prompts.agent_plan(cargo_dir_path = cargo_dir)
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_plan, n_code,
             extra_code = extra_code,
             unsafe_json = self.find_unsafe2_json(n_code),

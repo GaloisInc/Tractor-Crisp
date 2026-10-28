@@ -4,6 +4,7 @@ import os
 import pathlib
 import re
 import requests
+from typing import Callable
 
 from . import llm_format
 from .config import Config, ModelOptionsConfig
@@ -232,7 +233,7 @@ def get_default_model() -> str:
 def run_rewrite(
         cfg: Config,
         mvir: MVIR,
-        prompt_fmt: str,
+        prompt_func: Callable[..., str],
         input_code: TreeNode,
         *,
         glob_filter: str | list[str] | None = None,
@@ -254,13 +255,14 @@ def run_rewrite(
         file_formatter = llm_format.get_file_formatter(LLM_FILE_FORMATTER)
     input_files_str, short_path_map = file_formatter.emit_files(
         mvir, input_code, glob_filter=glob_filter)
-    prompt = prompt_fmt.format(
+    # Templates render after the file formatter supplies code and instructions.
+    prompt = prompt_func(
         input_files=input_files_str,
         output_instructions=file_formatter.get_output_instructions(),
         output_instructions_lowercase=file_formatter.get_output_instructions_lowercase(),
         **format_kwargs,
     )
-    prompt_without_files = prompt_fmt.format(
+    prompt_without_files = prompt_func(
         # Substitute in the literal string `{input_files}` for `{input_files}`,
         # producing a version of the prompt where all variables are substituted
         # except for `input_files`.  This is the version we record in the

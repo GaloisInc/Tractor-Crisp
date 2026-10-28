@@ -30,7 +30,7 @@ Output the resulting Rust code in a Markdown code block, with the file path on t
 def do_repair_no_errors(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
     w = Workflow(cfg, mvir)
     n_new_code, _n_op = llm.run_rewrite(
-            cfg, mvir, REPAIR_NO_ERRORS_PROMPT, n_code,
+            cfg, mvir, REPAIR_NO_ERRORS_PROMPT.format, n_code,
             glob_filter = cfg.src_globs,
             think = True)
     return n_new_code
@@ -54,7 +54,7 @@ def do_repair_basic(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
     json_errors = w.cargo_check_json(n_code)
     _errors_by_file, stderr_text = inline_errors.extract_diagnostics(json_errors)
     n_new_code, _n_op = llm.run_rewrite(
-            cfg, mvir, REPAIR_BASIC_PROMPT, n_code,
+            cfg, mvir, REPAIR_BASIC_PROMPT.format, n_code,
             glob_filter = cfg.src_globs,
             format_kwargs = {'stderr': stderr_text.strip('\n')},
             think = True)
@@ -72,7 +72,7 @@ def do_repair_inline(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
     w = Workflow(cfg, mvir)
     n_code_inline = w.inline_errors(n_code)
     n_new_code, _n_op = llm.run_rewrite(
-            cfg, mvir, REPAIR_INLINE_PROMPT, n_code_inline,
+            cfg, mvir, REPAIR_INLINE_PROMPT.format, n_code_inline,
             glob_filter = cfg.src_globs,
             think = True)
     return n_new_code
@@ -92,7 +92,7 @@ def do_repair_inline2(cfg: Config, mvir: MVIR, n_code: TreeNode) -> TreeNode:
     w = Workflow(cfg, mvir)
     n_code_inline = w.inline_errors(n_code)
     n_new_code, _n_op = llm.run_rewrite(
-            cfg, mvir, REPAIR_INLINE2_PROMPT, n_code_inline,
+            cfg, mvir, REPAIR_INLINE2_PROMPT.format, n_code_inline,
             glob_filter = cfg.src_globs,
             think = True)
     return n_new_code

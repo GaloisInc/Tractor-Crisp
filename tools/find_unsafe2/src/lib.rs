@@ -673,12 +673,19 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
     };
 
     let crate_name_str = rustc_public::local_crate().name.to_string();
+    // Look for the crate name as a whole identifier (e.g. if the name is `foo`, don't match the
+    // `foo` in `foo_bar`) and not preceded by a colon (e.g. turn `foo::foo` into `crate::foo`, not
+    // `crate::crate`).
     let crate_name_regex = Regex::new(
-        &format!(r"([^:a-zA-Z0-9_]|^){crate_name_str}([^a-zA-Z0-9_]|$)"),
-    ).unwrap();
+        &format!(r"([^:]|^)\<{crate_name_str}\>"),
+    ).unwrap_or_else(|e| {
+        panic!("failed to parse regex containing crate name {:?}: {}", crate_name_str, e)
+    });
     let scrub_crate_name = |s: String| -> String {
-        // Append `$2` to avoid deleting the non-ident character after the crate name.
-        crate_name_regex.replace(&s, "crate$2").into_owned()
+        // Prepend `$1` to avoid deleting the character before the crate name.  We use
+        // `replace_all` rather than `replace` because the crate name may appear in both the type
+        // and the trait of a path like `<foo::Type as foo::Trait>::method`.
+        crate_name_regex.replace_all(&s, "${1}crate").into_owned()
     };
 
     let mut out = Outputs {

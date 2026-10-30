@@ -36,7 +36,7 @@ def get_single_trace(
     prompt: str,
     workflow: Workflow,
     starting_node_tag: str = "current"
-):
+) -> str:
     n_input_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, starting_node_tag))
 
     n_c_code = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'c_code'))

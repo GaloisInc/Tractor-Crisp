@@ -15,6 +15,7 @@ def run_save_traces_zlib():
             '20260908_reflGPT5p6',
         ]],
         dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
+        repeats = 5,
     )
 
 

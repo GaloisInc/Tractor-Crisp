@@ -20,12 +20,17 @@ import traceback
 
 from . import analysis, inline_errors, llm, prompts, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
+from .branch import BranchState
 from .config import Config
 from .error import CrispError
-from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
-    TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
-    CodexAgentOpNode
+from .mvir import (
+    MVIR, NodeId, FileNode, TreeNode, LlmOpNode, TestResultNode,
+    CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, CodexAgentOpNode,
+    BranchStateNode
+)
+from .rand_target import PickTarget
 from .sandbox import run_sandbox
+from .util import FuelLimits
 from .work_dir import lock_work_dir, set_keep_work_dir
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTargetField, AgentTargetFunction,
@@ -88,6 +93,18 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
+
+    branch_main = sub.add_parser('branch-main')
+    branch_main.add_argument('node', nargs='?', default='c_code')
+    branch_main.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+            "requires --llm-mode=agent or similar")
+
+    branch_safety_loop = sub.add_parser('branch-safety-loop')
+    branch_safety_loop.add_argument('node', nargs='?', default='current_branch')
+    branch_safety_loop.add_argument('--codex-login', action='store_true',
+        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
+            "requires --llm-mode=agent or similar")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -227,11 +244,8 @@ def parse_node_id(mvir, s):
     return node_id
 
 
-def do_main(args, cfg):
-    mvir = MVIR(cfg.mvir_storage_dir, '.')
-    w = Workflow(cfg, mvir)
-
-    c_code_node_id = parse_node_id_arg(mvir, args.node)
+def main_common(args, cfg, mvir, w, c_code_str):
+    c_code_node_id = parse_node_id_arg(mvir, c_code_str)
     n_c_code = mvir.node(c_code_node_id)
 
     paths = (Path(path) for path in n_c_code.files.keys())
@@ -252,16 +266,16 @@ def do_main(args, cfg):
     if n_code is None:
         n_code = w.transpile(n_c_code)
     if n_code is None:
-        return
+        return None, None
     w.accept(n_code, ('main', 'transpile'))
 
     n_code = w.split_ffi(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after split_ffi')
-        return
+        return None, None
     if not w.test(n_code, n_c_code):
         print('error: tests failed after split_ffi')
-        return
+        return None, None
     w.accept(n_code, ('main', 'split_ffi'))
 
     # Auto-fix compiler warnings (e.g. unused imports) before the safety loop, so
@@ -269,11 +283,23 @@ def do_main(args, cfg):
     n_code = w.cargo_fix(n_code)
     if not w.cargo_check_json_op(n_code).passed:
         print('error: build failed after cargo fix')
-        return
+        return None, None
     if not w.test(n_code, n_c_code):
         print('error: tests failed after cargo fix')
-        return
+        return None, None
     w.accept(n_code, ('main', 'cargo_fix'))
+
+    return n_c_code, n_code
+
+
+def do_main(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    n_c_code, n_code = main_common(args, cfg, mvir, w, args.node)
+
+    if n_code is None:
+        return
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
 
@@ -320,27 +346,6 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
                 + ', '.join(str(ie.node_id) for ie in matches)
             )
 
-
-@dataclass(frozen = True)
-class FuelLimits:
-    # Try at most this many times in total to make the code safe.
-    safety_tries: int
-
-    # Bail out if the LLM fails to improve safety of the code for several
-    # consecutive iterations.  For example, if LLM_SAFETY_TRIES=100 and
-    # LLM_SAFETY_MAX_CONSECUTIVE_FAILURES=3, the loop will stop if it makes no
-    # progress for 3 iterations in a row, on the assumption that the LLM has
-    # gotten stuck somehow, but otherwise will keep going for 100 iteratiors.
-    max_consecutive_failures: int
-
-    # Give the agent this many iterations to fix its current target before
-    # switching to a new target.  If it succeeds at fixing the current target,
-    # the outer loop will pick a new target immediately instead.
-    safety_tries_per_target: int
-
-    # Give the agent this many iterations within each file before swiching to a
-    # new file.
-    safety_tries_per_file: int
 
 def total_code_size(mvir, n_code):
     total = 0
@@ -557,165 +562,6 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     print('status: %s' % status)
 
 
-class PickTarget:
-    def __init__(self, limits):
-        self.fuel_file = FuelCounter('target file',
-            default_give=limits.safety_tries_per_file)
-        self.fuel_target = FuelCounter('target goal',
-            default_give=limits.safety_tries_per_target)
-        self.file_target_goals = []
-        self.current_file = None
-        self.target_goal = None
-
-    def current_target_goal(self, w, n_code):
-        # Keep going with the current goal if possible.
-
-        # Optimistically take fuel from both the target and file to continue
-        # with the current goal.  If the target is out of fuel, we change
-        # targets and `give()` the target more fuel below; if the file is out
-        # of fuel, we changes files and targets and `give()` both more fuel.
-        target_had_fuel = self.fuel_target.try_use()
-        file_had_fuel = self.fuel_file.try_use()
-
-        if (
-            file_had_fuel and target_had_fuel
-            and self.target_goal is not None
-            and not target_goal_is_done(w, n_code, self.target_goal)
-        ):
-            print(f'PickTarget: continue with {self.target_goal} from {self.current_file}')
-            print(f'  target fuel: {self.fuel_target.fuel}')
-            print(f'  file fuel: {self.fuel_file.fuel}')
-            return self.target_goal
-
-        # Try to pick a goal from the current file if there's fuel left for it.
-        if file_had_fuel:
-            while len(self.file_target_goals) > 0:
-                candidate_goal = self.file_target_goals.pop()
-                if not target_goal_is_done(w, n_code, candidate_goal):
-                    self.target_goal = candidate_goal
-                    self.fuel_target.give()
-                    self.fuel_target.use()
-                    print(f'PickTarget: new target {self.target_goal} from {self.current_file}')
-                    print(f'  target fuel: {self.fuel_target.fuel}')
-                    print(f'  file fuel: {self.fuel_file.fuel}')
-                    return self.target_goal
-
-        # Switch files, and build a new list of targets.
-        self.current_file, self.file_target_goals = pick_file_and_list_targets(w, n_code)
-        if len(self.file_target_goals) > 0:
-            # No need to check `target_goal_is_done`, since none of the goals
-            # in the list have been fixed yet.
-            self.target_goal = self.file_target_goals.pop()
-            self.fuel_file.give()
-            self.fuel_file.use()
-            self.fuel_target.give()
-            self.fuel_target.use()
-            print(f'PickTarget: new file {self.current_file}, target {self.target_goal}')
-            print(f'  target fuel: {self.fuel_target.fuel}')
-            print(f'  file fuel: {self.fuel_file.fuel}')
-            return self.target_goal
-
-        # Found no goal in any file, but `count_unsafe2` still reported some
-        # unsafe code.  Tell the agent to check the entire codebase for
-        # leftover unsafety.
-        self.target_goal = AgentTargetOther()
-        self.fuel_file.give()
-        self.fuel_file.use()
-        self.fuel_target.give()
-        self.fuel_target.use()
-        print('PickTarget: no valid targets')
-        return self.target_goal
-
-
-def pick_file_and_list_targets(w, n_code):
-    # Choose a `target_goal`.
-    @dataclass(frozen = True)
-    class FileTargets:
-        functions: list
-        fields: list
-    files = defaultdict(lambda: FileTargets([], []))
-    for n_json_file in w.find_unsafe2_json_files(n_code):
-        j = n_json_file.body_json()
-        for fn_name, j_fn in j['fns'].items():
-            if j_fn['total_unsafe'] == 0 or j_fn.get('ffi_symbol') is not None:
-                continue
-            files[j_fn['filename']].functions.append(AgentTargetFunction(fn_name))
-        for type_name, j_type in j['types'].items():
-            if 'type' in j_type['field_contains_raw_ptr']:
-                # This is a type alias, not a struct
-                # definition.  To avoid confusing prompting, we
-                # omit this from `target_fields`.  (Otherwise
-                # we would end up telling the agent to fix the
-                # "type" field of a non-struct.)
-                continue
-            files[j_type['filename']].fields.extend(AgentTargetField(type_name, k)
-                for k,v in j_type['field_contains_raw_ptr'].items()
-                if v > 0)
-
-    # Exclude any files that are already fully safe.
-    files = {k: v for k,v in files.items() if len(v.functions) + len(v.fields) > 0}
-
-    if len(files) == 0:
-        # We found no unsafe fields or functions.
-        return None, []
-
-    print(f'pick_file_and_list_targets: picking from {len(files)} files')
-    filename, file_targets = random.choice(list(files.items()))
-    functions = file_targets.functions
-    fields = file_targets.fields
-    print(f'  picked file {filename} with {len(functions)} function targets '
-        f'and {len(fields)} field targets')
-
-    # We have a limited per-file budget, and we prefer to spend it on fields
-    # rather than functions, so we try to put fields earlier in the final list.
-    order = []
-
-    # Shuffle functions and fields so each one has equal priority within its
-    # category.
-    random.shuffle(functions)
-    random.shuffle(fields)
-
-    while len(functions) > 0 and len(fields) > 0:
-        # Prefer fields over functions by giving them 5x normal weight.
-        functions_weight = len(functions)
-        fields_weight = 5 * len(fields)
-        total_weight = functions_weight + fields_weight
-        x = random.randrange(total_weight)
-        if x < functions_weight:
-            order.append(functions.pop())
-        else:
-            order.append(fields.pop())
-
-    order.extend(fields)
-    order.extend(functions)
-
-    # `PickTarget` actually processes the list in reverse order, so reverse it
-    # to put higher-priority items near the end.
-    order.reverse()
-
-    print(f'  order ({len(order)} items):')
-    for x in order:
-        print(f'    {x}')
-    return filename, order
-
-def target_goal_is_done(w, n_code, target_goal):
-    total = 0
-    for n_json_file in w.find_unsafe2_json_files(n_code):
-        j = n_json_file.body_json()
-        match target_goal:
-            case AgentTargetField(struct, field):
-                j_struct = j['types'].get(struct)
-                if j_struct is not None:
-                    total += j_struct['field_contains_raw_ptr'].get(field, 0)
-            case AgentTargetFunction(func):
-                j_func = j['fns'].get(func)
-                if j_func is not None:
-                    total += j_func['total_unsafe']
-            case AgentTargetOther():
-                total += j['total_unsafe']
-    return total == 0
-
-
 def do_safety_loop(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
@@ -727,6 +573,36 @@ def do_safety_loop(args, cfg):
     n_code = mvir.node(code_node_id)
 
     safety_loop_common(args, cfg, mvir, w, n_code, n_c_code)
+
+
+def do_branch_main(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    n_c_code, n_code = main_common(args, cfg, mvir, w, args.node)
+
+    if n_code is None:
+        return
+
+    limits = get_fuel_limits(mvir, n_code)
+    print(f'limits = {limits!r}')
+
+    br = BranchState.new(w, limits, n_c_code, n_code)
+    br.accept()
+    br.safety_loop()
+
+def do_branch_safety_loop(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    w = Workflow(cfg, mvir)
+
+    branch_node_id = parse_node_id_arg(mvir, args.node)
+    n_branch = mvir.node(branch_node_id)
+
+    limits = get_fuel_limits(mvir, mvir.node(n_branch.fields.raw['code']))
+    print(f'limits = {limits!r}')
+
+    br = BranchState(w, n_branch, limits)
+    br.safety_loop()
 
 
 def repl_locals(args, cfg, mvir, w):
@@ -920,6 +796,10 @@ def main():
         do_main(args, cfg)
     elif args.cmd == 'safety-loop':
         do_safety_loop(args, cfg)
+    elif args.cmd == 'branch-main':
+        do_branch_main(args, cfg)
+    elif args.cmd == 'branch-safety-loop':
+        do_branch_safety_loop(args, cfg)
     elif args.cmd == 'repl':
         do_repl(args, cfg)
     elif args.cmd == 'eval':

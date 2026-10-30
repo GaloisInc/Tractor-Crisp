@@ -14,8 +14,9 @@ def save_traces_rewards_zlib():
             'seed_prompts_agents',
             '20260906C_reflGPT5p6',
             '20260908_reflGPT5p6',
+            '20260908B_reflGPT5p6',
         ]],
-        repeats = 5,
+        repeats = [20,10,10,10],
     )
 
 

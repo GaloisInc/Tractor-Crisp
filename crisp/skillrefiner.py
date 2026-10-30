@@ -119,7 +119,7 @@ def save_traces_rewards_for_individual_project(
     dataset_path: Path,
     starting_node_tag: str = "current",
     prompt_paths: list[Path],
-    repeats: int = 5,
+    repeats: int | list[int] = 5,
     output_dir: Path = Path(__file__).parent.parent / 'skillrefiner_artifacts/new'
 ):
     """
@@ -129,13 +129,27 @@ def save_traces_rewards_for_individual_project(
     - dataset_path: Path to the project whose workflow will be created and run.
     - starting_node_tag: The node in the workflow MVIR to use as input.
     - prompt_paths: List of text files containing prompts to run.
-    - repeats: Run each prompt for this many times.
+    - repeats:
+        - If an integer, run each prompt for this many times.
+        - If a list of integers, size must match size of `prompt_paths`. Run the corresponding prompt that many times.
     - output_dir: Path to output directory where run artifacts will be stored.
 
     Effect: Saves in `output_dir`:
     - traces.jsonl
     - binary_rewards.json
     """
+
+    # Get workflow
+    assert gepa_common.is_project_gepaready(dataset_path), f"Project at {dataset_path} is not ready to get SkillRefiner artifacts from."
+    workflow = gepa_common.get_workflow_for_project(dataset_path)
+
+    # Get prompts
+    prompts = [prompt_path.read_text() for prompt_path in prompt_paths]
+
+    # Format repeats
+    if isinstance(repeats, int):
+        repeats = len(prompts) * [repeats]
+    assert len(repeats) == len(prompts), f"Expected `prompts` and `repeats` to have same length, instead found length of `prompts` = {len(prompts)}, length of repeats = {len(repeats)}."
 
     # Create fresh output directory and define filepaths to hold results
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -147,21 +161,14 @@ def save_traces_rewards_for_individual_project(
     with open(rewards_filepath, 'w', encoding='utf-8') as f:
         json.dump({}, f)
 
-    # Get workflow
-    assert gepa_common.is_project_gepaready(dataset_path), f"Project at {dataset_path} is not ready to get SkillRefiner artifacts from."
-    workflow = gepa_common.get_workflow_for_project(dataset_path)
-
-    # Get prompts
-    prompts = [prompt_path.read_text() for prompt_path in prompt_paths]
-
-    # Iterate across prompts
-    for pi,prompt in enumerate(prompts):
+    # Iterate across prompts and repeats
+    for prompt_idx, (prompt, repeat) in enumerate(zip(prompts,repeats)):
 
         # Repeat runs for each prompt
-        for repeat in range(repeats):
+        for repetition_index in range(repeat):
 
             # Assign trace ID
-            trace_id = f"trace_{pi}_{repeat}"
+            trace_id = f"trace_{prompt_idx}_{repetition_index}"
 
             # Get trace and reward
             trace, reward = get_trace_reward_for_single_run(
@@ -178,7 +185,7 @@ def save_traces_rewards_for_individual_project(
                             "trace_id": trace_id,
                             "spans": [
                                 {
-                                    "span_id": trace_id+"-s1",
+                                    "span_id": trace_id+"_span0",
                                     "name": "agent_rollout",
                                     "input_text": prompt,
                                     "output_text": trace,

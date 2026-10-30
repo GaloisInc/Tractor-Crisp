@@ -282,6 +282,9 @@ pub struct FunctionOutputs {
     pub total_unsafe: usize,
     /// Name of the file that contains this function.
     pub filename: String,
+    /// Size of the function.  This is currently just lines of code, but we may switch it to a
+    /// better metric in the future.
+    pub size: usize,
 
     /// Unsafety: the function itself is unsafe.
     ///
@@ -346,6 +349,9 @@ pub struct FunctionOutputs {
 pub struct TypeOutputs {
     /// Name of the file that contains this type.
     pub filename: String,
+    /// Size of the type definition.  This is currently just lines of code, but we may switch it to
+    /// a better metric in the future.
+    pub size: usize,
 
     /// Progress: a field of this type contains a raw pointer.
     ///
@@ -358,7 +364,7 @@ pub struct TypeOutputs {
 impl FunctionOutputs {
     fn calc_total_unsafe(&mut self) {
         let FunctionOutputs {
-            ref mut total_unsafe, filename: _,
+            ref mut total_unsafe, filename: _, size: _,
             is_unsafe_fn, is_mut_static, derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
             // Progress, not safety
@@ -380,7 +386,7 @@ impl FunctionOutputs {
 
     fn add_from(&mut self, src: &Self) {
         let FunctionOutputs {
-            total_unsafe: _, filename: _,
+            total_unsafe: _, filename: _, size: _,
             is_unsafe_fn, is_mut_static,
             derefs_raw_ptr, calls_unsafe, inline_asm, transmutes,
             ref uses_static_mut, ref uses_union_field,
@@ -413,7 +419,7 @@ impl FunctionOutputs {
 impl TypeOutputs {
     fn total_unsafe(&self) -> usize {
         let TypeOutputs {
-            filename: _,
+            filename: _, size: _,
             // Progress, not safety
             field_contains_raw_ptr: _,
         } = *self;
@@ -701,10 +707,13 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
+            let lines = body.span.get_lines();
+
             let key: String = scrub_crate_name(item.name());
             let value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
+                size: lines.end_line + 1 - lines.start_line,
                 is_unsafe_fn: is_unsafe_fn(item),
                 is_mut_static: is_mut_static(item),
                 derefs_raw_ptr: v.derefs_raw_ptr,
@@ -768,8 +777,10 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
 
     for td in crate_type_defs(tcx) {
         let key: String = scrub_crate_name(td.name());
+        let lines = td.span().get_lines();
         let value = TypeOutputs {
             filename: td.span().get_filename(),
+            size: lines.end_line + 1 - lines.start_line,
             field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),
         };
         out.total_unsafe += value.total_unsafe();

@@ -133,6 +133,10 @@ class BranchState:
         if op_unsafe.exit_code != 0:
             raise CrispError("new code increased unsafety", op_unsafe)
 
+        op_ffi_review = self._w.ffi_review_op(old_code, self.code)
+        if op_ffi_review is not None and not op_ffi_review.passed:
+            raise CrispError("new code failed FFI review", op_ffi_review)
+
     @step
     def init_plans(self):
         _, self.plans = self._w.do_safety_plan_agent(self.code, self.c_code)

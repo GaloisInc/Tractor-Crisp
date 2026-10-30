@@ -13,6 +13,7 @@ use std::hash::Hash;
 use std::ops::ControlFlow;
 use std::path::Path;
 use indexmap::IndexMap;
+use regex::Regex;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{DefId, CrateDef, CrateDefType, CrateItem, ItemKind};
@@ -671,6 +672,22 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
         Some(rustc_internal::stable(expn.def_site))
     };
 
+    let crate_name_str = rustc_public::local_crate().name.to_string();
+    // Look for the crate name as a whole identifier (e.g. if the name is `foo`, don't match the
+    // `foo` in `foo_bar`) and not preceded by a colon (e.g. turn `foo::foo` into `crate::foo`, not
+    // `crate::crate`).
+    let crate_name_regex = Regex::new(
+        &format!(r"([^:]|^)\<{crate_name_str}\>"),
+    ).unwrap_or_else(|e| {
+        panic!("failed to parse regex containing crate name {:?}: {}", crate_name_str, e)
+    });
+    let scrub_crate_name = |s: String| -> String {
+        // Prepend `$1` to avoid deleting the character before the crate name.  We use
+        // `replace_all` rather than `replace` because the crate name may appear in both the type
+        // and the trait of a path like `<foo::Type as foo::Trait>::method`.
+        crate_name_regex.replace_all(&s, "${1}crate").into_owned()
+    };
+
     let mut out = Outputs {
         total_unsafe: 0,
         fns: IndexMap::new(),
@@ -684,7 +701,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
             let mut v = FunctionVisitor::new(&body);
             v.visit_body(&body);
 
-            let key: String = item.name();
+            let key: String = scrub_crate_name(item.name());
             let value = FunctionOutputs {
                 total_unsafe: 0,    // Calculated later
                 filename: item.span().get_filename(),
@@ -715,7 +732,8 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
             // Record all closure->parent relationships here.  Additional filtering is applied
             // below when doing the actual folding of closure metrics into parents.
             if let Some(parent) = closure_parent(item) {
-                rollup_map.insert(key.clone(), parent.name());
+                let parent_name = scrub_crate_name(parent.name());
+                rollup_map.insert(key.clone(), parent_name);
             }
             let old = out.fns.insert(key, value);
             assert!(old.is_none(), "duplicate fns entry for {:?}", item.name());
@@ -749,7 +767,7 @@ pub fn process(tcx: TyCtxt, src_dir: &Path) -> Outputs {
     }
 
     for td in crate_type_defs(tcx) {
-        let key: String = td.name();
+        let key: String = scrub_crate_name(td.name());
         let value = TypeOutputs {
             filename: td.span().get_filename(),
             field_contains_raw_ptr: type_def_field_contains_raw_ptr(&td),

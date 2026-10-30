@@ -282,7 +282,8 @@ pub struct FunctionOutputs {
     pub total_unsafe: usize,
     /// Name of the file that contains this function.
     pub filename: String,
-    /// Size of the function in lines of code.
+    /// Size of the function.  This is currently just lines of code, but we may switch it to a
+    /// better metric in the future.
     pub size: usize,
 
     /// Unsafety: the function itself is unsafe.
@@ -348,7 +349,8 @@ pub struct FunctionOutputs {
 pub struct TypeOutputs {
     /// Name of the file that contains this type.
     pub filename: String,
-    /// Size of the type definition in lines of code.
+    /// Size of the type definition.  This is currently just lines of code, but we may switch it to
+    /// a better metric in the future.
     pub size: usize,
 
     /// Progress: a field of this type contains a raw pointer.

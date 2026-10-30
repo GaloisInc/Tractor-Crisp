@@ -11,7 +11,7 @@ from .workflow import Workflow
 
 def get_output_text_from_agent_logs(
     agent_logs: list[dict[str, Any]],
-    get_command_execution: bool = False
+    item_separator: str = "\n\n",
 ) -> str:
     output_text = ""
 
@@ -25,9 +25,9 @@ def get_output_text_from_agent_logs(
             item = dict(item)
 
         if item.get("type") == "agent_message":
-            output_text += (item.get("text", "") + "\n\n")
-        if get_command_execution and item.get("type") == "command_execution":
-            output_text += (item.get("command", "") + "\n\n")
+            output_text += (item.get("text", "") + item_separator)
+        elif item.get("type") == "command_execution":
+            output_text += (item.get("command", "") + item_separator)
 
     return output_text
 

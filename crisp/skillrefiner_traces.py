@@ -29,7 +29,7 @@ def get_output_text_from_agent_logs(
         elif item.get("type") == "command_execution":
             output_text += (item.get("command", "") + item_separator)
 
-    return output_text
+    return output_text.strip()
 
 
 def get_single_trace(
@@ -97,7 +97,7 @@ def save_traces_individual_project(
                                     "span_id": trace_name+"-s1",
                                     "name": "agent_rollout",
                                     "input_text": prompt,
-                                    "output_text": trace.strip(),
+                                    "output_text": trace,
                                     "start_time": "",
                                     "end_time": ""
                                 }

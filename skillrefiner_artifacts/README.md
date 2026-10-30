@@ -3,7 +3,7 @@
 ## `20261019`
 Run using:
 ```python
-skillrefiner.save_traces_and_rewards_individual_project(
+skillrefiner.save_traces_rewards_for_individual_project(
     dataset_path = <...> / 'zlib',
     starting_node_tag = "current",
     prompt_paths = [
@@ -15,9 +15,8 @@ skillrefiner.save_traces_and_rewards_individual_project(
         ]
     ],
     repeats = 5,
-    evaluator = response_evaluator_zlib,
 )
 ```
 Model used = GPT-5.6-terra
 
-Rewards not collected since they hadn't been implemented yet.
+Rewards not collected since they haven't been implemented yet.

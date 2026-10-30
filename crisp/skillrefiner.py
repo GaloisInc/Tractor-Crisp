@@ -9,7 +9,7 @@ from .__main__ import parse_node_id_arg
 from .workflow import Workflow
 
 
-def get_trace_from_agent_logs(
+def get_trace(
     agent_logs: list[dict[str, Any]],
     item_separator: str = "\n\n",
 ) -> str:
@@ -29,22 +29,30 @@ def get_trace_from_agent_logs(
         elif item.get("type") == "command_execution":
             output_text += (item.get("command", "") + item_separator)
 
-    return output_text.strip()
+    trace = output_text.strip()
+    return trace
 
 
-def get_reward_from_eval_result(
-    eval_result: gepa_agents.EvaluationResult,
+def get_reward(
+    response_evaluator_kwargs: dict[str, Any],
     score_threshold_for_success: float = 0.01
 ) -> bool:
-    return (eval_result.passtests and eval_result.score >= score_threshold_for_success)
+    response_evaluator = gepa_agents.ResponseEvaluator(
+        score_safe = 1.0 * gepa_common.GEPA_MAX_SCORE,
+        score_passtests = 0.0 * gepa_common.GEPA_MAX_SCORE,
+        score_penalty_per_output_token = 0.,
+        score_penalty_per_call_duration_sec = 0.
+    )
+    eval_result = response_evaluator(**response_evaluator_kwargs)
+    reward = (eval_result.passtests and eval_result.score >= score_threshold_for_success)
+    return reward
 
 
-def get_single_trace_and_reward(
+def get_trace_reward_for_single_run(
     *,
     workflow: Workflow,
     starting_node_tag: str = "current",
-    prompt: str,
-    evaluator: gepa_agents.ResponseEvaluator
+    prompt: str
 ) -> tuple[str, bool]:
     """Get trace and reward for a single run, as required by SkillRefiner.
 
@@ -52,7 +60,6 @@ def get_single_trace_and_reward(
     - workflow: The CRISP workflow defining the unsafe code.
     - starting_node_tag: The node in the workflow MVIR to use as input.
     - prompt: The prompt for agent safety.
-    - evaluator: Score the agent's response using this, and get reward accordingly.
 
     Returns:
     - Trace (str)
@@ -79,23 +86,24 @@ def get_single_trace_and_reward(
         )
         n_codex = workflow.mvir.node(parse_node_id_arg(workflow.mvir, 'op_history'))
 
-        # Get trace
-        trace = get_trace_from_agent_logs(n_codex.agent_logs)
-
-        # Get reward
-        eval_result = evaluator(
-            workflow = workflow,
-            n_output_code = n_output_code,
-            n_input_code = n_input_code,
-            n_c_code = n_c_code,
-            run_details = {
-                'agent_safety_prompt': gepa_agents.AgentRunDetails(
-                    call_duration_sec = n_codex.call_duration_sec,
-                    output_tokens = n_codex.output_tokens
-                )
+        # Get trace and reward
+        trace = get_trace(
+            agent_logs = n_codex.agent_logs
+        )
+        reward = get_reward(
+            response_evaluator_kwargs = {
+                'workflow': workflow,
+                'n_output_code': n_output_code,
+                'n_input_code': n_input_code,
+                'n_c_code': n_c_code,
+                'run_details': {
+                    'agent_safety_prompt': gepa_agents.AgentRunDetails(
+                        call_duration_sec = n_codex.call_duration_sec,
+                        output_tokens = n_codex.output_tokens
+                    )
+                }
             }
         )
-        reward = get_reward_from_eval_result(eval_result)
 
     # Get dummy trace and reward if error is encountered
     except CrispError as e:
@@ -106,13 +114,12 @@ def get_single_trace_and_reward(
     return trace, reward
 
 
-def save_traces_and_rewards_individual_project(
+def save_traces_rewards_for_individual_project(
     *,
     dataset_path: Path,
     starting_node_tag: str = "current",
     prompt_paths: list[Path],
     repeats: int = 5,
-    evaluator: gepa_agents.ResponseEvaluator,
     output_dir: Path = Path(__file__).parent.parent / 'skillrefiner_artifacts/new'
 ):
     """
@@ -123,7 +130,6 @@ def save_traces_and_rewards_individual_project(
     - starting_node_tag: The node in the workflow MVIR to use as input.
     - prompt_paths: List of text files containing prompts to run.
     - repeats: Run each prompt for this many times.
-    - evaluator: Score the agent's response using this, and get reward accordingly.
     - output_dir: Path to output directory where run artifacts will be stored.
 
     Effect: Saves in `output_dir`:
@@ -158,11 +164,10 @@ def save_traces_and_rewards_individual_project(
             trace_id = f"trace_{pi}_{repeat}"
 
             # Get trace and reward
-            trace, reward = get_single_trace_and_reward(
+            trace, reward = get_trace_reward_for_single_run(
                 workflow = workflow,
                 starting_node_tag = starting_node_tag,
                 prompt = prompt,
-                evaluator = evaluator,
             )
 
             # Write trace
@@ -183,7 +188,6 @@ def save_traces_and_rewards_individual_project(
                             ]
                         },
                         indent = 4,
-                        ensure_ascii = False, # this makes things more readable, e.g. the curly right quotation mark shows up as ’ and not \u2019
                     ) + "\n"
                 )
 

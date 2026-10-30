@@ -2,14 +2,13 @@ import os
 from pathlib import Path
 
 from crisp import skillrefiner
-from gepa_run import response_evaluator_zlib
 
 
 os.environ['OPENAI_API_KEY'] = os.getenv('CRISP_API_KEY')
 
 
-def run_save_traces_and_rewards_zlib():
-    skillrefiner.save_traces_and_rewards_individual_project(
+def save_traces_rewards_zlib():
+    skillrefiner.save_traces_rewards_for_individual_project(
         dataset_path = Path(__file__).resolve().parent.parent.parent / 'zlib',
         prompt_paths = [Path(__file__).resolve().parent.parent / f'gepa_artifacts/{prompt_name}/agent_safety_prompt.txt' for prompt_name in [
             'seed_prompts_agents',
@@ -17,9 +16,8 @@ def run_save_traces_and_rewards_zlib():
             '20260908_reflGPT5p6',
         ]],
         repeats = 5,
-        evaluator = response_evaluator_zlib,
     )
 
 
 if __name__ == '__main__':
-    run_save_traces_and_rewards_zlib()
+    save_traces_rewards_zlib()

@@ -91,6 +91,10 @@ def parse_args():
     main.add_argument('--codex-login-fallback', action='store_true',
         help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
             'because the login is out of quota')
+    main.add_argument('--replan', action='store_true',
+        help='ignore any recorded safety plan for the starting code and plan '
+            'again (C docs, Rust reimplementation plan, and SAFETY_PLAN.md); '
+            'requires --llm-mode=agent or similar')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -116,6 +120,10 @@ def parse_args():
     safety_loop.add_argument('--codex-login-fallback', action='store_true',
         help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
             'because the login is out of quota')
+    safety_loop.add_argument('--replan', action='store_true',
+        help='ignore any recorded safety plan for the starting code and plan '
+            'again (C docs, Rust reimplementation plan, and SAFETY_PLAN.md); '
+            'requires --llm-mode=agent or similar')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -169,6 +177,8 @@ def parse_args():
     AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
+    if getattr(args, 'replan', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
+        ap.error('--replan requires --llm-mode=agent or similar')
     if getattr(args, 'time_limit', None) is not None and args.time_limit <= 0:
         ap.error('--time-limit must be positive')
     return args
@@ -350,18 +360,23 @@ def prior_agent_plans(mvir, n_code) -> TreeNode | None:
     # This lets a resumed safety-loop pick up the previous `SAFETY_PLAN.md` if it exists.
     matches = []
     for ie in mvir.index(n_code.node_id()):
-        # Look for a `CodexAgentOpNode` with `n_code` as the output code and
-        # nonempty output `planning_files`.
+        # Look for a successful `CodexAgentOpNode` with `n_code` as the output
+        # code and output `planning_files` that contain a plan.
         if ie.kind != CodexAgentOpNode.KIND or ie.key != 'outputs':
             continue
         op_node = mvir.node(ie.node_id)
         if op_node.outputs.get('code') != n_code.node_id():
             continue
+        # Failed ops are still recorded, possibly with partial outputs.
+        if op_node.exit_code != 0:
+            continue
         plans_id = op_node.outputs.get('plans')
         if plans_id is None:
             continue
         plans = mvir.node(plans_id)
-        if len(plans.files) == 0:
+        # The planning files may also hold other files, such as the C code
+        # docs, so check for the plan itself rather than for any files.
+        if not any(Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md') for p in plans.files):
             continue
         # All checks passed - this is a valid candidate.
         matches.append(ie)
@@ -482,7 +497,11 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code, deadline = None):
     # Titles of FFI review findings seen this run.  Unlike `ffi_feedback`,
     # never cleared by an accepted step.
     ffi_seen_findings = []
-    n_plans = prior_agent_plans(mvir, n_code)
+    if args.replan:
+        print('--replan: ignoring any recorded safety plan for this code')
+        n_plans = None
+    else:
+        n_plans = prior_agent_plans(mvir, n_code)
     if not n_plans:
         if 'agent' in args.llm_mode:
             n_plans = w.do_safety_plan_agent(n_code, n_c_code)[1]

@@ -9,6 +9,7 @@ from crisp import agent, analysis, prompts
 from crisp.config import ModelsConfig
 from crisp.error import AgentQuotaError, CrispError
 from crisp.mvir import FileNode, MVIR, TreeNode
+from crisp.workflow import describe_c_sources
 
 
 class CodexAgentProfilesTest(unittest.TestCase):
@@ -66,7 +67,8 @@ class CodexAgentProfilesTest(unittest.TestCase):
             agent._inject_codex_agents(object(), object(), ('missing',))
 
     def test_planning_prompt_orchestrates_all_profiles(self):
-        prompt = prompts.agent_plan('translated_rust')
+        prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR,
+            agent.RUST_REIMPL_PLAN_PATH)
         for name in agent.PLANNING_CODEX_AGENTS:
             self.assertIn(f'`{name}`', prompt)
         self.assertIn('fork_turns="none"', prompt)
@@ -84,6 +86,53 @@ class CodexAgentProfilesTest(unittest.TestCase):
         self.assertIn('## Status', prompt)
         # The plan must not carry verification commands; the harness does.
         self.assertIn('the harness supplies all validation', prompt)
+        # The planner is pointed at the C code docs.
+        self.assertIn(f'`{agent.C_DOCS_DIR}/README.md`', prompt)
+        # The planner gets the C sources as well as the docs.
+        self.assertNotIn('not in the workspace', prompt)
+
+    def test_c_code_docs_prompt_formats(self):
+        prompt = prompts.c_code_docs(
+            docs_dir = agent.C_DOCS_DIR,
+            c_sources = '`lib/a.c`, `lib/a.h`')
+        self.assertIn(f'`{agent.C_DOCS_DIR}/README.md`', prompt)
+        self.assertIn(f'`{agent.C_DOCS_DIR}/TESTING.md`', prompt)
+        self.assertIn('`lib/a.c`, `lib/a.h`', prompt)
+
+    def test_describe_c_sources(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+            empty = FileNode.new(mvir, '').node_id()
+            paths = ['zlib.h', 'deflate.c', 'Makefile', 'test/example.c'] + \
+                [f'contrib/x{i}.c' for i in range(3)]
+            tree = TreeNode.new(mvir, files = {p: empty for p in paths})
+            # Root files first and listed by name; non-C files left out; big
+            # directories counted.
+            self.assertEqual(describe_c_sources(tree, max_listed = 2),
+                '`deflate.c`, `zlib.h`; 3 files under `contrib/`; `test/example.c`')
+            no_c = TreeNode.new(mvir, files = {'Makefile': empty})
+            self.assertEqual(describe_c_sources(no_c), 'none found')
+
+    def test_rust_reimpl_plan_prompt_formats(self):
+        prompt = prompts.rust_reimpl_plan(
+            plan_path = agent.RUST_REIMPL_PLAN_PATH,
+            sources = '- SOURCE LIST')
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', prompt)
+        self.assertIn('- SOURCE LIST', prompt)
+        # The migration section is planned under the safety loop's FFI rules.
+        self.assertIn(prompts.FFI_ENTRY_POINT_RULES, prompt)
+        self.assertIn('## C ABI shim', prompt)
+        self.assertIn('## Milestones', prompt)
+        # The plan is also the safety migration's target design.
+        self.assertIn('## Migration from the C2Rust translation', prompt)
+        # The plan lives with the docs, so it carries over with them.
+        self.assertTrue(agent.RUST_REIMPL_PLAN_PATH.startswith(agent.C_DOCS_DIR + '/'))
+        plan_prompt = prompts.agent_plan('translated_rust', agent.C_DOCS_DIR,
+            agent.RUST_REIMPL_PLAN_PATH)
+        self.assertIn(f'`{agent.RUST_REIMPL_PLAN_PATH}`', plan_prompt)
+        self.assertIn('# The reimplementation plan as target', plan_prompt)
+        # The safety planner is pointed at the section written for it.
+        self.assertIn('## Migration from the C2Rust translation', plan_prompt)
 
 
 class QuotaErrorDetectionTest(unittest.TestCase):

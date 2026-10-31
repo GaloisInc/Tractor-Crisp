@@ -103,8 +103,10 @@ class PlanSizeTest(unittest.TestCase):
     STATUS_SECTIONS = ('### Last iteration', '### Completed', '### Next', '### Dead ends')
 
     def test_plan_and_step_prompts_share_status_layout(self):
-        plan = prompts.agent_plan('translated_rust')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         for section in self.STATUS_SECTIONS:
             self.assertIn(f'`{section}`', plan)
             self.assertIn(f'`{section}`', step)
@@ -124,8 +126,10 @@ class PlanSizeTest(unittest.TestCase):
         self.assertIn('dead ends that still apply', status_size_prompt(STATUS_SIZE_LIMIT + 1))
 
     def test_finished_clusters_are_collapsed(self):
-        plan = prompts.agent_plan('translated_rust')
-        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
         self.assertIn('replace its Cluster guide entry with a one-line note', plan)
         self.assertIn("replace that cluster's Cluster guide entry with one line", step)
 
@@ -143,6 +147,18 @@ class PlanSizeTest(unittest.TestCase):
     def test_large_status_is_reported(self):
         prompt = status_size_prompt(155 * 1024)
         self.assertIn('Status section of `SAFETY_PLAN.md` is 155 KB, over the 24 KB limit', prompt)
+
+
+class CDocsReadingTest(unittest.TestCase):
+    def test_steps_read_docs_on_demand(self):
+        plan = prompts.agent_plan('translated_rust', 'crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md')
+        step = prompts.agent_safety('crisp_docs',
+            'crisp_docs/RUST_REIMPLEMENTATION_PLAN.md', '', '')
+        self.assertIn('Do not read them in full', step)
+        self.assertNotIn('start at', step)
+        self.assertIn('do not copy them into `SAFETY_PLAN.md`', plan)
+        self.assertIn('C docs sections for the cluster', plan)
 
 
 class UpgradeToolchainRustSrcTest(unittest.TestCase):

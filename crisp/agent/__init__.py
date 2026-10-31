@@ -34,6 +34,13 @@ PLANNING_CODEX_AGENTS = (
     'strings_analyst',
 )
 
+# Sandbox-relative directory holding the agent-written docs for the original C
+# code.  These are carried along with the planning files.
+C_DOCS_DIR = 'crisp_docs'
+# Agent-written plan for a from-scratch Rust reimplementation, kept with the
+# C code docs.
+RUST_REIMPL_PLAN_PATH = f'{C_DOCS_DIR}/RUST_REIMPLEMENTATION_PLAN.md'
+
 # Print the warning in red so it stands out
 WARNING_TEMPLATE = "\033[31mwarning: {} is being copied into " \
     "the sandbox and could theoretically be leaked " \
@@ -603,7 +610,8 @@ def run_rewrite(
             'code': lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
-                and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+                and (Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md')
+                    or p.startswith(C_DOCS_DIR + '/')),
         },
         cwd = cwd,
         clean_cmds = clean_cmds,
@@ -615,6 +623,44 @@ def run_rewrite(
     output_plans = outputs['plans']
 
     return (output_code, output_plans)
+
+
+def run_docs(
+    cfg: Config,
+    mvir: MVIR,
+    prompt: str,
+    model: str,
+    code: dict[str, TreeNode],
+    docs: TreeNode | None = None,
+    effort: str = 'high',
+    op_label: str | None = None,
+) -> TreeNode:
+    """
+    Run the agent over the trees in `code` and existing `docs`, if any, to
+    write docs under `C_DOCS_DIR`.  Returns all the files under `C_DOCS_DIR`
+    afterward, including any existing `docs`.
+    """
+    inputs = {name: Input(tree) for name, tree in code.items()}
+    if docs is not None:
+        assert 'docs' not in inputs, "duplicate input name 'docs'"
+        inputs['docs'] = Input(docs)
+
+    n_op, outputs = _run_codex(
+        cfg, mvir,
+        inputs,
+        [
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--skip-git-repo-check',
+            prompt,
+        ],
+        model, effort,
+        {
+            'docs': lambda p: p.startswith(C_DOCS_DIR + '/'),
+        },
+        op_label = op_label,
+    )
+
+    return outputs['docs']
 
 
 def run_review_op(

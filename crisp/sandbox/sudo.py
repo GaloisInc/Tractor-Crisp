@@ -23,6 +23,9 @@ class SudoSandbox:
 
     # Address used to access services on the host machine
     HOST_ADDR = '127.0.0.1'
+    # Commands still running in the sandbox keep going after crisp exits, so
+    # crisp waits for them (see `http_server.RunnerThread`).
+    COMMANDS_END_ON_EXIT = False
 
     def __init__(self, mvir, user, dir_suffix = None):
         self.mvir = mvir

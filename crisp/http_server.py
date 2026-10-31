@@ -27,9 +27,16 @@ class RunnerThread:
     `f` will not be called at all.  Otherwise, if `f` is started but throws an
     exception, the exception will be propagated when `result()` is called or on
     exit from the `with` block, whichever comes first.
+
+    Exiting the `with` block waits for `f` to finish, except when crisp is
+    being stopped (the block exits with `KeyboardInterrupt` or `SystemExit`):
+    then it returns right away, so the caller's cleanup (such as stopping the
+    sandbox container) can end `f`.  Set `wait_on_interrupt` if that cleanup
+    doesn't end `f`, so `f` doesn't keep running after crisp exits.
     """
 
-    def __init__(self, f):
+    def __init__(self, f, wait_on_interrupt = False):
+        self._wait_on_interrupt = wait_on_interrupt
         self._result = None
         self._exc = None
         self._start_event = threading.Event()
@@ -47,7 +54,9 @@ class RunnerThread:
             if self._on_finish is not None:
                 self._on_finish()
 
-        self._thread = threading.Thread(target=run)
+        # A daemon thread, so a run of `f` that is still going doesn't keep
+        # crisp from exiting when it's stopped (see the class docstring).
+        self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
 
     def _take_exc(self):
@@ -70,6 +79,14 @@ class RunnerThread:
         # that the background thread can make progress and `join()` won't block
         # forever.
         self._start_event.set()
+
+        if not self._wait_on_interrupt and exc_type is not None \
+                and issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            # crisp is being stopped (Ctrl-C or a signal).  Don't wait for `f`,
+            # which may be a long agent run: the caller's cleanup, such as
+            # stopping the sandbox container, should run now, and it ends `f`
+            # too.
+            return False
 
         self._thread.join()
 
@@ -114,13 +131,13 @@ async def acquire_request_lock(request: Request):
     async with request.app.state.request_lock:
         yield
 
-def run_with_callbacks(build_app, f, *args, **kwargs):
+def run_with_callbacks(build_app, f, *args, wait_on_interrupt = False, **kwargs):
     """
     Run `f(api_port, api_key, *args, **kwargs)` on a background thread, where
     `api_port` is a port number on `localhost` where the client can access
     `fa` and `api_key` is the API key to use in the HTTP `Authorization`
     header.  Returns the result of the call to `f`, or propagates any exception
-    `f` raises.
+    `f` raises.  See `RunnerThread` for `wait_on_interrupt`.
     """
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -128,7 +145,8 @@ def run_with_callbacks(build_app, f, *args, **kwargs):
         api_port = listener.getsockname()[1]
         api_key = secrets.token_urlsafe(32)
 
-        with RunnerThread(lambda: f(api_port, api_key, *args, **kwargs)) as rt:
+        with RunnerThread(lambda: f(api_port, api_key, *args, **kwargs),
+                wait_on_interrupt = wait_on_interrupt) as rt:
             async def async_run():
                 loop = asyncio.get_running_loop()
                 finish_event = asyncio.Event()

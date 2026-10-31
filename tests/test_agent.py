@@ -255,6 +255,35 @@ class CodexFallbackTest(unittest.TestCase):
         self.assertEqual(self.codex_runs(), ['login'])
 
 
+class AgentInterruptTest(unittest.TestCase):
+    def test_waits_for_commands_only_if_they_outlive_crisp(self):
+        # On Ctrl-C or a signal, stopping the sandbox ends the agent's commands,
+        # except with sudo, where `run_agent` has to wait for them.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mvir = MVIR(tmp.name, '.')
+        for commands_end_on_exit in (True, False):
+            with self.subTest(commands_end_on_exit = commands_end_on_exit):
+                sb = _FakeSandbox(mvir, [(0, b'done')])
+                sb.COMMANDS_END_ON_EXIT = commands_end_on_exit
+                @contextmanager
+                def run_sandbox(cfg, mvir):
+                    yield sb
+                waits = []
+                def run_with_callbacks(build_app, f, wait_on_interrupt):
+                    waits.append(wait_on_interrupt)
+                    return f(0, 'key')
+                with patch.object(agent, 'run_sandbox', run_sandbox), \
+                        patch.object(agent.http_server, 'run_with_callbacks',
+                            run_with_callbacks), \
+                        patch('builtins.print'):
+                    agent.run_agent(None, mvir,
+                        {'code': agent.Input(TreeNode.new(mvir, files = {}))},
+                        ['codex', 'exec', 'prompt'], {},
+                        http_build_app = lambda asb, app: None)
+                self.assertEqual(waits, [not commands_end_on_exit])
+
+
 class FfiReviewModelTest(unittest.TestCase):
     def review_model(self, **models):
         """Run `ffi_review` up to the codex call and return the model it used."""

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Sequence, Callable
 
@@ -206,6 +207,12 @@ def _is_quota_error(logs: bytes) -> bool:
         any(m in line for m in _QUOTA_ERROR_MARKERS) and _is_error_line(line)
         for line in logs.splitlines())
 
+# After the `codex login` runs out of quota, runs use `CRISP_API_KEY` directly
+# for this many seconds before trying the login again.
+_LOGIN_RETRY_DELAY = 15 * 60
+# The `time.monotonic()` time before which runs skip the login.
+_login_retry_at = 0.0
+
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
 PORT_ENV_VAR = 'CRISP_INTERNAL_API_PORT'
@@ -337,8 +344,8 @@ def run_agent(
       will be available to the agent while it runs.
     - fallback_cmd: If set and `codex_cmd` fails because its account is out
       of quota, run this instead, in the same sandbox after resetting the
-      checkout (if `init_git` is set).  The op is then labeled
-      `api_key_fallback`.
+      checkout (if `init_git` is set).  After a quota error, later runs skip
+      `codex_cmd` and run this directly for `_LOGIN_RETRY_DELAY` seconds.  Either way, the op is labeled `api_key_fallback`.
     - op_label: If set, appended to the op kind in the `op_history` reflog.
     """
 
@@ -413,11 +420,19 @@ def run_agent(
         fell_back = False
         def run_cmds(run_all):
             nonlocal codex_logs, fell_back
-            exit_code, logs = run_all(setup + [codex_cmd])
-            all_cmds.extend(setup + [codex_cmd])
+            global _login_retry_at
+            # Skip the login if it ran out of quota recently.
+            skip_login = fallback_cmd is not None and time.monotonic() < _login_retry_at
+            first_cmd = fallback_cmd if skip_login else codex_cmd
+            exit_code, logs = run_all(setup + [first_cmd])
+            all_cmds.extend(setup + [first_cmd])
             codex_logs = logs
-            if exit_code != 0 and fallback_cmd is not None and _is_quota_error(logs):
-                print('codex login is out of quota; rerunning with CRISP_API_KEY')
+            fell_back = skip_login
+            if (fallback_cmd is not None and not skip_login and exit_code != 0
+                    and _is_quota_error(logs)):
+                print('codex login is out of quota; rerunning with CRISP_API_KEY '
+                    f'and not trying the login again for {_LOGIN_RETRY_DELAY // 60} min')
+                _login_retry_at = time.monotonic() + _LOGIN_RETRY_DELAY
                 fell_back = True
                 # Start over from the inputs; the `.codex/` sessions are
                 # ignored by git, so the failed run's log is kept.

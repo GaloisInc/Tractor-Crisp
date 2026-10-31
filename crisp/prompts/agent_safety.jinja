@@ -1,6 +1,12 @@
 
 Continue the plan from `SAFETY_PLAN.md`.
-**Before you finish, update `SAFETY_PLAN.md`** to reflect what you actually did this iteration, what is now complete, what remains, and any pitfalls or dead ends future iterations should avoid. Keep it concise — it is a working scratchpad, not a report.
+**Before you finish, update the `## Status` section of `SAFETY_PLAN.md`.** Every later iteration re-reads it, so rewrite it in place as a short record of the current state, not a log, and keep it under 16 KB:
+- `### Last iteration`: replace it with 2-4 lines on what you did.
+- `### Completed`: one line per finished unit, naming it and its cluster; the details are in the code.
+- `### Next`: what is in flight and what should come next.
+- `### Dead ends`: one line per approach that failed or was rejected, and why; drop entries that no longer apply.
+Merge or delete older entries to stay within the limit, and convert a Status section with a different layout to this one. A pitfall that later work on a cluster must know goes in that cluster's pitfalls in the Cluster guide, stated once.
+When your work meets all of a cluster's done-criteria, also replace that cluster's Cluster guide entry with one line marking it done, since the details are now in the code; first move any of its pitfalls that still apply to unfinished clusters into their entries. Otherwise change the rest of the plan only to correct it.
 
 {{ target_goal }}
 

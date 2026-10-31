@@ -3,9 +3,11 @@ import io
 import tempfile
 import unittest
 
+from crisp import prompts
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
-    FFI_SEEN_FINDINGS_CAP, Workflow, merge_ffi_finding_titles,
+    FFI_SEEN_FINDINGS_CAP, STATUS_SIZE_LIMIT, Workflow,
+    merge_ffi_finding_titles, plan_status_size, status_size_prompt,
     upgrade_toolchain_rust_src,
 )
 
@@ -95,6 +97,52 @@ pub unsafe extern "C" fn sum2(
     return s;
 }
 '''
+
+
+class PlanSizeTest(unittest.TestCase):
+    STATUS_SECTIONS = ('### Last iteration', '### Completed', '### Next', '### Dead ends')
+
+    def test_plan_and_step_prompts_share_status_layout(self):
+        plan = prompts.agent_plan('translated_rust')
+        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        for section in self.STATUS_SECTIONS:
+            self.assertIn(f'`{section}`', plan)
+            self.assertIn(f'`{section}`', step)
+        self.assertIn('under 16 KB', plan)
+        self.assertIn('under 16 KB', step)
+        self.assertIn('under 40 KB', plan)
+        self.assertLess(16 * 1024, STATUS_SIZE_LIMIT)
+
+    def test_ffi_rejections_are_recorded_as_dead_ends(self):
+        # The plan outlives the run, unlike the findings kept in memory, so
+        # a rejection recorded there is still avoided after a restart.
+        prompt = prompts.agent_ffi_rejected(report = 'logic in a wrapper closure')
+        self.assertIn('`### Dead ends`', prompt)
+        # Repeats of the same mistake don't add lines, and compacting Status
+        # may prune dead ends that no longer apply.
+        self.assertIn('unless an existing dead end already covers it', prompt)
+        self.assertIn('dead ends that still apply', status_size_prompt(STATUS_SIZE_LIMIT + 1))
+
+    def test_finished_clusters_are_collapsed(self):
+        plan = prompts.agent_plan('translated_rust')
+        step = prompts.agent_safety(target_goal = '', after_refactoring_instruction = '')
+        self.assertIn('replace its Cluster guide entry with a one-line note', plan)
+        self.assertIn("replace that cluster's Cluster guide entry with one line", step)
+
+    def test_status_size_ends_at_next_section(self):
+        status = b'## Status\n\n### Last iteration\n- done\n'
+        plan = b'## Conventions\n\nrules\n\n' + status + b'## Later\n\nmore\n'
+        self.assertEqual(plan_status_size(plan), len(status))
+        self.assertEqual(plan_status_size(b'## Cluster guide\n\n' + status), len(status))
+        self.assertIsNone(plan_status_size(b'## Conventions\n\n## Statusless\n'))
+
+    def test_small_status_needs_no_prompt(self):
+        self.assertIsNone(status_size_prompt(STATUS_SIZE_LIMIT))
+        self.assertIsNone(status_size_prompt(None))
+
+    def test_large_status_is_reported(self):
+        prompt = status_size_prompt(155 * 1024)
+        self.assertIn('Status section of `SAFETY_PLAN.md` is 155 KB, over the 24 KB limit', prompt)
 
 
 class UpgradeToolchainRustSrcTest(unittest.TestCase):

@@ -1,15 +1,16 @@
 import contextlib
 import io
 import os
+import time
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from crisp import llm
 from crisp.__main__ import (
     FuelLimits, check_codex_login_fallback, parse_args, prior_agent_plans,
-    safety_loop_common)
+    remaining_unsafe_prompt, safety_loop_common)
 from crisp.error import AgentQuotaError
 from crisp.mvir import CodexAgentOpNode, FileNode, MVIR, TreeNode
 from crisp.workflow import FuelCounter
@@ -101,6 +102,66 @@ class CodexLoginFallbackCheckTest(unittest.TestCase):
                 patch.object(llm, 'API_BASE', ''):
             with self.assertRaisesRegex(SystemExit, 'CRISP_API_BASE'):
                 check_codex_login_fallback(self.cfg())
+
+
+class RemainingUnsafePromptTest(unittest.TestCase):
+    def prompt(self, fns, **kwargs):
+        j = {'fns': fns, 'types': {}, 'total_unsafe': 0}
+        w = SimpleNamespace(find_unsafe2_json_files =
+            lambda n_code: [SimpleNamespace(body_json = lambda: j)])
+        return remaining_unsafe_prompt(w, None, **kwargs)
+
+    def test_lists_non_ffi_functions_most_first(self):
+        prompt = self.prompt({
+            'z::src::inflate::inflateEnd': {'total_unsafe': 3, 'filename': 'src/inflate.rs'},
+            'z::src::inflate::inflate': {'total_unsafe': 20, 'filename': 'src/inflate.rs'},
+            'z::src::deflate::deflate': {'total_unsafe': 0, 'filename': 'src/deflate.rs'},
+            'z::src::zutil::zcalloc_ffi': {'total_unsafe': 5, 'filename': 'src/zutil.rs',
+                'ffi_symbol': 'zcalloc'},
+        })
+        self.assertIn('The remaining 23 unsafe operations', prompt)
+        self.assertIn('- 20 in `inflate` (`src/inflate.rs`)\n'
+            '- 3 in `inflateEnd` (`src/inflate.rs`)\n\n', prompt)
+        self.assertNotIn('deflate', prompt)
+        self.assertNotIn('zcalloc', prompt)
+
+    def test_long_lists_are_summarized(self):
+        prompt = self.prompt({f'z::f{i}': {'total_unsafe': 1, 'filename': 'src/f.rs'}
+            for i in range(5)}, max_functions = 2)
+        self.assertIn('- 1 in `f1` (`src/f.rs`)\n- 3 more in 3 other functions', prompt)
+
+    def test_nothing_left(self):
+        self.assertIsNone(self.prompt({}))
+
+
+class TimeLimitTest(unittest.TestCase):
+    def test_arg(self):
+        for cmd in ('main', 'safety-loop'):
+            with patch('sys.argv', ['crisp', cmd, '--time-limit', '60']):
+                self.assertEqual(parse_args().time_limit, 60)
+            with patch('sys.argv', ['crisp', cmd]):
+                self.assertIsNone(parse_args().time_limit)
+            with patch('sys.argv', ['crisp', cmd, '--time-limit', '0']), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    parse_args()
+
+    def test_no_step_starts_after_the_deadline(self):
+        args = SimpleNamespace(llm_mode = 'agent', time_limit = 60)
+        w = MagicMock()
+        w.count_unsafe2.return_value = 5
+        w.test_op.return_value.exit_code = 0
+        out = io.StringIO()
+        with patch('crisp.__main__.get_fuel_limits',
+                    return_value = FuelLimits(10, 3, 2, 5)), \
+                patch('crisp.__main__.prior_agent_plans', return_value = MagicMock()), \
+                contextlib.redirect_stdout(out):
+            safety_loop_common(args, None, None, w, MagicMock(), MagicMock(),
+                deadline = time.monotonic() - 1)
+        self.assertIn('time limit of 60 minutes reached', out.getvalue())
+        self.assertIn('status: TIME_LIMIT_REACHED', out.getvalue())
+        w.do_safety_step_agent.assert_not_called()
+        w.accept.assert_not_called()
 
 
 if __name__ == '__main__':

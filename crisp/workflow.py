@@ -72,6 +72,33 @@ def upgrade_toolchain_rust_src(src: str) -> str:
     # rust-lang/rust#141980 merged `VaListImpl` into `VaList`
     return VA_LIST_IMPL_RE.sub('VaList', src)
 
+# Size of the `SAFETY_PLAN.md` Status section above which safety steps are
+# asked to compact it; steps aim to keep it under 16 KB.  Only Status is
+# limited: the rest of the plan comes from the planner, which aims for 40 KB
+# but grows with the codebase, so its size is only logged.
+STATUS_SIZE_LIMIT = 24 * 1024
+
+STATUS_HEADING_RE = re.compile(rb'^## Status\b', re.M)
+SECTION_HEADING_RE = re.compile(rb'^## ', re.M)
+
+def plan_status_size(plan: bytes) -> int | None:
+    """
+    Return the size of the `## Status` section of `SAFETY_PLAN.md`, up to the
+    next `##` heading, or `None` if the plan has no Status section.
+    """
+    m = STATUS_HEADING_RE.search(plan)
+    if m is None:
+        return None
+    end = SECTION_HEADING_RE.search(plan, m.end())
+    return (end.start() if end is not None else len(plan)) - m.start()
+
+def status_size_prompt(status_size: int | None) -> str | None:
+    """Ask the agent to compact the plan's Status section if it is over the limit."""
+    if status_size is None or status_size <= STATUS_SIZE_LIMIT:
+        return None
+    return prompts.agent_status_too_large(
+        size_kb = status_size // 1024, limit_kb = STATUS_SIZE_LIMIT // 1024)
+
 class AgentTarget(metaclass = ABCMeta):
     @abstractmethod
     def prompt(self):
@@ -1143,6 +1170,18 @@ class Workflow:
         extra_code = {}
         if n_test_code is not None:
             extra_code['tests'] = n_test_code
+
+        plan_file = n_plans.files.get('SAFETY_PLAN.md')
+        if plan_file is not None:
+            plan = mvir.node(plan_file).body()
+            status_size = plan_status_size(plan)
+            print(f'SAFETY_PLAN.md is {len(plan) // 1024} KB, Status ' +
+                (f'{status_size // 1024} KB' if status_size is not None else 'missing'))
+            size_prompt = status_size_prompt(status_size)
+            if size_prompt is not None:
+                print('asking the agent to compact the Status section')
+                prompt_suffix = size_prompt if prompt_suffix is None \
+                    else f'{prompt_suffix}\n\n{size_prompt}'
 
         prompt = prompts.agent_safety(
             after_refactoring_instruction = after_refactoring_instruction,

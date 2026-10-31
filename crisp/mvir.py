@@ -692,7 +692,7 @@ class LlmOpNode(Node):
     response = property(lambda self: self._metadata['response'])
 
 class CodexAgentOpNode(Node):
-    KIND = 'codex_agent_op_v3'
+    KIND = 'codex_agent_op_v4'
     inputs: Metadata[dict[str, NodeId]]
     outputs: Metadata[dict[str, NodeId]]
     cmds: Metadata[list[list[str]]]
@@ -1049,3 +1049,9 @@ def migrate_codex_agent_op_v2(mvir: MVIR, metadata: dict[str, Any]):
     metadata['cmds'] = [
         ['codex', 'dummy-cmd', metadata.pop('prompt')],
     ]
+
+@migration('codex_agent_op_v3')
+def migrate_codex_agent_op_v3(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'codex_agent_op_v4'
+    metadata.setdefault('call_duration_sec', 0.)
+    metadata.setdefault('output_tokens', 0)

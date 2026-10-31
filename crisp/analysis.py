@@ -751,8 +751,9 @@ def ffi_review(
     """
     cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
+    model = cfg.models.agent_review or cfg.models.agent_loop
     op_agent = agent.run_review_op(cfg, mvir, prompt.body_str(),
-        cfg.models.agent_loop, old_code, new_code)
+        model, old_code, new_code)
 
     report, logs, ran_commands = agent.review_op_results(mvir, op_agent)
 

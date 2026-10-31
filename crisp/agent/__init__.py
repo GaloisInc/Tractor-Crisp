@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Sequence, Callable
 
@@ -209,9 +210,21 @@ def _is_quota_error(logs: bytes) -> bool:
 # Tag of the commit holding the sandbox's inputs, when `run_agent` sets up git.
 _BASELINE_TAG = 'crisp-baseline'
 
+# After the `codex login` runs out of quota, runs use `CRISP_API_KEY` directly
+# for this many seconds before trying the login again.
+_LOGIN_RETRY_DELAY = 15 * 60
+# The `time.monotonic()` time before which runs skip the login.
+_login_retry_at = 0.0
+
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
 PORT_ENV_VAR = 'CRISP_INTERNAL_API_PORT'
+
+@dataclass(frozen = True)
+class CmdResult:
+    cmd: list[str]
+    exit_code: int
+    logs: bytes
 
 class AgentSandbox:
     def __init__(
@@ -229,36 +242,29 @@ class AgentSandbox:
         self.output_filters = output_filters
         self.cwd = cwd
         self.env = env.copy()
+        # The result of every command run so far.
+        self.results: list[CmdResult] = []
 
-    def run(self, cmd):
-        return self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
+    def run(self, cmd) -> bool:
+        """Run `cmd` and record its result.  Returns `True` if it succeeded."""
+        print(f'run: {shlex.join(cmd)}')
+        exit_code, logs = self.sb.run(cmd, cwd=self.cwd, stream=True, env=self.env)
+        self.results.append(CmdResult(cmd, exit_code, logs))
+        return exit_code == 0
 
-    def run_all(self, cmds):
-        logs = None
-        for cmd in cmds:
-            print(f'run: {shlex.join(cmd)}')
-            exit_code, logs2 = self.run(cmd)
-            logs = b'\n\n'.join((logs, logs2)) if logs is not None else logs2
-            if exit_code != 0:
-                break
-        return exit_code, logs
+    def run_all(self, cmds) -> bool:
+        """Run `cmds` in order, stopping at the first one that fails."""
+        return all(self.run(cmd) for cmd in cmds)
 
-    def run_all_with_api_port(self, api_port, api_key, cmds):
-        assert HOST_ENV_VAR not in self.env
-        self.env[HOST_ENV_VAR] = Sandbox.HOST_ADDR
-
-        assert PORT_ENV_VAR not in self.env
-        self.env[PORT_ENV_VAR] = str(api_port)
-
-        assert KEY_ENV_VAR not in self.env
-        self.env[KEY_ENV_VAR] = api_key
-
-        r = self.run_all(cmds)
-
-        del self.env[HOST_ENV_VAR]
-        del self.env[PORT_ENV_VAR]
-        del self.env[KEY_ENV_VAR]
-        return r
+    def set_api_env(self, api_port, api_key):
+        """Make the HTTP API at `api_port` available to later commands."""
+        api_env = {
+            HOST_ENV_VAR: Sandbox.HOST_ADDR,
+            PORT_ENV_VAR: str(api_port),
+            KEY_ENV_VAR: api_key,
+        }
+        assert not api_env.keys() & self.env.keys()
+        self.env.update(api_env)
 
     def commit_raw_output_files(
         self,
@@ -340,8 +346,8 @@ def run_agent(
       will be available to the agent while it runs.
     - fallback_cmd: If set and `codex_cmd` fails because its account is out
       of quota, run this instead, in the same sandbox after resetting the
-      checkout (if `init_git` is set).  The op is then labeled
-      `api_key_fallback`.
+      checkout (if `init_git` is set).  After a quota error, later runs skip
+      `codex_cmd` and run this directly for `_LOGIN_RETRY_DELAY` seconds.  Either way, the op is labeled `api_key_fallback`.
     - op_label: If set, appended to the op kind in the `op_history` reflog.
     """
 
@@ -411,41 +417,44 @@ def run_agent(
         setup += setup_cmds
         setup += [['mkdir', '-p', codex_dir]]
 
-        all_cmds = []
-        # Logs of the last codex run, to check for quota errors.
-        codex_logs = b''
-        fell_back = False
-        def run_cmds(run_all):
-            nonlocal codex_logs, fell_back
-            exit_code, logs = run_all(setup + [codex_cmd])
-            all_cmds.extend(setup + [codex_cmd])
-            codex_logs = logs
-            if exit_code != 0 and fallback_cmd is not None and _is_quota_error(logs):
-                print('codex login is out of quota; rerunning with CRISP_API_KEY')
-                fell_back = True
-                # Start over from the inputs, dropping the failed run's
-                # edits and any commits it made; the `.codex/` sessions are
-                # ignored by git, so the failed run's log is kept.
-                retry = [['git', 'reset', '--hard', '--quiet', _BASELINE_TAG],
-                    ['git', 'clean', '-fd', '--quiet']] if init_git else []
-                retry += [fallback_cmd]
-                exit_code, codex_logs = run_all(retry)
-                all_cmds.extend(retry)
-                logs = b'\n\n'.join((logs, codex_logs))
-            if exit_code == 0 and clean_cmds:
-                exit_code, clean_logs = run_all(clean_cmds)
-                all_cmds.extend(clean_cmds)
-                logs = b'\n\n'.join((logs, clean_logs))
-            return exit_code, logs
+        def run_codex() -> bool:
+            """
+            Run `codex_cmd`, and if its account is out of quota, rerun with
+            `fallback_cmd`.
+            """
+            global _login_retry_at
+            if fallback_cmd is None:
+                return asb.run(codex_cmd)
+            # Skip the login if it ran out of quota recently.
+            if time.monotonic() < _login_retry_at:
+                return asb.run(fallback_cmd)
+            if asb.run(codex_cmd):
+                return True
+            if not _is_quota_error(asb.results[-1].logs):
+                return False
+
+            print('codex login is out of quota; rerunning with CRISP_API_KEY '
+                f'and not trying the login again for {_LOGIN_RETRY_DELAY // 60} min')
+            _login_retry_at = time.monotonic() + _LOGIN_RETRY_DELAY
+            # Start over from the inputs, dropping the failed run's edits and
+            # any commits it made; the `.codex/` sessions are ignored by git,
+            # so the failed run's log is kept.
+            reset = [['git', 'reset', '--hard', '--quiet', _BASELINE_TAG],
+                ['git', 'clean', '-fd', '--quiet']] if init_git else []
+            return asb.run_all(reset + [fallback_cmd])
+
+        def run_cmds(api_port = None, api_key = None) -> bool:
+            if api_port is not None:
+                asb.set_api_env(api_port, api_key)
+            return asb.run_all(setup) and run_codex() and asb.run_all(clean_cmds)
 
         if http_build_app is not None:
-            exit_code, logs = http_server.run_with_callbacks(
-                lambda app: http_build_app(asb, app),
-                lambda api_port, api_key: run_cmds(
-                    lambda cmds: asb.run_all_with_api_port(api_port, api_key, cmds)),
-            )
+            http_server.run_with_callbacks(
+                lambda app: http_build_app(asb, app), run_cmds)
         else:
-            exit_code, logs = run_cmds(asb.run_all)
+            run_cmds()
+        exit_code = asb.results[-1].exit_code
+        logs = b'\n\n'.join(r.logs for r in asb.results)
 
         raw_output_files = asb.commit_raw_output_files()
 
@@ -486,19 +495,20 @@ def run_agent(
     n_op = CodexAgentOpNode.new(mvir,
         inputs = input_node_ids,
         outputs = {k: v.node_id() for k,v in outputs.items()},
-        cmds = all_cmds,
+        cmds = [r.cmd for r in asb.results],
         exit_code = exit_code,
         raw_output_files = raw_output_files.node_id(),
         json_session = json_session_node_id,
         body = logs if logs is not None else b'',
     )
     # Record operations and timestamps in the `op_history` reflog.
-    if fell_back:
+    if any(r.cmd == fallback_cmd for r in asb.results):
         op_label = 'api_key_fallback' if op_label is None else f'{op_label} api_key_fallback'
     reason = n_op.kind if op_label is None else f'{n_op.kind} {op_label}'
     mvir.set_tag('op_history', n_op.node_id(), reason)
 
-    if n_op.exit_code != 0 and _is_quota_error(codex_logs):
+    # On failure, the last command run is the one that failed.
+    if n_op.exit_code != 0 and _is_quota_error(asb.results[-1].logs):
         raise AgentQuotaError(
             f'agent invocation failed: API spend cap or quota exhausted '
             f'(exit code {exit_code})', n_op)

@@ -169,10 +169,14 @@ class CodexFallbackTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.mvir = MVIR(tmp.name, '.')
+        # Each test starts with the login usable and a fake clock.
+        self.now = 0.0
         for p in (
             patch.object(agent, '_codex_auth_input',
                 lambda: agent.Input(b'{}', path = '.codex/auth.json')),
             patch('builtins.print'),
+            patch.object(agent, '_login_retry_at', 0.0),
+            patch.object(agent, 'time', SimpleNamespace(monotonic = lambda: self.now)),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -212,11 +216,34 @@ class CodexFallbackTest(unittest.TestCase):
         self.assertEqual(self.codex_runs(), ['login', 'api_key'])
         self.assertFalse(any(c[0] == 'git' for c in self.sb.cmds))
 
-    def test_each_run_tries_the_login_first(self):
+    def test_after_a_quota_error_runs_skip_the_login(self):
         self.run_codex([LOGIN_QUOTA, (0, b'done')])
+        self.now = agent._LOGIN_RETRY_DELAY - 1
+        self.run_codex([(0, b'done')])
+        self.assertEqual(self.codex_runs(), ['api_key'])
+        self.assertFalse(any(c[0] == 'git' and c[1] == 'reset' for c in self.sb.cmds))
+        self.assertEqual(self.last_reason(), 'codex_agent_op_v3 api_key_fallback')
+
+    def test_login_is_tried_again_after_the_delay(self):
+        self.run_codex([LOGIN_QUOTA, (0, b'done')])
+        self.now = agent._LOGIN_RETRY_DELAY
+        self.run_codex([LOGIN_QUOTA, (0, b'done')])
+        self.assertEqual(self.codex_runs(), ['login', 'api_key'])
+        # The new quota error starts a new delay.
+        self.now = 2 * agent._LOGIN_RETRY_DELAY - 1
+        self.run_codex([(0, b'done')])
+        self.assertEqual(self.codex_runs(), ['api_key'])
+        self.now = 2 * agent._LOGIN_RETRY_DELAY
         self.run_codex([(0, b'done')])
         self.assertEqual(self.codex_runs(), ['login'])
         self.assertEqual(self.last_reason(), 'codex_agent_op_v3')
+
+    def test_without_fallback_the_login_is_always_tried(self):
+        # Even right after a run with the fallback hit a quota error.
+        self.run_codex([LOGIN_QUOTA, (0, b'done')])
+        with self.assertRaises(AgentQuotaError):
+            self.run_codex([LOGIN_QUOTA], fallback = False)
+        self.assertEqual(self.codex_runs(), ['login'])
 
     def test_api_key_quota_error_stops(self):
         with self.assertRaises(AgentQuotaError):
@@ -236,6 +263,31 @@ class CodexFallbackTest(unittest.TestCase):
         with self.assertRaises(CrispError):
             self.run_codex([(1, b'ERROR: stream disconnected\n')])
         self.assertEqual(self.codex_runs(), ['login'])
+
+
+class AgentSandboxTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.sb = _FakeSandbox(MVIR(tmp.name, '.'), [])
+        self.asb = agent.AgentSandbox(self.sb, None, {}, {}, '.', {})
+        p = patch('builtins.print')
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_run_all_stops_at_the_first_failure(self):
+        self.sb.results = [(0, b'one'), (2, b'two')]
+        cmds = [['codex', '1'], ['codex', '2'], ['codex', '3']]
+        self.assertFalse(self.asb.run_all(cmds))
+        self.assertEqual(self.asb.results, [
+            agent.CmdResult(cmds[0], 0, b'one'),
+            agent.CmdResult(cmds[1], 2, b'two'),
+        ])
+
+    def test_run_all_succeeds_when_every_command_does(self):
+        self.sb.results = [(0, b'one')]
+        self.assertTrue(self.asb.run_all([['true'], ['codex', '1']]))
+        self.assertEqual(len(self.asb.results), 2)
 
 
 class ReviewRanCommandsTest(unittest.TestCase):

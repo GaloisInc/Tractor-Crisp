@@ -73,6 +73,10 @@ class Config(ConfigBase):
     # Use the host's login credentials instead of an API key when running
     # Codex?  This allows running CRISP against an OpenAI monthly subscription.
     codex_login: bool = False
+    # With `codex_login`, rerun a codex run with `CRISP_API_KEY` if it fails
+    # because the login is out of quota.  After that, runs use the API key
+    # directly for 15 minutes before trying the login again.
+    codex_login_fallback: bool = False
 
     def __post_init__(self):
         config_dir = os.path.dirname(self.config_path)

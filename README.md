@@ -71,6 +71,11 @@ export CRISP_API_KEY=sk-your-api-key-here
 # OpenAI-compatible provider running on the host machine:
 #export CRISP_API_BASE=http://172.17.0.1:8080/v1
 
+# When running the agent with `--codex-login` (your `codex login` credentials),
+# add `--codex-login-fallback` to rerun with the API key settings above when a
+# run fails because the login is out of quota.  After that, runs use the API
+# key directly for 15 minutes before trying the login again.
+
 # Import the original files into CRISP and tag them as `c_code`.  This command
 # collects all of the `*.c`, `*.h`, and `CMakeLists.txt` files under the
 # current directory; if more files are needed to build your C project, edit the

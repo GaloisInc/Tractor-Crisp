@@ -98,7 +98,7 @@ RUN cargo-docker-clean.sh /opt/crisp-tools/install-all.sh
 # Install the complete Codex package, including the code-mode host.
 RUN mkdir /opt/codex-cli \
     && cd /opt/codex-cli \
-    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-unknown-linux-musl.tar.gz \
+    && codex_url=https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-unknown-linux-musl.tar.gz \
     && wget --quiet "$codex_url" \
     && tar -xzf "$(basename "$codex_url")" \
     && ln -s "$PWD/bin/codex" /usr/local/bin/codex \

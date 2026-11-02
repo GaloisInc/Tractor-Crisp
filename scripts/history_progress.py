@@ -21,6 +21,8 @@ if not os.environ.get('UV'):
 import argparse
 from collections import defaultdict
 import json
+import math
+import shutil
 
 from crisp.__main__ import parse_node_id_arg_and_check_tag
 from crisp.config import Config
@@ -99,6 +101,59 @@ def iter_metrics(dct):
             continue
         else:
             raise TypeError(f'unexpected value type {type(v)} for {k!r}')
+
+
+# Functions below this initial unsafe count are omitted.
+MIN_INITIAL_TOTAL_UNSAFE = 10
+HISTOGRAM_LEVELS = '▁▂▃▄▅▆▇█'
+
+def print_histograms(init_state, diffs):
+    """Print removal fractions over time, independently scaled for each row.
+
+    Each bucket sums decreases in total_unsafe and divides by the initial
+    count. Increases do not count as removals, but do delay reaching 50% net
+    cumulative removal. Turns are 1-based diff indices; ties sort by name.
+    """
+    rows = []
+    for file_name, initial_file in init_state.items():
+        for name, function in initial_file.get('fns', {}).items():
+            initial = function.get('total_unsafe', 0)
+            if initial < MIN_INITIAL_TOTAL_UNSAFE:
+                continue
+            removals = []
+            cumulative = 0
+            halfway_turn = math.inf
+            for turn, diff in enumerate(diffs, 1):
+                delta = (diff.get(file_name, {}).get('fns', {})
+                         .get(name, {}).get('total_unsafe', 0))
+                removals.append(max(0, -delta) / initial)
+                cumulative -= delta
+                if halfway_turn == math.inf and cumulative * 2 >= initial:
+                    halfway_turn = turn
+            rows.append((halfway_turn, name, file_name, initial, removals))
+
+    if not rows:
+        return
+    rows.sort(key=lambda row: row[:3])
+    name_width = max(len(row[1]) for row in rows)
+    count_width = max(len(str(row[3])) for row in rows)
+    available = max(1, shutil.get_terminal_size().columns - name_width - count_width - 2)
+    # All buckets span the same whole number of diffs, except the final one.
+    bucket_size = max(1, math.ceil(len(diffs) / available))
+    bucket_count = max(1, math.ceil(len(diffs) / bucket_size))
+    column_width = max(1, available // bucket_count)
+    for _, name, _, initial, removals in rows:
+        buckets = [sum(removals[i:i + bucket_size])
+                   for i in range(0, len(removals), bucket_size)]
+        peak = max(buckets, default=0)
+        histogram = ''.join(
+            ('.' if value == 0 else HISTOGRAM_LEVELS[
+                min(len(HISTOGRAM_LEVELS) - 1,
+                    math.ceil(value / peak * len(HISTOGRAM_LEVELS)) - 1)])
+            * column_width
+            for value in buckets)
+        print(f'{name:<{name_width}} {initial:>{count_width}} {histogram}')
+
 
 def input_is_path(inp):
     """
@@ -248,6 +303,8 @@ def main():
         else:
             pct = 0
         print(f'{val:6}  {pct:5.1f}%  {desc}')
+
+    print_histograms(init_state, diffs)
 
     show_count(count_total_unsafe_down, 'Overall total_unsafe decreased')
     show_count(count_total_unsafe_up, 'Overall total_unsafe increased')

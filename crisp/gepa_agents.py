@@ -495,7 +495,6 @@ def eval_gepa(
     - dataset_path, is_individual_project: If `dataset_path` is a path to a corpus folder (e.g. B01_organic), then `is_individual_project` should be False. If `dataset_path` is a path to an individual project (e.g. zlib), then `is_individual_project` should be True.
     - optimized_prompt_folder: Path to a folder where the results will be stored.
     - optimized_prompt_paths: Paths to the prompts which will be evaluated.
-    - model: The LM to run the prompt on.
     - output_csv_path: Save results to this CSV.
         - If None, set to `<optimized_prompt_folder> / results_<dataset_name>.csv`
         - File will be appended to if it already exists

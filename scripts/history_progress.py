@@ -105,7 +105,9 @@ def input_is_path(inp):
     Returns `True` if `inp` looks like a path, rather than a MVIR node ID or
     tag.
     """
-    return '.' in inp or '/' in inp or '\\' in inp
+    # `foo.json` could in theory be a CRISP tag + field name, but currently we
+    # don't have any node types with a field named `json`.
+    return inp.endswith('.json') or '/' in inp or '\\' in inp
 
 def main():
     args = parse_args()
@@ -197,6 +199,7 @@ def main():
         any_up = False
 
         for file_name, diff_file in diff.items():
+            # Handle fns and types
             all_items = list(diff_file.get('fns', {}).items()) \
                     + list(diff_file.get('types', {}).items())
             for item_name, diff_item in all_items:
@@ -209,11 +212,18 @@ def main():
                         touched_file = touched_file[-1]
                     touched_files.add(touched_file)
 
-                is_ffi_function = init_state[file_name]['fns'] \
+                is_ffi_function = init_state.get(file_name, {}).get('fns', {}) \
                         .get(item_name, {}).get('ffi_symbol') is not None
                 if not is_ffi_function:
                     any_down |= item_any_down
                     any_up |= item_any_up
+
+            # Handle unsafe_impls
+            for module_name, module_impls in diff_file.get('unsafe_impls', {}).items():
+                if module_impls > 0:
+                    any_up = True
+                elif module_impls < 0:
+                    any_down = True
 
         if any_down:
             count_any_metric_down += 1
@@ -233,7 +243,10 @@ def main():
         denom = len(diffs)
         if is_delta:
             denom -= 1
-        pct = val / denom * 100
+        if denom > 0:
+            pct = val / denom * 100
+        else:
+            pct = 0
         print(f'{val:6}  {pct:5.1f}%  {desc}')
 
     show_count(count_total_unsafe_down, 'Overall total_unsafe decreased')
@@ -244,8 +257,10 @@ def main():
     show_count(count_any_metric_up, 'At least one metric increased')
     show_count(count_all_metrics_same, 'All metrics were unchanged')
 
-    show_count(count_touched_same_function, 'Touched a function touched by the previous step')
-    show_count(count_touched_same_file, 'Touched a file touched by the previous step')
+    show_count(count_touched_same_function, 'Touched a function touched by the previous step',
+        is_delta = True)
+    show_count(count_touched_same_file, 'Touched a file touched by the previous step',
+        is_delta = True)
 
 if __name__ == '__main__':
     main()

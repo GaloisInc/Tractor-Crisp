@@ -32,10 +32,11 @@ class ConfigBase:
     def from_toml_file(cls, f, **kwargs):
         if isinstance(f, str):
             path = f
-            f = open(f, 'r')
+            with open(f, 'r') as f_:
+                d = toml.load(f_)
         else:
             path = f.name
-        d = toml.load(f)
+            d = toml.load(f)
         return cls.from_dict(d, path, **kwargs)
 
 @dataclass(frozen = True)

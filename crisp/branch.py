@@ -57,6 +57,10 @@ def step(f):
             )
 
             self._child_steps.append(step_node)
+
+            desc = f'branch step {f.__name__}' + ('' if fail_msg is None else f' (failed)')
+            print(f'*** completed {desc} ({step_node.node_id()})')
+            self.mvir.set_tag('branch_op_history', step_node.node_id(), desc)
     return g
 
 class BranchState:

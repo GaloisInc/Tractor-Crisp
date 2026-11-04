@@ -1,4 +1,3 @@
-from contextlib import contextmanager
 from datetime import datetime
 import functools
 
@@ -7,7 +6,7 @@ from .mvir import TreeNode, BranchStateNode, BranchStepNode
 from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
 from .util import FuelLimits
-from .workflow import Workflow, FuelCounter, OutOfFuelError, AgentTargetOther
+from .workflow import Workflow, FuelCounter, OutOfFuelError
 
 
 def step(f):

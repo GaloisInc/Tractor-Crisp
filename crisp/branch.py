@@ -157,6 +157,10 @@ class BranchState:
             old_fuel = self.safety_tries_fuel.fuel
             old_unsafe_count = self._w.count_unsafe2(self.code)
 
+            if old_unsafe_count == 0:
+                # Success!
+                break
+
             target = pick_target.current_target_goal(self._w, self.code)
 
             try:

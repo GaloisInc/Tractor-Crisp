@@ -12,6 +12,7 @@ from types import NoneType
 from weakref import WeakValueDictionary
 
 from crisp.node_id import NodeId
+from crisp.planning import StepPlan
 
 
 T = TypeVar("T")
@@ -107,7 +108,11 @@ def check_type(ty, x):
             except (TypeError, AssertionError):
                 pass
     else:
-        return ty.check_type(x)
+        check_func = getattr(ty, 'check_type', None)
+        if check_func is not None:
+            return check_func(x)
+        else:
+            assert isinstance(x, ty), 'expected %r, but got %r' % (ty, type(x))
 
 def _metadata_field_types(cls: type) -> dict[str, type]:
     """
@@ -175,7 +180,11 @@ def _metadata_node_ids(x):
             yield from _metadata_node_ids(k)
             yield from _metadata_node_ids(v)
     else:
-        raise TypeError('unsupported type in metadata: %r' % (type(x),))
+        iter_func = getattr(x, 'iter_node_ids', None)
+        if iter_func is not None:
+            yield from iter_func()
+        else:
+            raise TypeError('unsupported type in metadata: %r' % (type(x),))
 
 
 class MVIR:
@@ -926,7 +935,7 @@ class BranchStateNode(Node):
     KIND = 'branch_state'
     c_code: Metadata[NodeId]
     code: Metadata[NodeId]
-    plans: Metadata[Optional[NodeId]]
+    plans: Metadata[list[StepPlan]]
 
     c_code = property(lambda self: self._metadata['c_code'])
     code = property(lambda self: self._metadata['code'])

@@ -330,6 +330,9 @@ class StepPlan:
             subdiv_attempts = raw.get('subdiv_attempts', 0),
         )
 
+    def iter_node_ids(self):
+        yield from self.details
+
     def persistent_fields(self):
         """
         Get the fields that should never be mutated, which can be used to

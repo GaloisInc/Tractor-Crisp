@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import re
 
@@ -181,4 +182,35 @@ def ffi_review(cargo_dir_path: str) -> str:
     return jinja_env.get_template('ffi_review.jinja').render(
         cargo_dir_path = cargo_dir_path,
         ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
+    )
+
+
+def plan_step_init(
+    cargo_dir_path: str,
+) -> str:
+    """
+    Create the initial, top-level safety plan.
+    """
+    tmpl = jinja_env.get_template('plan_step_init.jinja')
+    return tmpl.render(
+        cargo_dir_path = cargo_dir_path,
+    )
+
+def plan_step_subdivide(
+    cargo_dir_path: str,
+    description: str,
+    goals: list[dict],
+    details: list[str],
+    relevant_code: dict,
+) -> str:
+    """
+    Subdivide one step of a safety plan into sub-steps.
+    """
+    tmpl = jinja_env.get_template('plan_step_subdivide.jinja')
+    return tmpl.render(
+        cargo_dir_path = cargo_dir_path,
+        description = description,
+        goals_json = json.dumps(goals),
+        details = details,
+        relevant_code = relevant_code,
     )

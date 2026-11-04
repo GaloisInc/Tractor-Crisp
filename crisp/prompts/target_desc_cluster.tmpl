@@ -1,0 +1,20 @@
+Description:
+{{ desc }}
+{% if functions_by_file_json %}
+
+Files and functions:
+```json
+{{ functions_by_file_json }}
+```
+{% elif filters_json %}
+
+Filters:
+```json
+{{ filters_json }}
+```
+
+Filters are defined according to the following schema:
+```typescript
+{% include 'plan_cluster_schema_filter.ts' %}
+```
+{% endif %}

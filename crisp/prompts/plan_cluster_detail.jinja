@@ -1,0 +1,24 @@
+{% import 'plan_cluster_common.jinja' as pcc with context -%}
+
+{{ pcc.write_plan_for_code('described below') }}
+
+{{ pcc.planning_only_with_outputs('`SAFETY_PLAN.md`', single = true) }}
+
+
+# Output format
+
+`SAFETY_PLAN.md` must contain these two sections:
+
+1. {{ pcc.safety_plan_section_conventions }}
+2. {{ pcc.safety_plan_section_detail_migration_guide }}
+
+
+# The code to refactor
+
+{{ pcc.migrate_code_in_current_cluster() }}
+
+
+# How the plan will be used
+
+{# Describe usage by a single rewrite agent, not multiple steps. #}
+{{ pcc.plan_usage_guidance(single = true) }}

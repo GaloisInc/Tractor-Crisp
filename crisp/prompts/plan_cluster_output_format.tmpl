@@ -1,0 +1,12 @@
+`SAFETY_PLAN.md` must contain these two sections:
+
+1. {{ safety_plan_section_conventions }}
+2. {{ safety_plan_section_cluster_guide }}
+
+`CLUSTERS.json` must contain a machine-readable description of the cluster breakdown, represented as an array of `Cluster`s according to the following schema:
+
+```typescript
+{{ cluster_schema }}
+```
+
+Use a `Filter` containing only `files` (no `functions`) to assign entire files to a cluster; add a `functions` component to the `Filter` if you need to divide up the code at a finer granularity.

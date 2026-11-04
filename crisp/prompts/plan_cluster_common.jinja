@@ -1,0 +1,133 @@
+{#
+We have several prompts related to cluster planning, which involve reading
+and/or writing plans for various subsets of the codebase.  To avoid repetition
+between these prompt templates, we define the common pieces here and mostly
+assemble each prompt from parts.
+#}
+
+
+{# Common planning prompts: write a migration plan and don't touch any code. #}
+
+{% macro write_plan_for_code(where) %}
+Develop a migration plan for refactoring the Rust code {{ where }} to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+{%- endmacro %}
+
+{% macro planning_only_with_outputs(outputs, single = false) %}
+This is a planning-only step.  Do not modify, create, rename, or delete any source files; your only {% if single %}output is{% else %}outputs are{% endif %} {{ outputs }} at the repository root.
+{%- endmacro %}
+
+
+{# Sections that appear in safety plans #}
+
+{% set safety_plan_section_conventions %}
+`## Conventions` -- the cross-cutting decisions relevant to multiple steps of the plan: standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them.
+{%- endset %}
+
+{# Natural-language version of `CLUSTERS.json` #}
+{% set safety_plan_section_cluster_guide %}
+`## Cluster guide` -- the target portion of the codebase partitioned into dependency-ordered clusters (a module or data-structure family plus the functions around it).  For each cluster: the functionality it covers; prerequisites (clusters or conventions that must land first); a table mapping each struct field that contains raw pointers to its recommended safe type with a one-line rationale; the key functions and how they change; pitfalls and risky edge cases; and semantic done-criteria.  Group same-shaped migrations into a single unit: if migrating `f` to `String` implies the same change in `g`, plan them together.
+{%- endset %}
+
+{# Detailed natural-language plan for migrating a single cluster #}
+{% set safety_plan_detail_migration_guide %}
+`## Migration guide` -- a breakdown of the root causes of unsafety within the target portion of the codebase, and a plan to address each one in turn.  This should be organized by types or causes of unsafety, not by functions; this is particularly important around data structures, where unsafe fields cause unsafety in all functions that access them, and the field and all users are best addressed together.  For each step, note the following: prerequisites; a table mapping raw pointers in struct fields and function signatures to recommended safe types with a one-line rationale for each; pitfalls and risky edge cases; and semantic done-criteria.
+{%- endset %}
+
+
+{# Pieces of the cluster schema #}
+
+{% set cluster_schema_filter %}
+// A name filter is either a regex or a list of regexes.  A name matches the
+// filter if it matches any of the regexes.
+type NameFilter = string | string[];
+
+type Filter = {
+  // If set, this filter matches only definitions from files with matching names.
+  // All paths should be relative to the root of the cargo workspace, e.g. `src/lib.rs`.
+  files?: NameFilter,
+  // If set, this filter matches only functions with matching names.
+  functions?: NameFilter,
+};
+{%- endset %}
+
+{% set cluster_schema %}
+{{cluster_schema_filter}}
+
+type Cluster = {
+  // A few sentences describing the contents and functionality of the cluster.
+  desc: string,
+  // The cluster contains all definitions that match at least one filter.
+  filters: Filter[],
+};
+{%- endset %}
+
+
+{# Output formats #}
+
+{% set output_format_safety_plan %}
+`SAFETY_PLAN.md` must contain these two sections:
+
+1. {{ safety_plan_section_conventions }}
+2. {{ safety_plan_section_cluster_guide }}
+{%- endset %}
+
+{% set output_format_cluster_json %}
+`CLUSTERS.json` must contain a machine-readable description of the cluster breakdown, represented as an array of `Cluster`s according to the following schema:
+
+```typescript
+{{ cluster_schema }}
+```
+
+Use a `Filter` containing only `files` (no `functions`) to assign entire files to a cluster; add a `functions` component to the `Filter` if you need to divide up the code at a finer granularity.
+{%- endset %}
+
+
+{# Description of the target code for the current cluster. #}
+{% macro current_cluster(include_filter_schema = true) %}
+Description:
+{{ desc }}
+{%  if functions_by_file_json %}
+
+Files and functions:
+```json
+{{ functions_by_file_json }}
+```
+{%  elif filters_json %}
+
+Filters:
+```json
+{{ filters_json }}
+```
+{%   if include_filter_schema %}
+
+Filters are defined according to the following schema:
+```typescript
+{{ cluster_schema }}
+```
+{%   endif %}
+{%  endif %}
+{%- endmacro %}
+
+{% macro migrate_code_in_current_cluster(include_filter_schema = true) %}
+The code to migrate is located in `{{ cargo_dir_path }}`.  Focus on this portion in particular:
+
+{{ current_cluster(include_filter_schema = include_filter_schema) }}
+
+Your migration plan must cover all the code listed here.  It may cover other code as well, but only if it's directly related to the listed code.
+{%- endmacro %}
+
+
+{# How the generated plan will be used #}
+{% macro plan_usage_guidance(single = false) %}
+{% if single %}
+The plan will be executed by a fresh agent instance that does not see this conversation.
+{% else %}
+The plan is executed incrementally by fresh agent instances that do not see this conversation.  Each instance reads the plan, gets a small work budget, and is assigned one cluster as its specific target.
+{% endif %}
+  An external harness independently validates every step (build, tests, and an unsafe-code check) and injects the exact validation commands into every instance's instructions.
+
+Consequences for how you must write the plan:
+- {% if not single -%} Every line is re-read on every step.  {% endif -%} Keep the plan compact: prefer tables over prose, don't restate what the code already shows, and aim for well under 400 lines even for large codebases.
+- Do not include any build, test, lint, or verification commands, and no command-based acceptance gates; the harness supplies all validation.  State done-criteria in semantic terms, e.g. "no field of struct X is a raw pointer" or "no function in this cluster is an `unsafe fn`".
+- Do not spell out full speculative Rust signatures; name the target types and ownership model and let the executing agent work out details against the code it sees.
+{%- endmacro %}

@@ -1,0 +1,21 @@
+{{ write_plan_for_code('described below') }}
+
+{{ planning_only_with_outputs('`SAFETY_PLAN.md`', single = true) }}
+
+
+# Output format
+
+`SAFETY_PLAN.md` must contain these two sections:
+
+1. {{ safety_plan_section_conventions }}
+2. {{ safety_plan_section_detail_migration_guide }}
+
+
+# The code to refactor
+
+{{ migrate_code_in_current_cluster(include_filter_schema = true) }}
+
+
+# How the plan will be used
+
+{{ plan_usage_guidance(single = true) }}

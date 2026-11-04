@@ -1,0 +1,44 @@
+Develop a migration plan for refactoring the Rust code described below to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+
+This is a planning-only step.  Do not modify, create, rename, or delete any source files; your only outputs are `SAFETY_PLAN.md` and `CLUSTERS.json` at the repository root.
+
+
+# Output format
+
+{% include 'plan_cluster_output_format.tmpl' %}
+
+
+# The code to refactor
+
+The code to migrate is located in `{{ cargo_dir_path }}`.  Focus on this portion in particular:
+
+Description:
+{{ desc }}
+
+{% if functions_by_file_json %}
+Files and functions:
+```json
+{{ functions_by_file_json }}
+
+{% elif filters_json %}
+Filters:
+```json
+{{ filters_json }}
+```
+
+{% endif %}
+{% if has_parent_detail %}
+For a more complete description and related context, see `PARENT_SAFETY_PLAN.md`.
+
+{% endif %}
+Your migration plan must cover all the code listed here.  It may cover other code as well, but only if it's directly related to the listed code.
+
+
+# How the plan will be used
+
+The plan is executed incrementally by fresh agent instances that do not see this conversation.  Each instance reads the plan, gets a small work budget, and is assigned one cluster as its specific target.  An external harness independently validates every step (build, tests, and an unsafe-code check) and injects the exact validation commands into every instance's instructions.
+
+Consequences for how you must write the plan:
+- Every line is re-read on every step.  Keep the plan compact: prefer tables over prose, don't restate what the code already shows, and aim for well under 400 lines even for large codebases.
+- Do not include any build, test, lint, or verification commands, and no command-based acceptance gates; the harness supplies all validation.  State done-criteria in semantic terms, e.g. "no field of struct X is a raw pointer" or "no function in this cluster is an `unsafe fn`".
+- Do not spell out full speculative Rust signatures; name the target types and ownership model and let the executing agent work out details against the code it sees.

@@ -1,0 +1,244 @@
+{#
+We have several prompts related to goal-based step bplanning, which involve
+reading and/or writing various step plans.  To avoid repetition between these
+prompt templates, we define the common pieces here and mostly assemble each
+prompt from parts.
+#}
+
+
+{% macro planning_only_with_outputs(outputs, single = false) %}
+This is a planning-only step.  Do not modify, create, rename, or delete any source files; your only {% if single %}output is{% else %}outputs are{% endif %} {{ outputs }} at the repository root.
+{%- endmacro %}
+
+
+{# Sections that appear in natural-language safety plans #}
+
+{% set safety_plan_section_conventions %}
+`## Conventions` -- the cross-cutting decisions relevant to multiple steps of the plan: standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them.
+{%- endset %}
+
+
+{# Pieces of the step plan schema #}
+
+{% set step_schema %}
+// Either a single regex (which must match the entire string) or a list of literal strings to accept. 
+type NameFilter = string | string[];
+
+type StepGoal = {
+  // Identifies an unsafety metric to count.  This can be:
+  // - The name of an integer field, such as `derefs_raw_ptr`.  The count is the value of the field.
+  // - The name of a map field, such as `uses_static_mut`.  The count is the sum of all entries in the map.
+  // - A pair `[map_name, key_name]`, where `map_name` is the name of a map field.  The count is the value associated with `key_name` within that map.
+  key: string | [string, string],
+  // The goal is met when the matching items' total unsafety metric is <= this limit (default 0).
+  max_count?: number,
+
+  // Item filters.  We add up the unsafety metric indicated by `key` within all items whose names match `functions` or `types` (depending on item kind) and whose containing file name matches `files`.  If a filter is omitted, all names are considered to match that filter.
+
+  // File name filter.  File paths are relative to the cargo workspace root, e.g. "src/lib.rs".
+  files?: NameFilter,
+  // Function name filter.  Note that FFI entry points are excluded regardless of the filter.
+  functions?: NameFilter,
+  // Type name filter.
+  types?: NameFilter,
+};
+
+type StepPlan = {
+  // Describe the transformation, dependencies, and semantic done-criteria.
+  description: string,
+  // All goals must be met to complete this step.
+  goals: StepGoal[],
+};
+{% endset %}
+
+{% set example_goals %}
+Require removing all unsafe from `foo.rs` and `bar.rs`:
+```json
+{
+    "key": "total_unsafe",
+    "files": ["foo.rs", "bar.rs"]
+}
+```
+
+Clean up `struct S` until its fields contain no more than 3 raw pointer types:
+```json
+{
+    "key": "field_contains_raw_ptr",
+    "max_count": 3,
+    "types": ["S"]
+}
+```
+
+Eliminate raw pointer dereferences from functions prefixed with `foo_`:
+```json
+{
+    "key": "derefs_raw_ptr",
+    "functions": "foo_.*"
+}
+```
+{% endset %}
+
+{% set unsafety_metrics %}
+The `key` field of each goal refers to one of the unsafety metrics for functions or for types.  These metrics are defined as follows:
+
+{# Copied from `tools/find_unsafe2/src/lib.rs` with non-count fields removed. #}
+```Rust
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionOutputs {
+    /// Sum of all unsafe counts for this function.
+    pub total_unsafe: usize,
+
+    /// Unsafety: the function itself is unsafe.
+    ///
+    /// It's actually safe to define an `unsafe fn`, but we count this in our unsafety metrics so
+    /// the CRISP loop won't stop until all `unsafe fn`s are cleaned up or removed, including ones
+    /// that are never called.
+    pub is_unsafe_fn: bool,
+    /// Unsafety: this "function" is actually a static initializer, and the static is mutable.
+    pub is_mut_static: bool,
+    /// Unsafety: function dereferences raw pointers.
+    pub derefs_raw_ptr: usize,
+    /// Unsafety: function calls `unsafe fn`s.
+    pub calls_unsafe: usize,
+    /// Unsafety: function contains inline assembly, which can access arbitrary memory.
+    pub inline_asm: usize,
+    /// Unsafety: function transmutes values.  `transmute` is an intrinsic, so it appears in MIR
+    /// as a cast rather than as a call to an `unsafe fn`.
+    pub transmutes: usize,
+    /// Unsafety: function mentions `static mut`s.
+    ///
+    /// This is overapproximated: we count any mention of a static `S` as an access, even though
+    /// some mentions, like `&raw mut S`, don't access memory and thus are safe.  This information
+    /// is derived from `FunctionVisitor::uses_statics`, which counts all mentions for dependency
+    /// tracking purposes.
+    pub uses_static_mut: IndexMap<String, usize>,
+    /// Unsafety: function mentions union fields.
+    ///
+    /// This is overapproximated: we treat union construction `U { x: 1 }` as an unsafe use of the
+    /// field `U.x`, even though this is a safe operation.  This information is derived from
+    /// `FunctionVisitor::uses_fields`, which counts all mentions of each struct or union field for
+    /// dependency tracking purposes.
+    pub uses_union_field: IndexMap<String, usize>,
+    // TODO: Unsafety: function is declared with unsafe attributes.
+
+    /// Progress: function mentions imported `extern` `fn`s.
+    pub uses_foreign_fn: IndexMap<String, usize>,
+    /// Progress: function mentions local FFI entry points.
+    ///
+    /// The FFI rules forbid implementation code from calling or referencing exported entry
+    /// points, and entry points are exempt from the unsafety checks, so routing work through
+    /// them would hide unsafe code.
+    pub uses_ffi_entry_point: IndexMap<String, usize>,
+    /// Progress: function casts `usize` to a raw pointer.
+    ///
+    /// This was added after seeing the agent bypass restrictions on raw pointers in data
+    /// structures by replacing the pointer with a `usize` and casting back to a pointer at each
+    /// use site.  We don't ban reference-to-pointer casts since these may come up naturally when a
+    /// function is made mostly safe but it still calls into an unsafe helper.
+    pub casts_int_to_ptr: usize,
+    /// Progress: function signature contains raw pointers.  This includes every occurrence of
+    /// `RigidTy::RawPtr` that appears in the signature, but does not look through type aliases.
+    pub sig_contains_raw_ptr: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TypeOutputs {
+    /// Progress: a field of this type contains a raw pointer.
+    ///
+    /// For type alias like `type Foo = *const u8;`, we treat the RHS as a field named "type", so
+    /// in this case `Foo` would have `field_contains_raw_ptr["field"] == 1`.
+    pub field_contains_raw_ptr: IndexMap<String, usize>,
+}
+```
+
+`usize` fields contribute count equal to their value; `bool` fields contribute zero or one.  Map fields allow for two-part keys like `["uses_foreign_fn", "printf"]`.
+{%- endset %}
+
+
+{% macro current_step(include_goal_schema = true) %}
+Description:
+{{ desc }}
+
+Goals:
+```json
+{{ goals_json }}
+```
+
+All goals must be met to complete this step. Each goal counts its selected inventory metric across matching functions and types; its count must be at most `max_count` (default zero). FFI entry points are excluded. Missing counters or map entries count as zero.
+{% if include_goal_schema %}
+
+Goals are defined according to the following schema:
+```typescript
+{{ step_schema }}
+```
+{% endif %}
+{%- endmacro %}
+
+
+{# Output formats #}
+
+{% set safety_plan_conventions_examples %}
+standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them
+{% endset %}
+
+{% set output_format_steps_json %}
+The `STEPS.json` you submit must contain a machine-readable description of the steps breakdown, represented as an array of `StepPlan`s according to the following schema:
+
+```typescript
+{{ step_schema }}
+```
+
+## Example goals
+
+{{ example_goals }}
+
+## Submission script errors
+
+The `crisp_submit_step_plan.sh` script runs the following checks and reports an error if any are violated:
+
+- A goal's `files`, `functions`, and/or `types` filters match no items.
+- None of the items matched by a goal's filters had the requested key.
+- A goal's `max_value` has already been achieved.
+
+If the script reports an error, you must edit your `STEPS.json` to correct the error and then resubmit.  Don't stop until you've gotten a successful result from the script.
+
+## Unsafety metrics
+
+{{ unsafety_metrics }}
+
+## File and item names
+
+The file names matched against `files` filters are relative to the `translated_rust/` directory.
+
+The function and type names matched against `functions` and `types` filters are absolute paths beginning with `crate::`.  A list of all known items is provided in `ALL_ITEMS.txt`.  Don't try to read the whole file (it may be very long), but if needed you can grep for a specific item to see its canonical name.
+{%- endset %}
+
+
+{# How the generated plan will be used #}
+{% macro plan_usage_guidance(single = false) %}
+{% if single %}
+The plan you write will be executed by a fresh agent instance that does not see this conversation.
+{% else %}
+The plan you write will be executed incrementally by fresh agent instances that do not see this conversation.  Each instance reads the plan, gets a small work budget, and is assigned a step whose goals it will try to complete.
+{% endif %}
+  An external harness independently validates every step (build, tests, and an unsafe-code check) and injects the exact validation commands into every instance's instructions.
+
+Consequences for how you must write the plan:
+- {% if not single -%} Every line is re-read on every step.  {% endif -%} Keep the plan compact: prefer tables over prose, don't restate what the code already shows, and aim for well under 400 lines even for large codebases.
+- Do not include any build, test, lint, or verification commands, and no command-based acceptance gates; the harness supplies all validation.  State done-criteria in semantic terms, e.g. "no field of struct X is a raw pointer" or "no function in this module is an `unsafe fn`".
+- Do not spell out full speculative Rust signatures; name the target types and ownership model and let the executing agent work out details against the code it sees.
+{%- endmacro %}
+
+
+{# List of relevant files, functions, and types #}
+{% set relevant_code_rendered %}
+{% for file in relevant_code %}
+{{ file.filename }}:
+{% for item in file['items'] %}
+- {{ item.name }}: {{ item.metrics }}
+{% endfor %}
+{% if file.other_count %}
+- ({{ file.other_count }} other items)
+{% endif %}
+{% endfor %}
+{% endset %}

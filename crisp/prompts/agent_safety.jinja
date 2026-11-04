@@ -11,3 +11,9 @@ Your changes must not introduce new unsafe code within implementation functions.
 crisp_check_unsafe2.sh
 ```
 This will report an error for any unsafe code that was improperly added during your edits. It also reports errors on any newly added "unsafe-adjacent" code, including int-to-pointer casts and arguments or fields of raw pointer type.
+
+Your changes also must not add excessive logic or complexity to FFI entry point functions (those with `#[no_mangle]` or `#[export_name = "..."]`).  All implementation logic must remain within non-FFI functions.  Check your work using this command:
+```sh
+crisp_ffi_review.sh
+```
+This will report an error if implementation code was improperly added to FFI functions.

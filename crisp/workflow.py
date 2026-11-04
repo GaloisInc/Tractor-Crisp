@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import toml
+import traceback
 import typing
 from typing import Any, Callable
 
@@ -1151,10 +1152,15 @@ class Workflow:
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'
 
-        def op_response(op):
+        def mk_response(body, ok = True, status = None):
             from fastapi import Response
-            return Response(content=op.body(), media_type="text/plain",
-                status_code = 200 if op.passed else 400)
+            if status is None:
+                status = 200 if ok else 400
+            return Response(content = body, media_type = "text/plain",
+                status_code = status)
+
+        def op_response(op):
+            return mk_response(op.body(), op.passed)
 
         def build_app(asb, app):
             # NB: because these are `def` rather than `async def`, they run on
@@ -1167,15 +1173,37 @@ class Workflow:
             @app.post('/crisp/run_tests')
             def run_tests():
                 code = asb.get_output('code')
-                op = self.test_op(code, n_test_code)
+                try:
+                    op = self.test_op(code, n_test_code)
+                except Exception as e:
+                    traceback.print_exc()
+                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
                 return op_response(op)
 
             @app.post('/crisp/check_unsafe2')
             def check_unsafe2():
                 code = asb.get_output('code')
-                unsafe_json = self.find_unsafe2_json(n_code)
-                op = self.check_unsafe2_op(code, unsafe_json)
+                try:
+                    unsafe_json = self.find_unsafe2_json(n_code)
+                    op = self.check_unsafe2_op(code, unsafe_json)
+                except Exception as e:
+                    traceback.print_exc()
+                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
                 return op_response(op)
+
+            @app.post('/crisp/ffi_review')
+            def ffi_review():
+                new_code = asb.get_output('code')
+                try:
+                    op = self.ffi_review_op(n_code, new_code)
+                    if op is None:
+                        # No FFI functions were modified.
+                        return mk_response('No changes required review.')
+                    report = mvir.node(op.report)
+                except Exception as e:
+                    traceback.print_exc()
+                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
+                return mk_response(report.body(), op.passed)
 
         return agent.run_rewrite(cfg, mvir, prompt, self.cfg.models.agent_loop, n_code,
             extra_code = extra_code,

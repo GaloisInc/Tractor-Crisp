@@ -214,3 +214,19 @@ def plan_step_subdivide(
         details = details,
         relevant_code = relevant_code,
     )
+
+def plan_step_target(
+    description: str,
+    goals: list[dict],
+    details: list[str],
+    relevant_code: dict,
+) -> str:
+    """Target description for a `StepPlan`, with goals in CBOR/JSON form."""
+
+    tmpl = jinja_env.get_template('plan_step_target.jinja')
+    return tmpl.render(
+        description = description,
+        goals_json = json.dumps(goals),
+        details = details,
+        relevant_code = relevant_code,
+    )

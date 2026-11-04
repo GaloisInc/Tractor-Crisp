@@ -1,0 +1,46 @@
+{% import 'plan_step_common.jinja' as psc with context -%}
+# Migration plans
+
+This is one iteration of a multi-step migration process.  Here are the planning documents that cover the current step of the migration:
+
+{% for detail in details %}
+{# `loop.index` gives the 1-based iteration number within the current loop. #}
+## Level {{ loop.index }}
+
+{{ detail }}
+
+{% endfor %}
+
+# Current goal
+
+Your task for the current iteration is to complete the following step of the plan.
+
+Step description: {{ description }}
+
+Goals:
+```json
+{{ goals_json }}
+```
+
+## Goal schema
+
+Each goal is described by a `StepGoal` following this schema:
+```json
+{{ psc.step_schema }}
+```
+
+## Example goals and explanations
+
+{{ psc.example_goals }}
+
+## Unsafety metrics
+
+{{ psc.unsafety_metrics }}
+
+## Relevant code
+
+One or more of the goals above are currently unmet, meaning the goal's total unsafety metric exceeds its target value.  The following code items contribute to the unsafety metrics of unmet goals:
+
+{{ psc.relevant_code_rendered }}
+
+You're free to edit other code if needed, such as updating callsites after changing a function signature, but your primary focus should be on implementing the current step of the plan and achieving the goals as described above.

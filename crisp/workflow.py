@@ -112,6 +112,22 @@ class AgentTargetOther(AgentTarget):
     def prompt(self):
         return ''
 
+@dataclass(frozen = True)
+class AgentTargetStep(AgentTarget):
+    """
+    Make a function and all its callees safe.
+    """
+    step_plan: StepPlan
+    details: list[str]
+    relevant_code: dict
+
+    def prompt(self):
+        return prompts.plan_step_target(
+            description = self.step_plan.description,
+            goals = [g.to_cbor() for g in self.step_plan.goals],
+            details = self.details,
+            relevant_code = self.relevant_code,
+        )
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))

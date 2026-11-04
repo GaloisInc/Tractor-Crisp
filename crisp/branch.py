@@ -6,7 +6,10 @@ from .mvir import TreeNode, BranchStateNode, BranchStepNode, Untyped
 from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
 from .util import FuelLimits
-from .workflow import Workflow, FuelCounter, OutOfFuelError
+from .workflow import (
+    Workflow, FuelCounter, OutOfFuelError, AgentTarget, AgentTargetStep,
+    AgentTargetOther,
+)
 
 
 def step(f):
@@ -14,6 +17,9 @@ def step(f):
     Wrapper for mutating operations on `BranchState`.  Records the state before
     and after in a `BranchStepNode`.  If the operation throws an exception,
     this automatically reverts to the initial state.
+
+    Note that step functions can't return values; they should be used only for
+    side-effecting operations on the `BranchState`.
     """
 
     @functools.wraps(f)
@@ -75,6 +81,14 @@ class BranchState:
         # Fuel is not persisted in MVIR, so limits can be changed between runs.
         self.safety_tries_fuel = FuelCounter('safety_tries',
                 default_give = self._limits.safety_tries)
+        self.per_target_fuel = FuelCounter('safety_tries_per_target',
+                default_give = self._limits.safety_tries_per_target)
+
+        # Other non-persisted fields.
+
+        # Plan used on the previous run.  This is used for updating
+        # `per_target_fuel`.
+        self.prev_plan = None
 
     def _reset(self, n: BranchStateNode):
         self._n = n
@@ -84,6 +98,7 @@ class BranchState:
         self.c_code = self.mvir.node(fields['c_code'])
         self.code = self.mvir.node(fields['code'])
         self.plans = [StepPlan.from_cbor(x) for x in fields.get('plans', ())]
+        self.failed_plans = [StepPlan.from_cbor(x) for x in fields.get('failed_plans', ())]
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
         assert n.node_id() == self._snapshot().node_id()
@@ -93,6 +108,7 @@ class BranchState:
             c_code = self.c_code.node_id(),
             code = self.code.node_id(),
             plans = [mp.to_cbor() for mp in self.plans],
+            failed_plans = [mp.to_cbor() for mp in self.failed_plans],
         )
         return BranchStateNode.new(self.mvir, fields = Untyped(fields))
 
@@ -227,11 +243,57 @@ class BranchState:
         for i, p in enumerate(self.plans):
             print(f'{i}: {p!r}')
 
+    def pick_next_target(self) -> AgentTarget:
+        """
+        Pick the next target for rewriting.  This updates `self.plans` first if
+        necessary.  This also tracks the number of rewrite attempts for each
+        plan, and may discard a plan (moving it to `self.failed_plans`) if it's
+        been tried more than `safety_tries_per_target` times without success.
+        """
+
+        self.update_plans()
+
+        while len(self.plans) > 0:
+            p = self.plans[0]
+
+            # Can't use `p is prev_plan` here because `_reset()` may re-parse
+            # the plan, producing a different object that's identical.
+            same_plan = self.prev_plan is not None \
+                    and p.persistent_fields() == self.prev_plan.persistent_fields()
+            if same_plan:
+                if self.per_target_fuel.is_empty():
+                    # Out of fuel - need to switch plans.
+                    print(f'planning: too many failed rewrite attempts: {p.description!r}')
+                    self.failed_plans.append(p)
+                    del self.plans[0]
+                    # Rerun update, in case we need to subdivide the next
+                    # available plan.
+                    self.update_plans()
+                    continue
+            else:
+                # Switched to a new plan, so restore fuel.
+                self.per_target_fuel.give()
+
+            # Proceed with plan `p`.
+            print(f'planning: attempting rewrite: {p.description!r}')
+            self.prev_plan = p
+            self.per_target_fuel.use()
+
+            unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
+            relevant_code = p.relevant_code(self.mvir, unsafe_json),
+            return AgentTargetStep(
+                step_plan = p,
+                details = [self.mvir.node(n).body_str() for n in p.details],
+                relevant_code = relevant_code,
+            )
+
+        # Fallback: there is some unsafety remaining that can't be covered by a
+        # plan, so give the rewriter generic instructions to fix all remaining
+        # unsafety.
+        return AgentTargetOther()
+
     @step
     def safety_loop(self):
-
-        pick_target = PickTarget(self._limits)
-
         consecutive_failure_fuel = FuelCounter('consecutive failures',
             default_give = self._limits.max_consecutive_failures)
 
@@ -244,10 +306,7 @@ class BranchState:
                     # Success!
                     break
 
-                self.update_plans()
-                # TODO: actually use the plans, instead of random targeting
-
-                target = pick_target.current_target_goal(self._w, self.code)
+                target = self.pick_next_target()
 
                 try:
                     self.agent_safety(target)

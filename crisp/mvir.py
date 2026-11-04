@@ -936,10 +936,12 @@ class BranchStateNode(Node):
     c_code: Metadata[NodeId]
     code: Metadata[NodeId]
     plans: Metadata[list[StepPlan]]
+    failed_plans: Metadata[list[StepPlan]]
 
     c_code = property(lambda self: self._metadata['c_code'])
     code = property(lambda self: self._metadata['code'])
     plans = property(lambda self: self._metadata['plans'])
+    failed_plans = property(lambda self: self._metadata['failed_plans'])
 
 class BranchStepNode(Node):
     """

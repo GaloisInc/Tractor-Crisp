@@ -21,7 +21,7 @@ import traceback
 from . import analysis, inline_errors, llm, prompts, sandbox
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .error import CrispError
+from .error import AgentQuotaError, CrispError
 from .mvir import MVIR, NodeId, FileNode, TreeNode, LlmOpNode, \
     TestResultNode, CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, \
     CodexAgentOpNode
@@ -76,6 +76,9 @@ def parse_args():
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
+    main.add_argument('--codex-login-fallback', action='store_true',
+        help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
+            'because the login is out of quota')
 
     safety_loop = sub.add_parser('safety-loop')
     safety_loop.add_argument('--c-code', default='c_code')
@@ -88,6 +91,9 @@ def parse_args():
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
+    safety_loop.add_argument('--codex-login-fallback', action='store_true',
+        help='with --codex-login, rerun with CRISP_API_KEY when a codex run fails '
+            'because the login is out of quota')
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -142,6 +148,32 @@ def parse_args():
     if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
     return args
+
+
+def check_codex_login_fallback(cfg):
+    """
+    Check the API key fallback's settings up front, rather than at the first
+    quota error, possibly hours into a run.
+    """
+    if not cfg.codex_login_fallback:
+        return
+    if not cfg.codex_login:
+        sys.exit('error: codex_login_fallback requires --codex-login')
+    # Codex reads the key straight from `CRISP_API_KEY` (via `env_key`), and an
+    # empty key is as useless as a missing one, so reject both.
+    if not os.environ.get('CRISP_API_KEY'):
+        sys.exit('error: codex_login_fallback requires CRISP_API_KEY to be set')
+    # `llm.API_BASE` falls back to its default only when `CRISP_API_BASE` is
+    # unset; an empty value is used as is, which would give codex an empty
+    # `base_url`.  So check the value the run will actually use.
+    if not llm.API_BASE:
+        sys.exit('error: codex_login_fallback requires CRISP_API_BASE to be '
+            'non-empty if set')
+    # Unset is valid (the default is a local server), but rarely what's
+    # wanted for a fallback from a codex subscription, so point it out.
+    if 'CRISP_API_BASE' not in os.environ:
+        print('warning: CRISP_API_BASE is not set, so the codex login fallback '
+            f'will use {llm.API_BASE}')
 
 
 def parse_node_id_arg(mvir, s):
@@ -421,6 +453,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     pick_target = PickTarget(limits)
 
     prev_fuel = None
+    stopped_by_quota = False
     while True:
         unsafe_count = w.count_unsafe2(n_code)
         if unsafe_count == 0:
@@ -533,6 +566,12 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                 ffi_seen_findings = merge_ffi_finding_titles(
                     ffi_seen_findings, ffi_report)
 
+        except AgentQuotaError as e:
+            # Retrying would just fail the same way, burning through fuel.
+            print(f'exiting due to API spend cap or quota: {e}')
+            stopped_by_quota = True
+            break
+
         except CrispError as e:
             print(f'{args.llm_mode} safety attempt {cur_fuel} failed: {e}')
             traceback.print_exc()
@@ -550,6 +589,8 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
     print('final test exit code = %d' % n_op_test.exit_code)
     if n_op_test.exit_code != 0:
         status = 'TEST_FAILED'
+    elif unsafe_count != 0 and stopped_by_quota:
+        status = 'API_QUOTA_EXHAUSTED'
     elif unsafe_count != 0:
         status = 'BUDGET_EXHAUSTED'
     else:
@@ -914,7 +955,10 @@ def main():
         cfg_kwargs['on_accept'] = args.on_accept
     if getattr(args, 'codex_login', None) is not None:
         cfg_kwargs['codex_login'] = args.codex_login
+    if getattr(args, 'codex_login_fallback', False):
+        cfg_kwargs['codex_login_fallback'] = True
     cfg = Config.from_toml_file(args.config_path, **cfg_kwargs)
+    check_codex_login_fallback(cfg)
 
     if args.cmd == 'main':
         do_main(args, cfg)

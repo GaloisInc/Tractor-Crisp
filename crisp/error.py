@@ -24,3 +24,12 @@ class CrispError(Exception):
         if self.node_id is not None:
             msg += f'\nnode_id: {self.node_id}'
         return msg
+
+
+class AgentQuotaError(CrispError):
+    """
+    The agent's API provider refused the request because the account is out
+    of budget (e.g. a workspace spend cap was hit).  Unlike most `CrispError`s,
+    retrying won't help, so callers that retry on `CrispError` should let this
+    one propagate.
+    """

@@ -587,13 +587,7 @@ def do_branch_main(args, cfg):
     limits = get_fuel_limits(mvir, n_code)
     print(f'limits = {limits!r}')
 
-    n_branch = BranchStateNode.new(
-        mvir,
-        c_code = n_c_code.node_id(),
-        code = n_code.node_id(),
-        plans = None,
-    )
-    br = BranchState(w, n_branch, limits)
+    br = BranchState.new(w, limits, n_c_code, n_code)
     br.accept()
     br.safety_loop()
 

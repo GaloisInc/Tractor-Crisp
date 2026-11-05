@@ -5,7 +5,7 @@ import itertools
 import re
 
 from .error import ValidateErrorCollector
-from .mvir import MVIR, NodeId
+from .mvir import NodeId
 
 
 def _validate_filter(x: str | list[str] | None):
@@ -77,7 +77,7 @@ class StepGoal:
                 except (TypeError, re.PatternError) as e:
                     ec.err(e)
 
-    def _iter_matching_items(self, mvir: MVIR, unsafe_json: list[dict]):
+    def _iter_matching_items(self, unsafe_json: list[dict]):
         files_filter = _compile_filter(self.files)
 
         for j in unsafe_json:
@@ -93,10 +93,10 @@ class StepGoal:
                     continue
                 yield 'ty', ty_name, j_ty
 
-    def _iter_matching_items_with_cost(self, mvir: MVIR, unsafe_json: list[dict]):
+    def _iter_matching_items_with_cost(self, unsafe_json: list[dict]):
         if isinstance(self.key, str):
             key = self.key
-            for kind, name, val in self._iter_matching_items(mvir, unsafe_json):
+            for kind, name, val in self._iter_matching_items(unsafe_json):
                 # Note `bool` is a subclass of `int`, with value 0 or 1.
                 x = val.get(key)
                 if x is None:
@@ -106,7 +106,7 @@ class StepGoal:
                 yield (kind, name, val, int(x))
         else:
             key1, key2 = self.key
-            for kind, name, val in self._iter_matching_items(mvir, unsafe_json):
+            for kind, name, val in self._iter_matching_items(unsafe_json):
                 m = val.get(key1)
                 if m is None:
                     continue
@@ -115,21 +115,21 @@ class StepGoal:
                     continue
                 yield (kind, name, val, int(x))
 
-    def _iter_matching_nonzero_items(self, mvir: MVIR, unsafe_json: list[dict]):
+    def _iter_matching_nonzero_items(self, unsafe_json: list[dict]):
         """Yield `(kind, name, item_json)` for every item that contributes a
         nonzero amount toward `self.count()`."""
-        for kind, name, val, cost in self._iter_matching_items_with_cost(mvir, unsafe_json):
+        for kind, name, val, cost in self._iter_matching_items_with_cost(unsafe_json):
             if cost > 0:
                 yield (kind, name, val)
 
-    def count(self, mvir: MVIR, unsafe_json: list[dict]) -> int:
+    def count(self, unsafe_json: list[dict]) -> int:
         """Count the selected metric in matching implementation items."""
         return sum(cost for _, _, _, cost
-                in self._iter_matching_items_with_cost(mvir, unsafe_json))
+                in self._iter_matching_items_with_cost(unsafe_json))
 
-    def count_excess(self, mvir: MVIR, unsafe_json: list[dict]) -> int:
+    def count_excess(self, unsafe_json: list[dict]) -> int:
         """Return the count above the goal's limit, clamped at zero."""
-        return max(0, self.count(mvir, unsafe_json) - self.max_count)
+        return max(0, self.count(unsafe_json) - self.max_count)
 
     def to_cbor(self):
         out = {
@@ -167,14 +167,14 @@ class StepPlan:
     # Number of times we've tried subdividing this step.
     subdiv_attempts: int = 0
 
-    def count(self, mvir: MVIR, unsafe_json: list[dict]) -> int:
-        return sum(goal.count(mvir, unsafe_json) for goal in self.goals)
+    def count(self, unsafe_json: list[dict]) -> int:
+        return sum(goal.count(unsafe_json) for goal in self.goals)
 
-    def count_excess(self, mvir: MVIR, unsafe_json: list[dict]) -> int:
+    def count_excess(self, unsafe_json: list[dict]) -> int:
         """Sum excess counts above each goal's limit; zero means all goals met."""
-        return sum(goal.count_excess(mvir, unsafe_json) for goal in self.goals)
+        return sum(goal.count_excess(unsafe_json) for goal in self.goals)
 
-    def measure(self, mvir: MVIR, unsafe_json: list[dict]):
+    def measure(self, unsafe_json: list[dict]):
         """
         Measure the total size of all items that currently contribute to the
         safety count of at least one unmet goal.  For each unmet goal `g`,
@@ -191,7 +191,7 @@ class StepPlan:
         }
         seen = set()
         for goal in self.goals:
-            for kind, name, val in goal._iter_matching_nonzero_items(mvir, unsafe_json):
+            for kind, name, val in goal._iter_matching_nonzero_items(unsafe_json):
                 filename = val['filename']
                 key = (kind, name, filename)
                 if key in seen:
@@ -211,7 +211,7 @@ class StepPlan:
 
         return out
 
-    def relevant_code(self, mvir: MVIR, unsafe_json: list[dict]) -> list[dict]:
+    def relevant_code(self, unsafe_json: list[dict]) -> list[dict]:
         """
         Return a representation of up to 50 items that are relevant to this
         step's unmet goals, for rendering in a prompt template.
@@ -261,11 +261,11 @@ class StepPlan:
             # Skip goals that are already achieved.  If the target is 10 and
             # the current value is 5, we don't include the items contributing
             # to the 5, or show that metric if an item is included otherwise.
-            if goal.count_excess(mvir, unsafe_json) == 0:
+            if goal.count_excess(unsafe_json) == 0:
                 continue
 
             current_goal_contributors = []
-            for kind, name, val, cost in goal._iter_matching_items_with_cost(mvir, unsafe_json):
+            for kind, name, val, cost in goal._iter_matching_items_with_cost(unsafe_json):
                 if cost <= 0:
                     continue
                 filename = val['filename']

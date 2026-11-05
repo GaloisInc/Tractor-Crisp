@@ -167,7 +167,7 @@ class BranchState:
                 ],
             )
             unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
-            if plan_all.count(self.mvir, unsafe_json) == 0:
+            if plan_all.count(unsafe_json) == 0:
                 # All unsafety detectable by `StepGoal` has been removed.
                 print('planning: all plannable unsafety has been removed')
                 return
@@ -186,7 +186,7 @@ class BranchState:
 
             unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
 
-            if p.count_excess(self.mvir, unsafe_json) == 0:
+            if p.count_excess(unsafe_json) == 0:
                 print(f'planning: complete (zero excess unsafe): {p.description!r}')
                 del self.plans[0]
                 continue
@@ -199,7 +199,7 @@ class BranchState:
                     f'{p.description!r}')
                 break
 
-            m = p.measure(self.mvir, unsafe_json)
+            m = p.measure(unsafe_json)
             if m['functions'] + m['types'] <= 4:
                 # Don't try to subdivide further if there are only a few items.
                 break
@@ -211,7 +211,7 @@ class BranchState:
             # Subdivide the plan at the head of the list.
             detail, subplans = self._w.plan_step_subdivide(
                 self.code, p,
-                relevant_code = p.relevant_code(self.mvir, unsafe_json),
+                relevant_code = p.relevant_code(unsafe_json),
             )
 
             if len(subplans) == 0:
@@ -280,7 +280,7 @@ class BranchState:
             self.per_target_fuel.use()
 
             unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
-            relevant_code = p.relevant_code(self.mvir, unsafe_json),
+            relevant_code = p.relevant_code(unsafe_json),
             return AgentTargetStep(
                 step_plan = p,
                 details = [self.mvir.node(n).body_str() for n in p.details],

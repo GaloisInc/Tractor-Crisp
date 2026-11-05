@@ -116,6 +116,8 @@ class BwrapSandbox:
             'bwrap',
             '--unshare-all', '--share-net',
             '--new-session',
+            # Kill the command if crisp exits (e.g. on SIGTERM) while it runs.
+            '--die-with-parent',
             # Make `/` and `/dev` visible
             '--ro-bind', '/', '/',
             '--dev-bind', '/dev', '/dev',

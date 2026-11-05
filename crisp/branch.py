@@ -90,6 +90,16 @@ class BranchState:
             plans = self.plans.node_id() if self.plans is not None else None,
         )
 
+    @classmethod
+    def new(cls, w: Workflow, limits: FuelLimits, n_c_code: TreeNode, n_code: TreeNode):
+        n = BranchStateNode.new(
+            w.mvir,
+            c_code = n_c_code.node_id(),
+            code = n_code.node_id(),
+            plans = None,
+        )
+        return cls(w, n, limits)
+
 
     def accept(self):
         self._w.accept(self.code)

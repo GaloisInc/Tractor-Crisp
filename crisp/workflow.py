@@ -150,6 +150,8 @@ class FuelCounter:
         if amount > self.fuel:
             self.fuel = amount
 
+# Note this is *not* a `CrispError`, so it won't be caught by generic retry
+# logic for failing steps.
 class OutOfFuelError(Exception):
     pass
 

@@ -6,7 +6,7 @@ from .error import CrispError
 from .mvir import BranchStateNode, BranchStepNode
 from .rand_target import PickTarget
 from .util import FuelLimits
-from .workflow import Workflow, FuelCounter, AgentTargetOther
+from .workflow import Workflow, FuelCounter, OutOfFuelError, AgentTargetOther
 
 
 def step(f):
@@ -153,33 +153,37 @@ class BranchState:
         consecutive_failure_fuel = FuelCounter('consecutive failures',
             default_give = self._limits.max_consecutive_failures)
 
-        while not self.safety_tries_fuel.is_empty():
-            old_fuel = self.safety_tries_fuel.fuel
-            old_unsafe_count = self._w.count_unsafe2(self.code)
+        try:
+            while True:
+                old_fuel = self.safety_tries_fuel.fuel
+                old_unsafe_count = self._w.count_unsafe2(self.code)
 
-            if old_unsafe_count == 0:
-                # Success!
-                break
+                if old_unsafe_count == 0:
+                    # Success!
+                    break
 
-            target = pick_target.current_target_goal(self._w, self.code)
+                target = pick_target.current_target_goal(self._w, self.code)
 
-            try:
-                self.agent_safety(target)
-                consecutive_failure_fuel.give()
-            except CrispError:
-                consecutive_failure_fuel.use()
-                # Keep trying as long as fuel remains.
-                pass
+                try:
+                    self.agent_safety(target)
+                except CrispError:
+                    # Keep trying as long as fuel remains.  Fuel will be reduced
+                    # below because the failed step was reverted, leaving the
+                    # unsafe count unchanged.
+                    pass
 
-            self.accept()
+                self.accept()
 
-            new_unsafe_count = self._w.count_unsafe2(self.code)
-            if new_unsafe_count < old_unsafe_count:
-                # Success - refill `consecutive_failure_fuel`.
-                consecutive_failure_fuel.give()
-            else:
-                consecutive_failure_fuel.use()
+                new_unsafe_count = self._w.count_unsafe2(self.code)
+                if new_unsafe_count < old_unsafe_count:
+                    # Success - refill `consecutive_failure_fuel`.
+                    consecutive_failure_fuel.give()
+                else:
+                    # Failure - consume fuel, and bail out if none is left.
+                    consecutive_failure_fuel.use()
 
-            assert self.safety_tries_fuel.fuel < old_fuel, \
-                'safety loop ran without consuming fuel (infinite loop)'
+                assert self.safety_tries_fuel.fuel < old_fuel, \
+                    'safety loop ran without consuming fuel (infinite loop)'
 
+        except OutOfFuelError as e:
+            print(f'stopping due to lack of fuel: {e}')

@@ -950,6 +950,10 @@ class WorkflowStepNode(Node):
     timestamp = property(lambda self: self._metadata['timestamp'])
 
 class BranchStateNode(Node):
+    """
+    Snapshot of translation state.  This includes the current Rust code and
+    also metadata such as refactoring plans.
+    """
     KIND = 'branch_state'
     c_code: Metadata[NodeId]
     code: Metadata[NodeId]
@@ -960,11 +964,19 @@ class BranchStateNode(Node):
     plans = property(lambda self: self._metadata['plans'])
 
 class BranchStepNode(Node):
+    """
+    Record of a high-level step of the translation.
+    """
     KIND = 'branch_step'
+    # Name of the function that produced this step.
     name: Metadata[str]
+    # `BranchStateNode` representing the initial state.
     old_state: Metadata[NodeId]
+    # `BranchStateNode` representing the final state, if the step succeeded.
     new_state: Metadata[Optional[NodeId]]
+    # Exception message, if the step failed.
     fail_msg: Metadata[Optional[str]]
+    # List of `BranchStepNode`s that occurred as part of this step.
     children: Metadata[list[NodeId]]
     start_time: Metadata[datetime]
     end_time: Metadata[datetime]

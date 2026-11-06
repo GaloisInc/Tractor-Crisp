@@ -69,42 +69,30 @@ def parse_args():
 
     sub = ap.add_subparsers(dest='cmd')
 
+    LLM_MODE_CHOICES = ('basic', 'no_ffi', 'agent', 'agent_sim_no_tests',
+        'agent_rand_target', 'agent_branch')
+    DEFAULT_LLM_MODE = 'agent_branch'
+
     main = sub.add_parser('main')
     main.add_argument('node', nargs='?', default='c_code')
     main.add_argument('--on-accept', metavar='COMMAND',
         help='Run COMMAND after each accepted CRISP state.')
-    main.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
-            'agent_rand_target'),
-        default='default',
+    main.add_argument('--llm-mode', choices=LLM_MODE_CHOICES, default=DEFAULT_LLM_MODE,
         help='which style of LLM-based rewriting to use')
     main.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
             "requires --llm-mode=agent or similar")
 
     safety_loop = sub.add_parser('safety-loop')
-    safety_loop.add_argument('--c-code', default='c_code')
-    safety_loop.add_argument('node', nargs='?', default='current')
-    safety_loop.add_argument('--llm-mode',
-        choices=('default', 'no_ffi', 'agent', 'agent_sim_no_tests',
-            'agent_rand_target'),
-        default='default',
+    # These have complex defaulting rules, so we set the default to `None` here
+    # and then provide the real default below depending on `--llm-mode`.
+    safety_loop.add_argument('--c-code', default=None)
+    safety_loop.add_argument('node', nargs='?', default=None)
+    safety_loop.add_argument('--llm-mode', choices=LLM_MODE_CHOICES, default=DEFAULT_LLM_MODE,
         help='which style of LLM-based rewriting to use')
     safety_loop.add_argument('--codex-login', action='store_true',
         help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
         "requires --llm-mode=agent or similar")
-
-    branch_main = sub.add_parser('branch-main')
-    branch_main.add_argument('node', nargs='?', default='c_code')
-    branch_main.add_argument('--codex-login', action='store_true',
-        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-            "requires --llm-mode=agent or similar")
-
-    branch_safety_loop = sub.add_parser('branch-safety-loop')
-    branch_safety_loop.add_argument('node', nargs='?', default='current_branch')
-    branch_safety_loop.add_argument('--codex-login', action='store_true',
-        help="use the host's `codex login` credentials instead of CRISP_API_KEY; "
-            "requires --llm-mode=agent or similar")
 
     repl = sub.add_parser('repl')
     repl.add_argument('--node', '-n', action='append', metavar='[NAME=]NODE',
@@ -155,9 +143,35 @@ def parse_args():
         help='check out files from this node into the sandbox')
 
     args = ap.parse_args()
-    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target')
-    if getattr(args, 'codex_login', False) and getattr(args, 'llm_mode', None) not in AGENT_MODES:
+
+    llm_mode = getattr(args, 'llm_mode', None)
+    AGENT_MODES = ('agent', 'agent_sim_no_tests', 'agent_rand_target', 'agent_branch')
+    if getattr(args, 'codex_login', False) and llm_mode not in AGENT_MODES:
         ap.error('--codex-login requires --llm-mode=agent or similar')
+
+    NEED_C_CODE_MODES = ('basic', 'no_ffi', 'agent', 'agent_sim_no_tests', 'agent_rand_target')
+    if hasattr(args, 'c_code'):
+        if llm_mode in NEED_C_CODE_MODES:
+            # Provide a real default value if unset by the user.
+            if args.c_code is None:
+                args.c_code = 'c_code'
+        else:
+            if args.c_code is not None:
+                # `safety-loop --llm-mode=agent_branch` get `c_code` from the
+                # branch state rather than from a command-line argument.
+                ap.error(f'--c-code is not allowed with --llm-mode={args.llm_mode}')
+
+    DEFAULT_NODE_CURRENT_MODES = ('basic', 'no_ffi', 'agent', 'agent_sim_no_tests',
+            'agent_rand_target')
+    DEFAULT_NODE_CURRENT_BRANCH_MODES = ('agent_branch',)
+    if hasattr(args, 'node') and args.node is None:
+        if args.llm_mode in DEFAULT_NODE_CURRENT_MODES:
+            args.node = 'current'
+        elif args.llm_mode in DEFAULT_NODE_CURRENT_BRANCH_MODES:
+            args.node = 'current_branch'
+        else:
+            raise ValueError(f'unknown --llm-mode {args.llm_mode}')
+
     return args
 
 
@@ -293,6 +307,9 @@ def main_common(args, cfg, mvir, w, c_code_str):
 
 
 def do_main(args, cfg):
+    if args.llm_mode == 'agent_branch':
+        return do_branch_main(args, cfg)
+
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 
@@ -516,7 +533,7 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
                     n_new_code, n_new_plans = w.do_safety_step_agent_sim_no_tests(
                         n_code, n_c_code, n_plans)
 
-                case 'default':
+                case 'basic':
                     n_new_code = w.do_safety_step_llm(n_code, n_c_code)
                     n_new_plans = n_plans
 
@@ -563,6 +580,9 @@ def safety_loop_common(args, cfg, mvir, w, n_code, n_c_code):
 
 
 def do_safety_loop(args, cfg):
+    if args.llm_mode == 'agent_branch':
+        return do_branch_safety_loop(args, cfg)
+
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     w = Workflow(cfg, mvir)
 

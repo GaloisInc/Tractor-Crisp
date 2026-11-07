@@ -1,12 +1,15 @@
-from contextlib import contextmanager
 from datetime import datetime
 import functools
 
 from .error import CrispError
-from .mvir import BranchStateNode, BranchStepNode
+from .mvir import TreeNode, BranchStateNode, BranchStepNode, Untyped
+from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
 from .util import FuelLimits
-from .workflow import Workflow, FuelCounter, OutOfFuelError, AgentTargetOther
+from .workflow import (
+    Workflow, FuelCounter, OutOfFuelError, AgentTarget, AgentTargetStep,
+    AgentTargetOther,
+)
 
 
 def step(f):
@@ -14,6 +17,9 @@ def step(f):
     Wrapper for mutating operations on `BranchState`.  Records the state before
     and after in a `BranchStepNode`.  If the operation throws an exception,
     this automatically reverts to the initial state.
+
+    Note that step functions can't return values; they should be used only for
+    side-effecting operations on the `BranchState`.
     """
 
     @functools.wraps(f)
@@ -75,33 +81,44 @@ class BranchState:
         # Fuel is not persisted in MVIR, so limits can be changed between runs.
         self.safety_tries_fuel = FuelCounter('safety_tries',
                 default_give = self._limits.safety_tries)
+        self.per_target_fuel = FuelCounter('safety_tries_per_target',
+                default_give = self._limits.safety_tries_per_target)
+
+        # Other non-persisted fields.
+
+        # Plan used on the previous run.  This is used for updating
+        # `per_target_fuel`.
+        self.prev_plan = None
 
     def _reset(self, n: BranchStateNode):
         self._n = n
 
-        self.c_code = self.mvir.node(n.c_code)
-        self.code = self.mvir.node(n.code)
-        self.plans = self.mvir.node(n.plans) if n.plans is not None else None
+        fields = n.fields.raw
+
+        self.c_code = self.mvir.node(fields['c_code'])
+        self.code = self.mvir.node(fields['code'])
+        self.plans = [StepPlan.from_cbor(x) for x in fields.get('plans', ())]
+        self.failed_plans = [StepPlan.from_cbor(x) for x in fields.get('failed_plans', ())]
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
         assert n.node_id() == self._snapshot().node_id()
 
     def _snapshot(self) -> BranchStateNode:
-        return BranchStateNode.new(
-            self.mvir,
+        fields = dict(
             c_code = self.c_code.node_id(),
             code = self.code.node_id(),
-            plans = self.plans.node_id() if self.plans is not None else None,
+            plans = [mp.to_cbor() for mp in self.plans],
+            failed_plans = [mp.to_cbor() for mp in self.failed_plans],
         )
+        return BranchStateNode.new(self.mvir, fields = Untyped(fields))
 
     @classmethod
     def new(cls, w: Workflow, limits: FuelLimits, n_c_code: TreeNode, n_code: TreeNode):
-        n = BranchStateNode.new(
-            w.mvir,
+        n = BranchStateNode.new(w.mvir, fields = Untyped(dict(
             c_code = n_c_code.node_id(),
             code = n_code.node_id(),
-            plans = None,
-        )
+            plans = [],
+        )))
         return cls(w, n, limits)
 
 
@@ -114,7 +131,7 @@ class BranchState:
     @step
     def agent_safety_unchecked(self, target):
         self.safety_tries_fuel.use()
-        self.code, self.plans = self._w.agent_safety(self.code, self.c_code, self.plans,
+        self.code, _ = self._w.agent_safety(self.code, self.c_code, None,
             target_goal = target)
 
     @step
@@ -140,16 +157,143 @@ class BranchState:
             raise CrispError("new code failed FFI review", op_ffi_review)
 
     @step
-    def init_plans(self):
-        _, self.plans = self._w.do_safety_plan_agent(self.code, self.c_code)
+    def update_plans(self):
+        if len(self.plans) == 0:
+            plan_all = StepPlan(
+                description = "Entire codebase",
+                goals = [
+                    StepGoal(key = 'total_unsafe'),
+                    StepGoal(key = 'field_contains_raw_ptr'),
+                ],
+            )
+            unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
+            if plan_all.count(unsafe_json) == 0:
+                # All unsafety detectable by `StepGoal` has been removed.
+                print('planning: all plannable unsafety has been removed')
+                return
+
+            detail, plans = self._w.plan_step_init(self.code)
+            for plan in plans:
+                plan.details = [detail.node_id()]
+            self.plans = plans
+
+            self.accept()
+
+        # Subdivide the first plan until it's small enough to attempt as a
+        # single unit.
+        while len(self.plans) > 0:
+            p = self.plans[0]
+
+            unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
+
+            if p.count_excess(unsafe_json) == 0:
+                print(f'planning: complete (zero excess unsafe): {p.description!r}')
+                del self.plans[0]
+                continue
+
+            # Don't retry clusters that we previously failed to subdivide
+            # several times.  Let the rewriter work on the cluster as a single
+            # unit instead.
+            if p.subdiv_attempts >= 3:
+                print(f'planning: too many subdiv attempts ({p.subdiv_attempts}): '
+                    f'{p.description!r}')
+                break
+
+            m = p.measure(unsafe_json)
+            if m['functions'] + m['types'] <= 4:
+                # Don't try to subdivide further if there are only a few items.
+                break
+            if m['lines'] <= 2000:
+                # Small enough to attempt as a single unit.
+                break
+
+
+            # Subdivide the plan at the head of the list.
+            detail, subplans = self._w.plan_step_subdivide(
+                self.code, p,
+                relevant_code = p.relevant_code(unsafe_json),
+            )
+
+            if len(subplans) == 0:
+                # Agent returned `[]`, indicating that it can't reasonably
+                # subdivide `p`.  Mark `p` as indivisible (by setting a very
+                # large `subdiv_attempts`) and bail out.  The rewriter will try
+                # to carry out plan `p` as a single unit.
+                p.subdiv_attempts += 1000
+                break
+            else:
+                # Record a subdivision attempt.  If the new sub-steps fail to
+                # solve `p.goals`, we may return to `p` later and try to
+                # subdivide it again, but only up to a limit on number of
+                # attempts.
+                p.subdiv_attempts += 1
+
+            for subplan in subplans:
+                subplan.details = p.details + [detail.node_id()]
+            # Prepend the new subplans, while keeping the current plan in
+            # place.  If the subplans together cover the original plan, then
+            # once the subplans are complete, the original plan will be
+            # discarded as already done.  If they don't fully cover the
+            # original plan, we'll re-attempt it (re-subdividing if necessary).
+            self.plans = subplans + self.plans
+
+            self.accept()
+
+        print(f'planning: final plans ({len(self.plans)}):')
+        for i, p in enumerate(self.plans):
+            print(f'{i}: {p!r}')
+
+    def pick_next_target(self) -> AgentTarget:
+        """
+        Pick the next target for rewriting.  This updates `self.plans` first if
+        necessary.  This also tracks the number of rewrite attempts for each
+        plan, and may discard a plan (moving it to `self.failed_plans`) if it's
+        been tried more than `safety_tries_per_target` times without success.
+        """
+
+        self.update_plans()
+
+        while len(self.plans) > 0:
+            p = self.plans[0]
+
+            # Can't use `p is prev_plan` here because `_reset()` may re-parse
+            # the plan, producing a different object that's identical.
+            same_plan = self.prev_plan is not None \
+                    and p.persistent_fields() == self.prev_plan.persistent_fields()
+            if same_plan:
+                if self.per_target_fuel.is_empty():
+                    # Out of fuel - need to switch plans.
+                    print(f'planning: too many failed rewrite attempts: {p.description!r}')
+                    self.failed_plans.append(p)
+                    del self.plans[0]
+                    # Rerun update, in case we need to subdivide the next
+                    # available plan.
+                    self.update_plans()
+                    continue
+            else:
+                # Switched to a new plan, so restore fuel.
+                self.per_target_fuel.give()
+
+            # Proceed with plan `p`.
+            print(f'planning: attempting rewrite: {p.description!r}')
+            self.prev_plan = p
+            self.per_target_fuel.use()
+
+            unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
+            relevant_code = p.relevant_code(unsafe_json),
+            return AgentTargetStep(
+                step_plan = p,
+                details = [self.mvir.node(n).body_str() for n in p.details],
+                relevant_code = relevant_code,
+            )
+
+        # Fallback: there is some unsafety remaining that can't be covered by a
+        # plan, so give the rewriter generic instructions to fix all remaining
+        # unsafety.
+        return AgentTargetOther()
 
     @step
     def safety_loop(self):
-        if self.plans is None:
-            self.init_plans()
-
-        pick_target = PickTarget(self._limits)
-
         consecutive_failure_fuel = FuelCounter('consecutive failures',
             default_give = self._limits.max_consecutive_failures)
 
@@ -162,7 +306,7 @@ class BranchState:
                     # Success!
                     break
 
-                target = pick_target.current_target_goal(self._w, self.code)
+                target = self.pick_next_target()
 
                 try:
                     self.agent_safety(target)

@@ -618,7 +618,7 @@ def do_branch_safety_loop(args, cfg):
     branch_node_id = parse_node_id_arg(mvir, args.node)
     n_branch = mvir.node(branch_node_id)
 
-    limits = get_fuel_limits(mvir, mvir.node(n_branch.code))
+    limits = get_fuel_limits(mvir, mvir.node(n_branch.fields.raw['code']))
     print(f'limits = {limits!r}')
 
     br = BranchState(w, n_branch, limits)

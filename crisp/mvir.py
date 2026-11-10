@@ -7,9 +7,11 @@ import os
 import stat
 import tempfile
 import typing
-from typing import Any, Callable, ClassVar, Optional, Annotated, TypeVar
+from typing import Any, Callable, Optional, Annotated, TypeVar
 from types import NoneType
 from weakref import WeakValueDictionary
+
+from crisp.node_id import NodeId
 
 
 T = TypeVar("T")
@@ -21,39 +23,6 @@ Metadata = Annotated[T, MetadataTag]
 """
 Mark a type as CRISP metadata.
 """
-
-@dataclass(frozen=True)
-class NodeId:
-    raw: bytes
-
-    LENGTH: ClassVar[int] = hashlib.sha256().digest_size
-
-    def __post_init__(self):
-        assert len(self.raw) == NodeId.LENGTH
-
-    def __str__(self):
-        return self.raw.hex()
-
-    def __repr__(self):
-        return 'NodeId(%s)' % self
-
-    @staticmethod
-    def from_str(s):
-        if len(s) != 2 * NodeId.LENGTH:
-            raise ValueError('expected exactly %d characters' % (2 * NodeId.LENGTH))
-        raw = bytes(int(s[i:i+2], 16) for i in range(0, len(s), 2))
-        return NodeId(raw)
-
-    def to_cbor(self):
-        return self.raw
-
-    @classmethod
-    def from_cbor(cls, raw):
-        return cls(raw)
-
-    @classmethod
-    def check_type(cls, x):
-        assert isinstance(x, cls), 'expected %r, but got %r' % (cls, type(x))
 
 
 def to_cbor(x):

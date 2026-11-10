@@ -5,7 +5,7 @@ from .error import CrispError
 from .mvir import TreeNode, BranchStateNode, BranchStepNode
 from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
-from .util import FuelLimits
+from .util import FuelLimits, RateLimitBucket
 from .workflow import (
     Workflow, FuelCounter, OutOfFuelError, AgentTarget, AgentTargetStep,
     AgentTargetOther,
@@ -83,6 +83,15 @@ class BranchState:
                 default_give = self._limits.safety_tries)
         self.per_target_fuel = FuelCounter('safety_tries_per_target',
                 default_give = self._limits.safety_tries_per_target)
+
+        # If 5 of the past 10 plans have failed, we throw out the current plans
+        # and start from scratch.
+        self.failed_plan_bucket = RateLimitBucket(
+            count = 10,
+            limit = 10,
+            fill_amount = 1,
+            drain_amount = 2,
+        )
 
         # Other non-persisted fields.
 
@@ -279,6 +288,18 @@ class BranchState:
                     print(f'planning: too many failed rewrite attempts: {p.description!r}')
                     self.failed_plans.append(p)
                     del self.plans[0]
+
+                    if not self.failed_plan_bucket.drain():
+                        print('planning: too many failed plans; resetting')
+                        self.plans = []
+                        self.failed_plans = []
+                        self.failed_plan_bucket.reset()
+                        # Fall through to `update_plans`, which will generate a
+                        # new top-level plan.
+
+                        # TODO: pass info about past failures to the new
+                        # planning step, to avoid repeating mistakes
+
                     # Rerun update, in case we need to subdivide the next
                     # available plan.
                     self.update_plans()
@@ -286,6 +307,7 @@ class BranchState:
             else:
                 # Switched to a new plan, so restore fuel.
                 self.per_target_fuel.give()
+                self.failed_plan_bucket.fill()
 
             # Proceed with plan `p`.
             print(f'planning: attempting rewrite: {p.description!r}')

@@ -191,6 +191,7 @@ class BranchState:
                 del self.plans[0]
                 continue
 
+
             # Don't retry clusters that we previously failed to subdivide
             # several times.  Let the rewriter work on the cluster as a single
             # unit instead.
@@ -198,6 +199,18 @@ class BranchState:
                 print(f'planning: too many subdiv attempts ({p.subdiv_attempts}): '
                     f'{p.description!r}')
                 break
+
+            # Don't subdivide excessively deep.  This prevents an infinite loop
+            # if the agent keeps "subdividing" in a way that doesn't make the
+            # plan any smaller.
+            #
+            # There's one `details` entry for each level of planning that led
+            # to this step, so use that to determine the depth.
+            if len(p.details) >= 10:
+                print(f'planning: excessive subdiv depth ({len(p.details)}): '
+                    f'{p.description!r}')
+                break
+
 
             m = p.measure(unsafe_json)
             if m['functions'] + m['types'] <= 4:

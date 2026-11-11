@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Sequence, Callable
 
@@ -15,7 +16,7 @@ from pathspec.pathspec import PathSpec
 
 from .. import http_server, llm
 from ..config import Config
-from ..error import CrispError
+from ..error import AgentQuotaError, CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from ..sandbox import run_sandbox, Sandbox
 
@@ -77,11 +78,11 @@ def _snapshot_to_family_alias(model: str) -> str:
     m = _SNAPSHOT_SUFFIX.match(model)
     return m.group("alias") if m else model
 
-def _codex_command(cfg: Config, subcmd: str, args: list[str],
-                   model: str, effort: str = 'high') -> list[str]:
+def _codex_command(subcmd: str, args: list[str], model: str,
+                   effort: str = 'high', use_login: bool = False) -> list[str]:
     cmd = ['codex', subcmd]
 
-    if cfg.codex_login:
+    if use_login:
         # Use the host's `codex login` credentials (auth.json).  We only
         # override the model; everything else uses codex's defaults.
         # The --model flag does not support snapshot-style model identifiers so
@@ -181,6 +182,37 @@ def _add_codex_agent_inputs(
             path = f'.codex/agents/{profile.name}',
         )
 
+# Messages codex-cli reports when the API account is out of budget: on lines
+# starting with `ERROR:`, or with `--json` (e.g. `codex exec review`), in
+# `error`/`turn.failed` events.  Only those lines are checked, since the logs
+# also contain arbitrary file contents and command output from the agent.
+_QUOTA_ERROR_MARKERS = (
+    b'You hit your spend cap',
+    b'insufficient_quota',
+    b'exceeded your current quota',
+)
+
+def _is_error_line(line: bytes) -> bool:
+    line = line.lstrip()
+    if line.startswith(b'ERROR:'):
+        return True
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(ev, dict) and ev.get('type') in ('error', 'turn.failed')
+
+def _is_quota_error(logs: bytes) -> bool:
+    return any(
+        any(m in line for m in _QUOTA_ERROR_MARKERS) and _is_error_line(line)
+        for line in logs.splitlines())
+
+# After the `codex login` runs out of quota, runs use `CRISP_API_KEY` directly
+# for this many seconds before trying the login again.
+_LOGIN_RETRY_DELAY = 15 * 60
+# The `time.monotonic()` time before which runs skip the login.
+_login_retry_at = 0.0
+
 HOST_ENV_VAR = 'CRISP_INTERNAL_API_HOST'
 KEY_ENV_VAR = 'CRISP_INTERNAL_API_KEY'
 PORT_ENV_VAR = 'CRISP_INTERNAL_API_PORT'
@@ -273,6 +305,8 @@ def run_agent(
     clean_cmds: list[list[str]] = [],
     env: dict | None = None,
     http_build_app: Callable[[AgentSandbox, FastAPI]] | None = None,
+    fallback_cmd: list[str] | None = None,
+    op_label: str | None = None,
 ) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
     """
     Run the agent on some input files to produce some outputs.
@@ -308,6 +342,11 @@ def run_agent(
     - cwd: Working directory (relative to sandbox root) used for all commands.
     - http_build_app: If set, this will be called to set up an HTTP API that
       will be available to the agent while it runs.
+    - fallback_cmd: If set and `codex_cmd` fails because its account is out
+      of quota, run this instead, in the same sandbox after resetting the
+      checkout (if `init_git` is set).  After a quota error, later runs skip
+      `codex_cmd` and run this directly for `_LOGIN_RETRY_DELAY` seconds.  Either way, the op is labeled `api_key_fallback`.
+    - op_label: If set, appended to the op kind in the `op_history` reflog.
     """
 
     if env is None:
@@ -363,29 +402,60 @@ def run_agent(
 
         asb = AgentSandbox(sb, mvir, inputs, output_filters, cwd, env)
 
-        all_cmds = []
+        setup = []
         if init_git:
-            all_cmds += [
+            setup += [
                 ['git', 'init', '--quiet'],
                 ['git', 'config', 'set', 'user.name', 'CRISP'],
                 ['git', 'config', 'set', 'user.email', 'crisp@localhost'],
                 ['git', 'add', '--all'],
                 ['git', 'commit', '--quiet', '-m', 'CRISP sandbox baseline'],
             ]
-        all_cmds += setup_cmds
-        all_cmds += [
-            ['mkdir', '-p', codex_dir],
-            codex_cmd,
-        ]
-        all_cmds += clean_cmds
+        setup += setup_cmds
+        setup += [['mkdir', '-p', codex_dir]]
+
+        all_cmds = []
+        # Logs of the last codex run, to check for quota errors.
+        codex_logs = b''
+        fell_back = False
+        def run_cmds(run_all):
+            nonlocal codex_logs, fell_back
+            global _login_retry_at
+            # Skip the login if it ran out of quota recently.
+            skip_login = fallback_cmd is not None and time.monotonic() < _login_retry_at
+            first_cmd = fallback_cmd if skip_login else codex_cmd
+            exit_code, logs = run_all(setup + [first_cmd])
+            all_cmds.extend(setup + [first_cmd])
+            codex_logs = logs
+            fell_back = skip_login
+            if (fallback_cmd is not None and not skip_login and exit_code != 0
+                    and _is_quota_error(logs)):
+                print('codex login is out of quota; rerunning with CRISP_API_KEY '
+                    f'and not trying the login again for {_LOGIN_RETRY_DELAY // 60} min')
+                _login_retry_at = time.monotonic() + _LOGIN_RETRY_DELAY
+                fell_back = True
+                # Start over from the inputs; the `.codex/` sessions are
+                # ignored by git, so the failed run's log is kept.
+                retry = [['git', 'reset', '--hard', '--quiet'],
+                    ['git', 'clean', '-fd', '--quiet']] if init_git else []
+                retry += [fallback_cmd]
+                exit_code, codex_logs = run_all(retry)
+                all_cmds.extend(retry)
+                logs = b'\n\n'.join((logs, codex_logs))
+            if exit_code == 0 and clean_cmds:
+                exit_code, clean_logs = run_all(clean_cmds)
+                all_cmds.extend(clean_cmds)
+                logs = b'\n\n'.join((logs, clean_logs))
+            return exit_code, logs
 
         if http_build_app is not None:
             exit_code, logs = http_server.run_with_callbacks(
                 lambda app: http_build_app(asb, app),
-                asb.run_all_with_api_port, all_cmds,
+                lambda api_port, api_key: run_cmds(
+                    lambda cmds: asb.run_all_with_api_port(api_port, api_key, cmds)),
             )
         else:
-            exit_code, logs = asb.run_all(all_cmds)
+            exit_code, logs = run_cmds(asb.run_all)
 
         raw_output_files = asb.commit_raw_output_files()
 
@@ -433,13 +503,50 @@ def run_agent(
         body = logs if logs is not None else b'',
     )
     # Record operations and timestamps in the `op_history` reflog.
-    mvir.set_tag('op_history', n_op.node_id(), n_op.kind)
+    if fell_back:
+        op_label = 'api_key_fallback' if op_label is None else f'{op_label} api_key_fallback'
+    reason = n_op.kind if op_label is None else f'{n_op.kind} {op_label}'
+    mvir.set_tag('op_history', n_op.node_id(), reason)
 
+    if n_op.exit_code != 0 and _is_quota_error(codex_logs):
+        raise AgentQuotaError(
+            f'agent invocation failed: API spend cap or quota exhausted '
+            f'(exit code {exit_code})', n_op)
     if n_op.exit_code != 0:
         raise CrispError(
             f'agent invocation failed: exit code {exit_code}', n_op)
 
     return n_op, outputs
+
+def _run_codex(
+    cfg: Config,
+    mvir: MVIR,
+    inputs: dict[str, Input],
+    exec_args: list[str],
+    model: str,
+    effort: str,
+    output_filters: dict[str, Callable[[str], bool]],
+    **run_agent_kwargs,
+) -> tuple[CodexAgentOpNode, dict[str, TreeNode]]:
+    """
+    Run `codex exec` with `exec_args` via `run_agent`, using the host's `codex
+    login` credentials if `cfg.codex_login` is set.  With
+    `cfg.codex_login_fallback` too, a run that fails because the login is out
+    of quota is rerun with `CRISP_API_KEY`.
+    """
+    inputs = dict(inputs)
+    fallback_cmd = None
+    if cfg.codex_login:
+        assert 'codex_auth' not in inputs, "duplicate input name 'codex_auth'"
+        inputs['codex_auth'] = _codex_auth_input()
+        if cfg.codex_login_fallback:
+            fallback_cmd = _codex_command('exec', exec_args, model = model,
+                effort = effort)
+    codex_cmd = _codex_command('exec', exec_args, model = model, effort = effort,
+        use_login = cfg.codex_login)
+    return run_agent(cfg, mvir, inputs, codex_cmd, output_filters,
+        fallback_cmd = fallback_cmd, **run_agent_kwargs)
+
 
 def run_rewrite(
     cfg: Config,
@@ -473,8 +580,6 @@ def run_rewrite(
         inputs['plans'] = Input(planning_files)
     if unsafe_json is not None:
         inputs['unsafe_json'] = Input(unsafe_json, git_ignore=True)
-    if cfg.codex_login:
-        inputs['codex_auth'] = _codex_auth_input()
     _add_codex_agent_inputs(inputs, codex_agents)
     # Add `extra_code` last so we can report errors if there are any name
     # conflicts.
@@ -484,16 +589,15 @@ def run_rewrite(
         inputs[name] = Input(tree)
         extra_code_files.update(tree.files.keys())
 
-    codex_cmd = _codex_command(cfg, 'exec', [
-        '--dangerously-bypass-approvals-and-sandbox',
-        '--skip-git-repo-check',
-        prompt,
-    ], model=model, effort=effort)
-
-    n_op, outputs = run_agent(
+    n_op, outputs = _run_codex(
         cfg, mvir,
         inputs,
-        codex_cmd,
+        [
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--skip-git-repo-check',
+            prompt,
+        ],
+        model, effort,
         {
             'code': lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
@@ -544,8 +648,6 @@ def run_review_op(
         'new_code': Input(new_code),
         'old_code': Input(old_code, path = 'crisp_old_code/'),
     }
-    if cfg.codex_login:
-        inputs['codex_auth'] = _codex_auth_input()
     for name, tree in extra_code.items():
         assert name not in inputs, f'duplicate input name {name!r}'
         inputs[name] = Input(tree)
@@ -567,21 +669,20 @@ def run_review_op(
     ]
 
     last_message_path = 'codex_last_message.txt'
-    codex_cmd = _codex_command(cfg, 'exec', [
-        'review',
-        # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
-        # sandbox; the CRISP sandbox is the containment layer.
-        '--dangerously-bypass-approvals-and-sandbox',
-        # Structured events let us verify the reviewer ran commands.
-        '--json',
-        '--output-last-message', last_message_path,
-        prompt,
-    ], model=model, effort=effort)
-
-    n_op, outputs = run_agent(
+    n_op, outputs = _run_codex(
         cfg, mvir,
         inputs,
-        codex_cmd,
+        [
+            'review',
+            # Codex's own sandbox (bubblewrap) cannot start inside the CRISP
+            # sandbox; the CRISP sandbox is the containment layer.
+            '--dangerously-bypass-approvals-and-sandbox',
+            # Structured events let us verify the reviewer ran commands.
+            '--json',
+            '--output-last-message', last_message_path,
+            prompt,
+        ],
+        model, effort,
         {
             'last_message': lambda p: p == last_message_path,
         },

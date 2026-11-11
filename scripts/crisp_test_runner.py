@@ -2,14 +2,13 @@
 """Build C observation tests and run them against Rust (Python 3.11+, stdlib only).
 
 Run inside a caller-provided sandbox. See docs/test-framework.md for the CLI,
-suite conventions, cache, and observation format.
+suite conventions and observation format. MVIR manages caching outside this script.
 """
 
 from __future__ import annotations
 
 import argparse
 import ctypes
-import hashlib
 import json
 import math
 import os
@@ -34,15 +33,6 @@ SUBREAPER = False
 
 class RunnerError(Exception):
     pass
-
-
-def digest(path: Path) -> str:
-    with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
-
-
-def fingerprint(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
 def write_json(path: Path, value):
@@ -201,17 +191,6 @@ def suite_sources(suite: Path):
     return sorted((suite / "test_helpers").glob("*.c")), sorted((suite / "tests").glob("*.c"))
 
 
-def suite_signature(suite: Path):
-    helpers, tests = suite_sources(suite)
-    return fingerprint({"flags": suite_flags(suite), "sources": {
-        str(p.relative_to(suite)): digest(p) for p in helpers + tests}})
-
-
-def files_match(root: Path, files):
-    return all((root / p).is_file() and digest(root / p) == value
-               for p, value in files.items())
-
-
 def read_manifest(build_dir: Path):
     manifest = json.loads((build_dir / "manifest.json").read_text())
     if manifest["version"] != VERSION:
@@ -236,25 +215,7 @@ def build_tests(args):
     cc = shutil.which(args.cc)
     if cc is None:
         raise RunnerError(f"C compiler not found: {args.cc}")
-    compiler_version = checked([cc, "--version"], cwd=source, timeout=args.build_timeout)
-    signature = fingerprint({
-        "runner": digest(Path(__file__).resolve()), "suite": suite_signature(suite),
-        "suite_dir": str(suite), "c_dir": str(source), "cc": cc,
-        "compiler_version": compiler_version.decode(errors="replace"),
-        "libraries": {name: digest(path) for name, path in libraries.items()},
-        "library_dirs": sorted({str(p.parent) for p in libraries.values()}),
-        "system_libs": args.system_lib, "sanitize": args.sanitize,
-    })
-    if (destination / "manifest.json").exists():
-        manifest = read_manifest(destination)
-        if (manifest["signature"] == signature
-                and files_match(Path("/"), manifest["dependencies"])
-                and files_match(destination, manifest["files"])):
-            return {"cached": True, "build_dir": str(destination),
-                    "programs": len(tests), "helpers": bool(helpers)}
-
     destination.mkdir(parents=True, exist_ok=True)
-    dependencies = {}
     instrumentation = (["-fsanitize=address,undefined", "-fno-sanitize-recover=all",
                         "-fno-omit-frame-pointer"] if args.sanitize else [])
     with tempfile.TemporaryDirectory(prefix=".compile-", dir=destination) as temporary:
@@ -270,17 +231,12 @@ def build_tests(args):
         target_flags.extend("-l" + name for name in args.system_lib)
 
         def compile_object(path, index, pic=False):
-            obj, depfile = staging / f"{index}.o", staging / f"{index}.d"
+            obj = staging / f"{index}.o"
             checked([cc, *flags["cflags"], *instrumentation,
                      "-I", str(source), "-I", str(suite / "test_helpers"),
                      "-I", str(suite / "tests"), *(["-fPIC"] if pic else []),
-                     "-MD", "-MF", str(depfile), "-MT", "deps",
                      "-c", str(path), "-o", str(obj)],
                     cwd=source, timeout=args.build_timeout)
-            deptext = depfile.read_text().replace("\\\n", "")
-            for name in shlex.split(deptext.split(":", 1)[1]):
-                dep = (source / name.replace("$$", "$")).resolve()
-                dependencies[str(dep)] = digest(dep)
             return str(obj)
 
         helper_objects = [compile_object(p, f"helper-{i}", pic=True)
@@ -297,23 +253,16 @@ def build_tests(args):
                      *(["-L", str(staging / "lib"), "-l:" + HELPERS]
                        if helper_objects else []), *target_flags, *flags["ldflags"]],
                     cwd=source, timeout=args.build_timeout)
-        files = {str(p.relative_to(staging)): digest(p)
-                 for directory in ("bin", "lib") for p in (staging / directory).iterdir()}
-        manifest = {"version": VERSION, "signature": signature,
-                    "suite_signature": suite_signature(suite), "dependencies": dependencies,
-                    "suite_dependencies": {
-                        str(Path(p).relative_to(suite)): value
-                        for p, value in dependencies.items() if Path(p).is_relative_to(suite)},
-                    "files": files, "target_libraries": sorted(libraries),
-                    "target_binaries": sorted(binaries), "sanitize": args.sanitize}
+        files = sorted(str(p.relative_to(staging))
+                       for directory in ("bin", "lib") for p in (staging / directory).iterdir())
+        manifest = {"version": VERSION, "files": files, "sanitize": args.sanitize}
         for name in files:
             path = destination / name
             path.parent.mkdir(exist_ok=True)
             os.replace(staging / name, path)
         write_json(staging / "manifest.json", manifest)
         os.replace(staging / "manifest.json", destination / "manifest.json")
-    return {"cached": False, "build_dir": str(destination),
-            "programs": len(tests), "helpers": bool(helpers)}
+    return {"build_dir": str(destination), "programs": len(tests), "helpers": bool(helpers)}
 
 
 def discover_tests(suite: Path):
@@ -342,16 +291,8 @@ def discover_tests(suite: Path):
 def run_tests(args):
     suite, compiled = args.suite_dir, args.build_dir
     manifest = read_manifest(compiled)
-    if (manifest["suite_signature"] != suite_signature(suite)
-            or not files_match(suite, manifest["suite_dependencies"])):
-        raise RunnerError("test sources or tests.toml changed; rebuild the test binaries")
-    if not files_match(compiled, manifest["files"]):
-        raise RunnerError("compiled test files are missing or modified; rebuild them")
     cases = discover_tests(suite)
     libraries, binaries = cargo_targets(args.rust_dir, args.build_timeout)
-    if (sorted(libraries) != manifest["target_libraries"]
-            or sorted(binaries) != manifest["target_binaries"]):
-        raise RunnerError("Cargo target names differ from the compiled test suite")
     output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):

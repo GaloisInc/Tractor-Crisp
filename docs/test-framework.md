@@ -113,14 +113,13 @@ and `manifest.json`. Preserve the entire directory as the compiled suite.
 Ordinary executable permissions are restored when staging a run, so copying
 these files through MVIR's byte-only file storage is supported.
 
-Compilation is cached using test/helper sources, actual compiler header
-dependencies (including system headers), suite flags, compiler identity, Rust
-link inputs, caller-supplied system libraries, instrumentation, and runner
-identity. Existing output contents are checked before reuse. Cargo handles its
-own build cache. A failed compilation does not publish a new manifest or replace
-the existing executable suite. Use a separate build directory for each
-concurrently built suite; concurrent writes to one build directory are not
-supported.
+The script always compiles when invoked; CRISP caches the operation using MVIR
+input nodes. The manifest records only bundle contents and instrumentation mode,
+with no fingerprints, header-dependency cache, or source consistency checks.
+Cargo handles its own build cache. A failed compilation does not publish a new
+manifest or replace existing executables. Use a separate build directory for
+each concurrently built suite; concurrent writes to one build directory are
+not supported.
 
 Optional build arguments:
 
@@ -137,8 +136,8 @@ Optional build arguments:
   stack addresses remain available. Scripts must propagate child sanitizer
   failures and retain their diagnostics if a higher layer is validating UB.
 
-The `build` command writes a JSON summary to stdout, including whether the C
-compilation cache was reused. Build commands and diagnostics go to stderr.
+The `build` command writes a JSON summary to stdout. Build commands and
+diagnostics go to stderr.
 
 ## Run against Rust
 
@@ -153,8 +152,7 @@ python3 scripts/crisp_test_runner.py run \
 ```
 
 The run operation requires no original C snapshot or CRISP installation. It
-checks that suite compilation inputs and compiled artifacts match the saved
-manifest, builds Rust using Cargo, and stages only its runtime artifacts plus
+builds Rust using Cargo and stages only its runtime artifacts plus
 the already compiled test executables/helper library. It never recompiles or
 relinks those executables. Staging uses library basenames and the selected
 Rust artifacts, so drivers have no automatic fallback to the Rust libraries
@@ -197,7 +195,9 @@ The suite deadline covers case execution and cleanup; it excludes the preceding
 Cargo build and runtime staging. `--build-timeout` controls that Cargo build
 separately. A case failure does not prevent later cases from being observed
 while the suite still has time remaining. Repetitions are ordinary additional
-`run` invocations with different output directories and are never cached.
+`run` invocations with different output directories. The script never caches
+executions; the MVIR pass uses an explicit trial number to distinguish repeated
+executions from cache lookups.
 
 Command exit status is zero after a successful build or a complete run, and
 one for configuration/build errors or any abnormal/incomplete run. Build errors
@@ -208,3 +208,61 @@ operation, with no original target implementations or reference observations
 accessible to candidate tests. Filesystem/network isolation and memory/disk/
 process-count limits belong to that sandbox. The script enforces execution
 deadlines, stream-size limits, and subprocess cleanup itself.
+
+## MVIR analysis passes
+
+`crisp.analysis` exposes two cached passes:
+
+```python
+compile_tests(cfg, mvir, c_code, test_code, rust_code, cmd)
+run_observation_tests(cfg, mvir, rust_code, test_code, test_binaries, cmd, trial=0)
+```
+
+The source and binary inputs are `TreeNode`s. `cmd` is the actual standalone
+runner command, including paths and options, and is part of the cache key.
+Compilation also needs the initial Rust tree because the C drivers must link
+against its shared libraries. Later runs reuse the resulting binary tree.
+Tool versions, the runner implementation, and Docker image identity are not
+tracked separately. As with other analysis passes, `cfg` selects the sandbox
+but does not participate in cache matching.
+
+Each pass checks out its inputs under fixed sandbox-relative directories:
+
+| Input/output | Sandbox directory |
+| --- | --- |
+| Original C snapshot (compile only) | `c_code/` |
+| Rust snapshot | `rust_code/` |
+| Suite snapshot, rooted at `tests.toml`, `tests/`, `test_helpers/` | `test_code/` |
+| Compiled suite | `test_binaries/` |
+| Run observations | `test_results/` |
+
+For example, when the Rust tree contains `rust/Cargo.toml`, use:
+
+```python
+build_cmd = [
+    "crisp_test_runner.py", "build",
+    "--c-dir", "c_code", "--suite-dir", "test_code",
+    "--rust-dir", "rust_code/rust", "--build-dir", "test_binaries",
+]
+built = compile_tests(cfg, mvir, c_code, test_code, initial_rust, build_cmd)
+# Check built.exit_code before accessing its binary tree.
+binaries = mvir.node(built.test_binaries)
+
+run_cmd = [
+    "crisp_test_runner.py", "run",
+    "--suite-dir", "test_code", "--rust-dir", "rust_code/rust",
+    "--build-dir", "test_binaries", "--output-dir", "test_results",
+]
+observed = run_observation_tests(cfg, mvir, candidate_rust, test_code, binaries, run_cmd)
+```
+
+The compile result stores `exit_code`, build logs, and an optional
+`test_binaries` tree rooted at `bin/`, `lib/`, and `manifest.json`. The run result
+stores logs, `exit_code`, and an optional `outputs` tree rooted at `results.json`
+and the raw stream files. Partial observations are retained on runtime failures;
+build failures that produce no observations have no output tree.
+
+Identical inputs, commands, and trial numbers reuse the existing MVIR result.
+For stability checks, call with `trial=0`, `trial=1`, etc.; each distinct trial
+executes in a fresh sandbox. The caller must select matching immutable suite
+sources and compiled binaries. No separate input fingerprinting is needed.

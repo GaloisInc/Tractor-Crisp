@@ -127,9 +127,13 @@ RUN workdir="$(mktemp -d)" \
 # from /etc/profile and Codex uses `bash -lc` a lot
 RUN echo "export PATH=$PATH:${CARGO_HOME}/bin" >>/etc/profile
 
+# Standalone observation-test runner; no CRISP installation is needed.
+COPY --chmod=755 scripts/crisp_test_runner.py /usr/local/bin/crisp_test_runner.py
+
 # SQLite P03 builds Tcl bindings and runs its test suites with tclsh
 # (pulled in by tcl-dev), under eatmydata to skip fsync.
 RUN apt-get install -y tcl-dev eatmydata
+
 
 FROM tractor-crisp-user AS tractor-crisp
 

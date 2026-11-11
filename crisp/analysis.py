@@ -19,6 +19,7 @@ from .mvir import (
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
     CargoFixOpNode, CodexReviewAnalysisNode,
+    CompileTestsAnalysisNode, RunObservationTestsAnalysisNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -183,6 +184,64 @@ def run_tests(cfg: Config, mvir: MVIR,
     if n.passed:
         mvir.set_tag('test_passed', n.node_id(), None)
     return n
+
+def _commit_test_directory(sb, mvir: MVIR, path: str) -> TreeNode:
+    tree = sb.commit_dir(path)
+    return TreeNode.new(mvir, files={
+        os.path.relpath(name, path): node_id for name, node_id in tree.files.items()})
+
+
+@analysis
+def compile_tests(
+    cfg: Config, mvir: MVIR,
+    c_code: TreeNode, test_code: TreeNode, rust_code: TreeNode,
+    cmd: list[str],
+) -> CompileTestsAnalysisNode:
+    """Compile a suite, with MVIR caching all source inputs and the command.
+
+    Checkouts are rooted at c_code/, test_code/, and rust_code/. The supplied
+    standalone-runner command must write its bundle to test_binaries/.
+    rust_code is the initial translation, needed to link the C drivers.
+    """
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(c_code, 'c_code')
+        sb.checkout(test_code, 'test_code')
+        sb.checkout(rust_code, 'rust_code')
+        exit_code, logs = sb.run(cmd, stream=True)
+        binaries = _commit_test_directory(sb, mvir, 'test_binaries') if exit_code == 0 else None
+
+    return CompileTestsAnalysisNode.new(
+        mvir, body=logs, c_code=c_code.node_id(), test_code=test_code.node_id(),
+        rust_code=rust_code.node_id(), cmd=cmd, exit_code=exit_code,
+        test_binaries=binaries.node_id() if binaries is not None else None)
+
+
+@analysis
+def run_observation_tests(
+    cfg: Config, mvir: MVIR,
+    rust_code: TreeNode, test_code: TreeNode, test_binaries: TreeNode,
+    cmd: list[str], trial: int = 0,
+) -> RunObservationTestsAnalysisNode:
+    """Run a compiled suite in a fresh sandbox, without original C inputs.
+
+    Checkouts are rooted at rust_code/, test_code/, and test_binaries/. The
+    supplied standalone-runner command must write observations to test_results/.
+    Use distinct trial values for real repetitions during determinism checks;
+    identical inputs, command, and trial reuse the existing MVIR result.
+    """
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(rust_code, 'rust_code')
+        sb.checkout(test_code, 'test_code')
+        sb.checkout(test_binaries, 'test_binaries')
+        exit_code, logs = sb.run(cmd, stream=True)
+        have_outputs, _ = sb.run(['test', '-f', 'test_results/results.json'])
+        outputs = _commit_test_directory(sb, mvir, 'test_results') if have_outputs == 0 else None
+
+    return RunObservationTestsAnalysisNode.new(
+        mvir, body=logs, rust_code=rust_code.node_id(), test_code=test_code.node_id(),
+        test_binaries=test_binaries.node_id(), cmd=cmd, trial=trial,
+        exit_code=exit_code, outputs=outputs.node_id() if outputs is not None else None)
+
 
 @analysis
 def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonAnalysisNode:

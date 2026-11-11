@@ -1,0 +1,45 @@
+{% import 'plan_step_common.jinja' as psc with context -%}
+
+Develop a migration plan for refactoring the Rust code in `{{ cargo_dir_path }}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+
+This task has two parts.  First, analyze the code as described below and write a step-by-step migration plan into `SAFETY_PLAN.md`.  Second, convert each step of the plan to a JSON `StepPlan` object with explicit machine-checkable goals and submit the plan by running `crisp_submit_step_plan.sh STEPS.json`.  If this returns errors, you MUST correct the errors and resubmit.  You are done once you've written `SAFETY_PLAN.md` and you've gotten a successful result from `crisp_submit_step_plan.sh`.
+
+{{ psc.planning_only_with_outputs('`SAFETY_PLAN.md` and `STEPS.json`') }}
+
+
+# How the plan will be used
+
+{{ psc.plan_usage_guidance() }}
+
+
+# Analysis phase
+
+Use the following read-only custom sub-agents, one per independent analysis lens:
+- `ffi_abi_analyst`: exported functions and data, ABI compatibility constraints.
+- `ownership_analyst`: allocation, ownership, aliasing, lifetimes, `static mut` globals, and unions.
+- `collections_analyst`: custom containers, plus internal function-pointer tables and dispatch.
+- `strings_analyst`: strings, byte buffers, text, and paths.
+- `libc_analyst`: C, POSIX, and platform library calls.
+- `macro_analyst`: oversized or repetitive translated functions caused by C macro expansion.
+
+Spawn exactly one fresh instance of each named agent with `fork_turns="none"`.  Each agent already carries its lens instructions and the shared constraints (`.codex/safety_constraints.md`); keep spawn messages short, containing only the run-specific facts:
+- the Rust project path: `{cargo_dir_path}`;
+- the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`; and
+- whether the original C sources are present in the workspace, and where.
+
+Wait for all agents to finish.  If an agent fails or returns an unusably thin report, note the gap and proceed with the remaining reports.  Reconcile overlaps, dependencies, and disagreements between the reports rather than concatenating them.  Cross-check coverage against the inventory: every file with unsafe findings must be covered by exactly one step in the plan.  Then have only the parent agent write `SAFETY_PLAN.md`; do not delegate the writing.
+
+
+# `SAFETY_PLAN.md` output format
+
+`SAFETY_PLAN.md` must contain these two sections:
+
+1.  `## Conventions` -- the cross-cutting decisions relevant to multiple steps of the plan: standard type mappings (e.g. which pointer-plus-length idioms become `&[u8]`, when owned text is `String` vs `Vec<u8>`), the error-handling model, callback handling, and the standard moves: raw pointers -> references or smart pointers; `static mut` -> immutable `static`/`const`, `OnceLock`, or atomics; unions -> enums or explicit safe fields; unsafe FFI imports -> safe std equivalents (e.g. `printf` -> `println!`); custom containers -> std collections where semantics allow; remove `unsafe` qualifiers from functions that no longer need them.
+
+2.  `## Step-by-step guide` -- break down the overall safety migration goal into steps that can be carried out one by one.  For each step, note all of the following: the files, functions, types, and/or fields that should be made safe during that step; a general description of the migration strategy; dependencies on previous steps; a table mapping each struct field and function argument/return that contains raw pointers to its recommended safe type with a one-line rationale; pitfalls and risky edge cases; and semantic done-criteria.  Group same-shaped migrations into a single unit: if migrating `f` to `String` implies the same change in `g`, plan them together.
+
+
+
+# `STEPS.json` output format
+
+{{ psc.output_format_steps_json }}

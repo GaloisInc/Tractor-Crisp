@@ -120,3 +120,25 @@ class FuelLimits:
     # new file.
     safety_tries_per_file: int
 
+
+@dataclass
+class RateLimitBucket:
+    count: int
+    limit: int
+    fill_amount: int
+    drain_amount: int
+
+    def fill(self):
+        self.count = min(self.count + self.fill_amount, self.limit)
+
+    def drain(self) -> bool:
+        if self.count < self.drain_amount:
+            return False
+        else:
+            self.count -= self.drain_amount
+            return True
+
+    def reset(self, limit = None):
+        if limit is not None:
+            self.limit = limit
+        self.count = self.limit

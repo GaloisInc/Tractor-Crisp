@@ -1,0 +1,66 @@
+{% import 'plan_step_common.jinja' as psc with context -%}
+
+Below is an existing migration plan for refactoring the Rust code in `{{ cargo_dir_path }}` to be fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.  Heuristics in the CRISP harness have indicated that the next step of the plan may be too large for a worker agent to complete in one step.  Your task is to subdivide this super-step into smaller sub-steps that can be completed incrementally.
+
+This task has two parts.  First, examine the super-step description and the relevant code, and write a plan consisting of incremental sub-steps that together achieve all of the super-step goals.  Write this plan into `SAFETY_PLAN.md`.  Second, convert each sub-step of the new plan to a JSON `StepPlan` object with explicit machine-checkable goals and submit the plan by running `crisp_submit_step_plan.sh STEPS.json`.  If this returns errors, you MUST correct the errors and resubmit.  You are done once you've written `SAFETY_PLAN.md` and you've gotten a successful result from `crisp_submit_step_plan.sh`.
+
+{{ psc.planning_only_with_outputs('`SAFETY_PLAN.md` and `STEPS.json`') }}
+
+
+# Current migration plans
+
+Here are the planning documents that cover the current super-step of the migration:
+
+{% for detail in details %}
+{# `loop.index` gives the 1-based iteration number within the current loop. #}
+## Level {{ loop.index }}
+
+{{ detail }}
+
+{% endfor %}
+
+
+# Target super-step
+
+Here is the super-step you must subdivide, from the Level {{ details|length }} plan.
+
+Step description: {{ description }}
+
+Goals:
+```json
+{{ goals_json }}
+```
+
+
+## Relevant code
+
+The CRISP harness has identified the following code as potentially relevant to the target super-step:
+
+{{ psc.relevant_code_rendered }}
+
+Your plan may involve edits other code if needed, but the primary focus should be on completing the target super-step and achieving its goals as described above.
+
+
+# How the plan will be used
+
+{{ psc.plan_usage_guidance() }}
+
+The `SAFETY_PLAN.md` you produce will be provided to each agent instance as the Level {{ details|length + 1 }} plan, alongside the existing {% if details|length == 1 %}Level 1 plan{% else %}Level 1-{{ details|length }} plans{% endif %}.  Don't repeat information from the pre-existing planning documents, since each agent will see them alongside your new one.
+
+Don't excessively subdivide the super-step into large numbers of sub-steps; limit yourself to 5-10 at most. The CRISP harness will recursively call this subdivision procedure if any of the resulting sub-steps is still too large.
+
+
+# `SAFETY_PLAN.md` output format
+
+`SAFETY_PLAN.md` must contain these two sections:
+
+1.  `## Conventions` -- the cross-cutting decisions relevant to multiple sub-steps: {{ psc.safety_plan_conventions_examples }}.  Some of these may be covered more generally in the pre-existing planning documents; don't repeat those generalities, but instead note the specifics of how those conventions apply to the code covered by the target super-step, and especially note any exceptions or new conventions that are specific to this code (e.g. if the existing plan says `*mut c_char` should be mapped to `String`, but this module has several `*mut c_char`s for which `OsString` is more appropriate, note the modified convention here).
+
+2.  `## Step-by-step guide` -- break down the target super-step into sub-steps that can be carried out one by one.  For each sub-step, note all of the following: the files, functions, types, and/or fields that should be made safe during that step; a general description of the migration strategy; dependencies on previous steps; a table mapping each struct field and function argument/return that contains raw pointers to its recommended safe type with a one-line rationale; pitfalls and risky edge cases; and semantic done-criteria.  Group same-shaped migrations into a single unit: if migrating `f` to `String` implies the same change in `g`, plan them together.
+
+
+# `STEPS.json` output format
+
+{{ psc.output_format_steps_json }}
+
+As a special case, if there's no sensible way to subdivide the target super-step into sub-steps, indicate this by submitting an empty plan `[]` and exiting.

@@ -17,7 +17,7 @@ from typing import Any, Callable
 from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
 from .config import Config
-from .error import CrispError
+from .error import CrispError, ValidateError, ValidateErrorCollector
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
     LlmOpNode, TestResultNode, FindUnsafeAnalysisNode, SplitFfiOpNode,
@@ -26,6 +26,7 @@ from .mvir import (
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
     CargoFixOpNode, CodexReviewAnalysisNode,
 )
+from .planning import StepPlan, StepGoal
 from .sandbox import run_sandbox
 from .work_dir import lock_work_dir
 
@@ -111,6 +112,22 @@ class AgentTargetOther(AgentTarget):
     def prompt(self):
         return ''
 
+@dataclass(frozen = True)
+class AgentTargetStep(AgentTarget):
+    """
+    Make a function and all its callees safe.
+    """
+    step_plan: StepPlan
+    details: list[str]
+    relevant_code: dict
+
+    def prompt(self):
+        return prompts.plan_step_target(
+            description = self.step_plan.description,
+            goals = [g.to_cbor() for g in self.step_plan.goals],
+            details = self.details,
+            relevant_code = self.relevant_code,
+        )
 
 
 _CRISP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -808,10 +825,7 @@ class Workflow:
 
     @step
     def count_unsafe2(self, n_code: TreeNode) -> int:
-        n_json = self.find_unsafe2_json(n_code)
-        total = 0
-        for n_json_file in self.find_unsafe2_json_files(n_code):
-            total += n_json_file.body_json()['total_unsafe']
+        total = sum(j['total_unsafe'] for j in self.find_unsafe2_json_dicts(n_code))
         print('%d unsafe operations remaining' % total)
         return total
 
@@ -820,10 +834,12 @@ class Workflow:
         n_op = self.find_unsafe2_op(n_code)
         return self.mvir.node(n_op.unsafe_json)
 
-    @step
     def find_unsafe2_json_files(self, n_code: TreeNode) -> list[FileNode]:
         n_json = self.find_unsafe2_json(n_code)
         return [self.mvir.node(file_id) for file_id in n_json.files.values()]
+
+    def find_unsafe2_json_dicts(self, n_code: TreeNode) -> list[dict]:
+        return [f.body_json() for f in self.find_unsafe2_json_files(n_code)]
 
     @step
     def find_unsafe2_op(self, n_code: TreeNode) -> FindUnsafe2AnalysisNode:
@@ -1445,3 +1461,173 @@ class Workflow:
             f'agent output failed tests: {n_op_test}'
 
         return n_new_code, n_plans
+
+    def http_build_app_for_plan_step(
+        self,
+        n_code: TreeNode,
+        accepted_plans: list[list[StepPlan]],
+    ):
+        cfg, mvir = self.cfg, self.mvir
+
+        def parse_plans(
+            ec: ValidateErrorCollector,
+            j_plans: list[dict],
+        ) -> list[StepPlan] | None:
+            if not isinstance(j_plans, list):
+                ec.err_msg('expected `StepPlan[]` at top level')
+                return None
+
+            # Check basic validity of the filter
+            plans = []
+            plans_ok = True
+            for i, j_plan in enumerate(j_plans):
+                with ec.context(lambda: f'in plan {i}'):
+                    # Before parsing the whole plan, parse each goal in
+                    # isolation.  This lets us give a more specific error if
+                    # one of them fails.
+                    goals_ok = True
+                    if 'goals' not in j_plan:
+                        ec.err_msg('missing key `goals`')
+                        plans_ok = False
+                        continue
+                    for j, j_goal in enumerate(j_plan['goals']):
+                        with ec.context(lambda: f'in goal {j}'):
+                            try:
+                                goal = StepGoal.from_cbor(j_goal)
+                            except KeyError as e:
+                                ec.err(e)
+                                goals_ok = False
+                    if goals_ok:
+                        plans.append(StepPlan.from_cbor(j_plan))
+                    else:
+                        plans_ok = False
+
+            if not plans_ok:
+                # Don't continue.  `plans` indices may not match the indices
+                # from the original JSON at this point.
+                return None
+
+            unsafe_json = self.find_unsafe2_json_dicts(n_code)
+            for i, plan in enumerate(plans):
+                with ec.context(lambda: f'in plan {i}'):
+                    for j, goal in enumerate(plan.goals):
+                        with ec.context(lambda: f'in goal {j}'):
+                            try:
+                                next(goal._iter_matching_items(unsafe_json))
+                            except StopIteration:
+                                ec.err_msg('goal filters matched no items')
+
+                            try:
+                                next(goal._iter_matching_items_with_cost(unsafe_json))
+                            except StopIteration:
+                                ec.err_msg(f'no matching items had key {goal.key!r}')
+
+                            count = goal.count(unsafe_json)
+                            if count <= goal.max_count:
+                                ec.err_msg('goal is already achieved (count <= max_count)')
+
+            return plans
+
+        def build_app(asb, app):
+            from fastapi import Request, Response
+
+            @app.post('/crisp/submit_step_plan')
+            async def submit_step_plan(request: Request):
+                ec = ValidateErrorCollector()
+                try:
+                    plans = parse_plans(ec, await request.json())
+                except (ValidateError, TypeError) as e:
+                    ec.err(e)
+                errs = ec.errors
+                if len(errs) == 0:
+                    assert plans is not None
+                    accepted_plans.append(plans)
+                    return Response('Plan accepted.\n', media_type = 'text/plain')
+                else:
+                    return Response('\n'.join(errs) + '\n',
+                        status_code = 400, media_type = 'text/plain')
+
+        return build_app
+
+    def plan_step_common(
+        self,
+        n_code: TreeNode,
+        prompt: str,
+    ) -> tuple[FileNode, list[StepPlan]]:
+        cfg, mvir = self.cfg, self.mvir
+
+        all_items = set()
+        for j in self.find_unsafe2_json_dicts(n_code):
+            all_items.update(j['fns'].keys())
+            all_items.update(j['types'].keys())
+        all_items_input = agent.Input(
+            '\n'.join(all_items) + '\n',
+            path = 'ALL_ITEMS.txt',
+            git_ignore = True,
+        )
+
+        accepted_plans = []
+
+        n_op, outputs = agent.run_agent_for_workflow(
+            cfg, mvir, prompt,
+            inputs = {
+                'code': agent.Input(n_code),
+                'unsafe_json': agent.Input(self.find_unsafe2_json(n_code), git_ignore = True),
+                'all_items': all_items_input,
+            },
+            output_filters = {
+                'plan': lambda p: p in ('SAFETY_PLAN.md',),
+            },
+            model = cfg.models.agent_plan,
+            codex_agents = agent.PLANNING_CODEX_AGENTS,
+            env = {
+                'FIND_UNSAFE2_JSON_DIR':
+                    os.path.join('%%SANDBOX_ROOT%%', analysis.UNSAFE_JSON_DIR),
+            },
+            http_build_app = self.http_build_app_for_plan_step(
+                n_code, accepted_plans),
+        )
+
+        plan_files = outputs['plan'].files
+        if 'SAFETY_PLAN.md' not in plan_files:
+            raise CrispError('planner failed to produce SAFETY_PLAN.md')
+        n_detail = mvir.node(plan_files['SAFETY_PLAN.md'])
+
+        if len(accepted_plans) == 0:
+            raise CrispError('planner never successfully submitted a step plan')
+
+        return (n_detail, accepted_plans[-1])
+
+    @step
+    def plan_step_init(
+        self,
+        n_code: TreeNode,
+    ) -> tuple[FileNode, list[StepPlan]]:
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        prompt = prompts.plan_step_init(
+            cargo_dir_path = cargo_dir,
+        )
+
+        return self.plan_step_common(n_code, prompt)
+
+    @step
+    def plan_step_subdivide(
+        self,
+        n_code: TreeNode,
+        plan: StepPlan,
+        relevant_code: dict,
+    ) -> tuple[FileNode, list[StepPlan]]:
+        cfg, mvir = self.cfg, self.mvir
+
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        prompt = prompts.plan_step_subdivide(
+            cargo_dir_path = cargo_dir,
+            description = plan.description,
+            goals = [g.to_cbor() for g in plan.goals],
+            details = [mvir.node(n).body_str() for n in plan.details],
+            relevant_code = relevant_code,
+        )
+
+        return self.plan_step_common(n_code, prompt)
+

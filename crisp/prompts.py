@@ -121,6 +121,17 @@ def agent_safety(
     )
 
 
+def agent_status_too_large(
+    size_kb: int,
+    limit_kb: int,
+) -> str:
+    """Render the prompt asking the agent to compact the plan's Status section."""
+    return jinja_env.get_template('agent_status_too_large.jinja').render(
+        size_kb = size_kb,
+        limit_kb = limit_kb,
+    )
+
+
 def agent_ffi_rejected(
     report: str,
 ) -> str:
@@ -135,6 +146,20 @@ def agent_ffi_seen_findings(
     """Render the agent ffi seen findings prompt."""
     return jinja_env.get_template('agent_ffi_seen_findings.jinja').render(
         findings = findings,
+    )
+
+
+def agent_remaining_unsafe(
+    total: int,
+    functions: str,
+) -> str:
+    """
+    Render the prompt listing the functions that still contain unsafe code, so
+    the agent works on what the unsafe count measures.
+    """
+    return jinja_env.get_template('agent_remaining_unsafe.jinja').render(
+        total = total,
+        functions = functions,
     )
 
 

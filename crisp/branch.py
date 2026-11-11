@@ -83,6 +83,8 @@ class BranchState:
                 default_give = self._limits.safety_tries)
         self.per_target_fuel = FuelCounter('safety_tries_per_target',
                 default_give = self._limits.safety_tries_per_target)
+        self.full_cycle_without_progress_fuel = FuelCounter('full_cycle_without_progress_fuel',
+                default_give = 1)
 
         # If 5 of the past 10 plans have failed, we throw out the current plans
         # and start from scratch.
@@ -98,6 +100,8 @@ class BranchState:
         # Plan used on the previous run.  This is used for updating
         # `per_target_fuel`.
         self.prev_plan = None
+
+        self.total_unsafe_as_of_last_full_replan = None
 
     def _reset(self, n: BranchStateNode):
         self._n = n
@@ -176,10 +180,26 @@ class BranchState:
                 ],
             )
             unsafe_json = self._w.find_unsafe2_json_dicts(self.code)
-            if plan_all.count(unsafe_json) == 0:
+            total = plan_all.count(unsafe_json)
+            if total == 0:
                 # All unsafety detectable by `StepGoal` has been removed.
                 print('planning: all plannable unsafety has been removed')
                 return
+
+            # Many codebases have something like a custom allocator, which is
+            # exceedingly difficult for CRISP to resolve without changing
+            # behavior.  If CRISP makes it through an entire cycle, starting
+            # from empty `self.plans`, running initial planning, working
+            # through the planned items, and returning to empty `self.plans`,
+            # without making any progress, then likely all the remaining unsafe
+            # is unresolvable.  We give the agent a few more tries, just in
+            # case it can find a clever solution, and then give up (bail out
+            # with `OutOfFuelError`).
+            if total == self.total_unsafe_as_of_last_full_replan:
+                self.full_cycle_without_progress_fuel.use()
+            else:
+                self.full_cycle_without_progress_fuel.give()
+            self.total_unsafe_as_of_last_full_replan = total
 
             detail, plans = self._w.plan_step_init(self.code)
             for plan in plans:

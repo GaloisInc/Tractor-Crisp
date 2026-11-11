@@ -713,6 +713,45 @@ class TestResultNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class CompileTestsAnalysisNode(Node):
+    KIND = 'compile_tests_analysis'
+    c_code: Metadata[NodeId]
+    test_code: Metadata[NodeId]
+    rust_code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    test_binaries: Metadata[Optional[NodeId]]
+    # `body` stores the build logs; test_binaries is a bundle-root TreeNode.
+
+    c_code = property(lambda self: self._metadata['c_code'])
+    test_code = property(lambda self: self._metadata['test_code'])
+    rust_code = property(lambda self: self._metadata['rust_code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    test_binaries = property(lambda self: self._metadata['test_binaries'])
+
+
+class RunObservationTestsAnalysisNode(Node):
+    KIND = 'run_observation_tests_analysis'
+    rust_code: Metadata[NodeId]
+    test_code: Metadata[NodeId]
+    test_binaries: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    trial: Metadata[int]
+    exit_code: Metadata[int]
+    outputs: Metadata[Optional[NodeId]]
+    # `body` stores the logs. outputs contains results.json and raw streams,
+    # including partial observations if execution hits a limit.
+
+    rust_code = property(lambda self: self._metadata['rust_code'])
+    test_code = property(lambda self: self._metadata['test_code'])
+    test_binaries = property(lambda self: self._metadata['test_binaries'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    trial = property(lambda self: self._metadata['trial'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    outputs = property(lambda self: self._metadata['outputs'])
+
+
 class CargoCheckJsonAnalysisNode(Node):
     KIND = 'cargo_check_json_analysis_node'
     code: Metadata[NodeId]
@@ -979,6 +1018,8 @@ NODE_CLASSES = [
     LlmOpNode,
     CodexAgentOpNode,
     TestResultNode,
+    CompileTestsAnalysisNode,
+    RunObservationTestsAnalysisNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,

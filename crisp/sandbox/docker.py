@@ -56,6 +56,14 @@ class WorkContainer:
             self.container.stop(timeout=1)
             #self.container.remove(v=True)
 
+    def end_commands(self):
+        """
+        Send SIGTERM to every process in the container except `sleep` (PID 1),
+        such as an agent that is still running.
+        """
+        if self.container is not None:
+            self.container.exec_run(['sh', '-c', 'kill -TERM -1'])
+
     def _checkout_tar_file(self, tar_bytes):
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
@@ -208,11 +216,23 @@ def run_work_container(cfg, mvir, require_consistent_path = False):
     # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
-    yield wc
-    if not KEEP_WORK_CONTAINER:
-        wc.stop()
-    else:
-        print('keeping work container %r' % (wc.container.name,))
+    # Stop the container even if the caller raises (including on Ctrl-C), or
+    # the agent running in it keeps going until its `sleep` ends.
+    try:
+        yield wc
+    finally:
+        try:
+            if not KEEP_WORK_CONTAINER:
+                wc.stop()
+            else:
+                # Keep the files, but not an agent that is still running.
+                wc.end_commands()
+                print('keeping work container %r' % (wc.container.name,))
+        except BaseException:
+            # Usually another Ctrl-C or signal while crisp is being stopped.
+            # Let it through, but say what is left to clean up by hand.
+            print(f'warning: exiting without cleaning up container {wc.container.name!r}')
+            raise
 
 def set_keep_work_container(keep):
     global KEEP_WORK_CONTAINER

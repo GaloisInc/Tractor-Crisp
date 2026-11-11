@@ -949,6 +949,45 @@ class WorkflowStepNode(Node):
     output = property(lambda self: self._metadata['output'])
     timestamp = property(lambda self: self._metadata['timestamp'])
 
+class BranchStateNode(Node):
+    """
+    Snapshot of translation state.  This includes the current Rust code and
+    also metadata such as refactoring plans.
+    """
+    KIND = 'branch_state'
+    c_code: Metadata[NodeId]
+    code: Metadata[NodeId]
+    plans: Metadata[Optional[NodeId]]
+
+    c_code = property(lambda self: self._metadata['c_code'])
+    code = property(lambda self: self._metadata['code'])
+    plans = property(lambda self: self._metadata['plans'])
+
+class BranchStepNode(Node):
+    """
+    Record of a high-level step of the translation.
+    """
+    KIND = 'branch_step'
+    # Name of the function that produced this step.
+    name: Metadata[str]
+    # `BranchStateNode` representing the initial state.
+    old_state: Metadata[NodeId]
+    # `BranchStateNode` representing the final state, if the step succeeded.
+    new_state: Metadata[Optional[NodeId]]
+    # Exception message, if the step failed.
+    fail_msg: Metadata[Optional[str]]
+    # List of `BranchStepNode`s that occurred as part of this step.
+    children: Metadata[list[NodeId]]
+    start_time: Metadata[datetime]
+    end_time: Metadata[datetime]
+
+    name = property(lambda self: self._metadata['name'])
+    old_state = property(lambda self: self._metadata['old_state'])
+    new_state = property(lambda self: self._metadata['new_state'])
+    fail_msg = property(lambda self: self._metadata['fail_msg'])
+    children = property(lambda self: self._metadata['children'])
+    start_time = property(lambda self: self._metadata['start_time'])
+    end_time = property(lambda self: self._metadata['end_time'])
 
 NODE_CLASSES = [
     FileNode,
@@ -976,6 +1015,9 @@ NODE_CLASSES = [
 
     WorkflowStepInputsNode,
     WorkflowStepNode,
+
+    BranchStateNode,
+    BranchStepNode,
 ]
 
 def _build_node_kind_map(classes):

@@ -61,7 +61,9 @@ class ObservationAnalysisTest(unittest.TestCase):
         if path == 'test_binaries':
             return self.tree({'test_binaries/bin/test_basic': b'original executable'})
         return self.tree({'test_results/results.json': '{"tests": []}',
-                          'test_results/0000.stdout': b'\x00\xffobservation'})
+                          'test_results/tests/basic.c.stdout': b'\x00\xffobservation',
+                          'test_results/tests/basic.c.stderr': b'',
+                          'test_results/tests/basic.c.json': '{"returncode": 0, "status": "exited"}'})
 
     def compile(self, c_code=None, tests=None, rust=None, cmd=None):
         return analysis.compile_tests(
@@ -104,8 +106,10 @@ class ObservationAnalysisTest(unittest.TestCase):
             (self.rust.node_id(), 'rust_code'), (self.tests.node_id(), 'test_code'),
             (self.binaries.node_id(), 'test_binaries')])
         outputs = self.mvir.node(original.outputs)
-        self.assertEqual(set(outputs.files), {'results.json', '0000.stdout'})
-        self.assertEqual(self.mvir.node(outputs.files['0000.stdout']).body(), b'\x00\xffobservation')
+        self.assertEqual(set(outputs.files), {
+            'results.json', 'tests/basic.c.stdout', 'tests/basic.c.stderr', 'tests/basic.c.json'})
+        self.assertEqual(self.mvir.node(outputs.files['tests/basic.c.stdout']).body(),
+                         b'\x00\xffobservation')
 
     def test_build_failure_retains_logs_without_publishing_binaries(self):
         self.exit_code = 1
@@ -175,6 +179,10 @@ pub extern "C" fn value() -> i32 { 9 }
                 self.assertEqual(result.exit_code, 0, result.body_str())
                 outputs = mvir.node(result.outputs)
                 report = json.loads(mvir.node(outputs.files['results.json']).body())
+                case = report['tests'][0]
+                self.assertNotIn('elapsed_seconds', case)
+                metadata = json.loads(mvir.node(outputs.files[case['metadata']]).body())
+                self.assertEqual(metadata['returncode'], 0)
                 return mvir.node(outputs.files[report['tests'][0]['stdout']]).body()
 
             with patch('crisp.analysis.run_sandbox', sandbox):
@@ -199,6 +207,7 @@ pub extern "C" fn value() -> i32 { 9 }
                 repeated = analysis.run_observation_tests(
                     None, mvir, candidate, tests, binaries, run_cmd, trial=1)
                 self.assertEqual(observation(repeated), b'9\n')
+                self.assertEqual(repeated.outputs, changed.outputs)
                 self.assertEqual(len(invocations), 4)
 
 

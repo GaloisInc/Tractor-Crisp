@@ -6,6 +6,8 @@ Cargo, Clang, and Bash. It uses only Python's standard library and does not
 import CRISP. The `tractor-crisp-user` image installs it at
 `/usr/local/bin/crisp_test_runner.py`.
 
+For migrating existing corpus tests, see [Porting Test-Corpus suites](porting-test-suites.md).
+
 The caller provides the sandbox and input snapshots. The script does not create
 a filesystem/network sandbox, compare results, or generate tests. It does not
 build or execute the original C implementation. Capture reference observations
@@ -158,8 +160,33 @@ relinks those executables. Staging uses library basenames and the selected
 Rust artifacts, so drivers have no automatic fallback to the Rust libraries
 used during test compilation.
 
-The output directory must be new or empty. It receives raw `0000.stdout`,
-`0000.stderr`, etc., and `results.json`:
+The output directory must be new or empty. Each test gets files named after its
+full suite-relative filename, including the source extension:
+
+```text
+observations/
+  results.json
+  tests/
+    simple.c.stdout
+    simple.c.stderr
+    simple.c.json
+    complex.sh.stdout
+    complex.sh.stderr
+    complex.sh.json
+```
+
+The `.stdout` and `.stderr` files hold raw bytes. Each test's `.json` file
+records its name, termination status, return code, and any failure reason:
+
+```json
+{
+  "name": "tests/simple.c",
+  "returncode": 0,
+  "status": "exited"
+}
+```
+
+`results.json` also indexes all tests and their files:
 
 ```json
 {
@@ -170,9 +197,9 @@ The output directory must be new or empty. It receives raw `0000.stdout`,
       "name": "tests/simple.c",
       "status": "exited",
       "returncode": 0,
-      "stdout": "0000.stdout",
-      "stderr": "0000.stderr",
-      "elapsed_seconds": 0.012
+      "stdout": "tests/simple.c.stdout",
+      "stderr": "tests/simple.c.stderr",
+      "metadata": "tests/simple.c.json"
     }
   ]
 }
@@ -181,9 +208,19 @@ The output directory must be new or empty. It receives raw `0000.stdout`,
 Stdout and stderr are kept separate and may contain arbitrary bytes, including
 NULs and invalid UTF-8. Normal nonzero exits are observations: they do not make
 the runner command fail. `complete` means every test exited normally, not that
-its observations matched a reference. Compare by test name, stream bytes, and
-return code; ignore elapsed time. This script deliberately performs no implicit
-output normalization or reference updating.
+its observations matched a reference. All files in the output directory are
+intended for comparison, so matching behavior produces byte-identical snapshots:
+
+```sh
+diff -Nurd golden-outputs/ current-outputs/
+```
+
+Metadata detects exit-code changes even when both streams are empty. Retaining
+source extensions distinguishes, for example, `tests/foo.c` and `tests/foo.sh`.
+Adding a test does not rename existing tests' files. Elapsed time is included
+only in the JSON summary printed to the command's stdout, not in the output
+directory. The script performs no implicit stream normalization or reference
+updating.
 
 Other statuses are `signaled`, `timeout`, `output_limit`, `launch_error`, and
 `not_run`. Negative return codes identify signals. A suite deadline marks

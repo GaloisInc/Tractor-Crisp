@@ -326,7 +326,7 @@ def run_tests(args):
             env["ASAN_OPTIONS"] = "halt_on_error=1:detect_leaks=1:symbolize=0"
             env["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1:symbolize=0"
         deadline = time.monotonic() + args.suite_timeout
-        for index, (name, argv) in enumerate(cases):
+        for name, argv in cases:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 result = {"status": "not_run", "returncode": None,
@@ -345,13 +345,24 @@ def run_tests(args):
                         result["reason"] = "suite_timeout"
             for stream in ("stdout", "stderr"):
                 contents = result.pop(stream)
-                filename = f"{index:04d}.{stream}"
-                (output / filename).write_bytes(contents)
+                filename = f"{name}.{stream}"
+                destination = output / filename
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(contents)
                 result[stream] = filename
+            metadata = {"name": name, **{
+                key: value for key, value in result.items()
+                if key not in ("stdout", "stderr", "elapsed_seconds")}}
+            result["metadata"] = f"{name}.json"
+            write_json(output / result["metadata"], metadata)
             results.append({"name": name, **result})
     summary = {"version": VERSION, "tests": results,
                "complete": all(r["status"] == "exited" for r in results)}
-    write_json(output / "results.json", summary)
+    # The entire output tree is a golden snapshot: keep variable timing data
+    # in the returned diagnostic summary, not in any of its files.
+    write_json(output / "results.json", {**summary, "tests": [
+        {key: value for key, value in result.items() if key != "elapsed_seconds"}
+        for result in results]})
     return summary
 
 

@@ -148,6 +148,60 @@ os.write(2, b"separate stderr\\x00")
             "tests/wrapped.sh": (b"wrapped\n", b"", 0),
         })
 
+    def test_output_directories_compare_equal_with_diff(self):
+        self.invoke("build")
+        self.invoke("run")
+        golden = self.output
+        summary = self.invoke("run")
+        difference = subprocess.run(
+            ["diff", "-Nurd", str(golden), str(self.output)], capture_output=True)
+        self.assertEqual(difference.returncode, 0, difference.stdout.decode(errors="replace"))
+        saved = json.loads((self.output / "results.json").read_text())
+        for case in saved["tests"]:
+            self.assertNotIn("elapsed_seconds", case)
+            self.assertEqual(case["stdout"], case["name"] + ".stdout")
+            self.assertEqual(case["stderr"], case["name"] + ".stderr")
+            self.assertEqual(case["metadata"], case["name"] + ".json")
+        self.assertTrue(all("elapsed_seconds" in case for case in summary["tests"]))
+        self.assertEqual(json.loads((self.output / "tests/error.sh.json").read_text()), {
+            "name": "tests/error.sh", "status": "exited", "returncode": 4})
+
+    def test_diff_detects_exit_code_changes_with_identical_empty_streams(self):
+        path = self.suite / "tests/exit_only.sh"
+        self.write(path, "exit 0\n")
+        self.invoke("build")
+        self.invoke("run")
+        golden = self.output
+        self.write(path, "exit 7\n")
+        self.invoke("run")
+        difference = subprocess.run(
+            ["diff", "-Nurd", str(golden), str(self.output)], capture_output=True)
+        self.assertEqual(difference.returncode, 1)
+        self.assertIn(b"tests/exit_only.sh.json", difference.stdout)
+        self.assertIn(b'"returncode": 7', difference.stdout)
+        self.assertNotIn(b"elapsed_seconds", difference.stdout)
+        for directory in (golden, self.output):
+            for stream in ("stdout", "stderr"):
+                self.assertEqual((directory / f"tests/exit_only.sh.{stream}").read_bytes(), b"")
+
+    def test_new_cases_preserve_existing_names_and_distinguish_source_extensions(self):
+        self.write(self.suite / "tests/observe.sh", "printf 'script observation\\n'\n")
+        self.invoke("build")
+        self.invoke("run")
+        golden = self.output
+        saved = {path.relative_to(golden): path.read_bytes()
+                 for path in golden.rglob("*") if path.is_file() and path.name != "results.json"}
+        self.assertEqual(saved[Path("tests/observe.c.stdout")], b"15\n")
+        self.assertEqual(saved[Path("tests/observe.sh.stdout")], b"script observation\n")
+        self.write(self.suite / "tests/00_added.sh", "exit 0\n")
+        self.invoke("run")
+        for path, contents in saved.items():
+            self.assertEqual((self.output / path).read_bytes(), contents, str(path))
+        difference = subprocess.run(
+            ["diff", "-Nurd", str(golden), str(self.output)], capture_output=True)
+        self.assertEqual(difference.returncode, 1)
+        self.assertIn(b"tests/00_added.sh.json", difference.stdout)
+
     def test_rebuild_uses_updated_headers_and_flags(self):
         self.invoke("build")
         self.write(self.c / "include/settings.h", "#define BIAS 2\n")

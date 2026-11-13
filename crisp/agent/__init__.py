@@ -375,7 +375,10 @@ def run_agent(
         all_cmds += setup_cmds
         all_cmds += [
             ['mkdir', '-p', codex_dir],
-            codex_cmd,
+            # Run Codex, but don't let it go for longer than 30 minutes.  This
+            # catches runaway jobs even in sandboxes that don't have a built-in
+            # timeout.
+            ['timeout', '1800', *codex_cmd]
         ]
         all_cmds += clean_cmds
 

@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import docker
+import functools
 import io
 import os
 from pathspec.pathspec import PathSpec
@@ -8,12 +9,31 @@ import tarfile
 from typing import Callable
 import shlex
 
+from ..error import CrispError
 from ..mvir import FileNode, TreeNode
 from ..util import ChunkPrinter
 
 
 DEFAULT_DOCKER_IMAGE = 'tractor-crisp-user'
 DOCKER_IMAGE_ENV_VAR = 'CRISP_DOCKER_IMAGE'
+
+
+def handle_docker_timeout(f):
+    """
+    Wrap `f` and convert any Docker `NotFound` errors into `CrispError`.
+
+    All Docker sandboxes we spawn have a 30 minute timeout (see the `sleep`
+    call in `start()`).  Once the sandbox times out, further operations on the
+    container, including trying to export its files, will fail with `NotFound`
+    (which corresponds to a 404 from the Docker daemon).
+    """
+    @functools.wraps(f)
+    def g(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except docker.errors.NotFound as e:
+            raise CrispError('docker container timed out') from e
+    return g
 
 
 class WorkContainer:
@@ -41,6 +61,7 @@ class WorkContainer:
             raise
         self.container = None
 
+    @handle_docker_timeout
     def start(self):
         self.container = self.client.containers.run(
             # `sleep` is PID 1; its duration caps the lifetime of the container.
@@ -51,15 +72,18 @@ class WorkContainer:
             extra_hosts={"host.docker.internal": "host-gateway"},
         )
 
+    @handle_docker_timeout
     def stop(self):
         if self.container is not None:
             self.container.stop(timeout=1)
             #self.container.remove(v=True)
 
+    @handle_docker_timeout
     def _checkout_tar_file(self, tar_bytes):
         self.container.exec_run("mkdir -p /root/work")
         self.container.put_archive('/root/work/', tar_bytes)
 
+    @handle_docker_timeout
     def checkout(self, n_tree, rel_path=None):
         assert isinstance(n_tree, TreeNode)
         if rel_path is not None:
@@ -75,10 +99,12 @@ class WorkContainer:
                 t.addfile(info, io.BytesIO(n_file.body()))
         self._checkout_tar_file(tar_io.getvalue())
 
+    @handle_docker_timeout
     def checkout_file(self, rel_path, n_file):
         assert isinstance(n_file, FileNode)
         self.checkout_file_untracked(rel_path, n_file.body())
 
+    @handle_docker_timeout
     def checkout_file_untracked(self, rel_path, body):
         assert not os.path.isabs(rel_path)
         assert isinstance(body, bytes)
@@ -89,6 +115,7 @@ class WorkContainer:
             t.addfile(info, io.BytesIO(body))
         self._checkout_tar_file(tar_io.getvalue())
 
+    @handle_docker_timeout
     def commit_dir(
         self,
         rel_path,
@@ -130,6 +157,7 @@ class WorkContainer:
                 files[dest_path] = FileNode.new(self.mvir, f.read()).node_id()
         return TreeNode.new(self.mvir, files=files)
 
+    @handle_docker_timeout
     def commit_file(self, rel_path):
         assert not os.path.isabs(rel_path)
         tar_bytes_iter, st = self.container.get_archive(self.join(rel_path))
@@ -148,6 +176,7 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
+    @handle_docker_timeout
     def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)

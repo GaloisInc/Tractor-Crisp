@@ -1,10 +1,71 @@
-Refactor the Rust code in `{cargo_dir_path}` to make it fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
+Refactor the Rust code in `{{ cargo_dir_path }}` to make it fully safe without changing its behavior.  The goal state uses safe memory management (`Box`/`Vec`/`Rc`) and safe pointer types (`&T`/`&[T]`) throughout, with all remaining unsafety confined to FFI entry points.
 
 {{ target_goal }}
+
+
+# Testing
+
+Before you refactor the code, add tests to the differential test suite under `crisp_tests/` to cover the code you intend to modify.  These will be used to ensure that your refactoring doesn't change the behavior of the code.  Each test is run against the original C and against the current Rust implementation.  It should print some observations (e.g. function return values, final buffer contents, files created on disk) to stdout.  The outputs of the two runs are diffed, and any nonempty diff is reported as an error.  Tests are run using `crisp_test_runner.py`.
+
+## Suite layout
+
+```text
+crisp_tests/
+  tests.toml               # optional compilation/link flags
+  test_helpers/
+    helpers.c              # all *.c compiled into one shared helper library
+    helpers.h
+  tests/
+    simple.c               # one executable per *.c
+    complex.c
+    complex.sh             # invokes test_complex with custom arguments/setup
+    cli.py                 # can invoke target binaries directly
+  fixtures/                # optional resources, read using $TEST_ROOT
+```
+
+`tests.toml` belongs to the test suite and may be edited by the generator:
+
+```toml
+cflags = ["-Iinclude", "-D_FILE_OFFSET_BITS=64"]
+ldflags = ["-lm"]
+```
+
+Both fields default to empty arrays. Flags apply to helpers and individual tests. Relative flag paths are interpreted from `{{ c_dir_path }}`, the original C project root.  That root, `test_helpers/`, and `tests/` are automatically added to the header search path.  No C configure/build commands are run; you may need to add workarounds if the library uses generated headers.
+
+Each `tests/foo.c` becomes `test_foo`, available through `$PATH`. Helpers become `libcrisp_test_helpers.so`; tests link against it and the Rust shared library under test. The helper directory can be absent. A suite containing only scripts needs no C programs or helpers.
+
+A simple test can be entirely in one file:
+
+```c
+// RUN: test_simple
+#include <stdio.h>
+#include <example.h>
+
+int main(void) {
+    printf("result=%d\n", example_function(42));
+    return 0;
+}
+```
+
+Discovery examines only immediate files in `tests/`. It runs each `.sh` through `bash -o pipefail` and each `.py` through `python3`.  Each C file with a single nonempty `// RUN:` directive adds another test. Its command is passed to `bash -o pipefail -c`. C files without a directive are compiled but run only when invoked by a script or another test.  A script and a `RUN` directive are independent tests; use just one if they would duplicate the same scenario. Files are discovered in sorted filename order.
+
+Each test starts in a new empty temporary working directory with empty stdin, locale `C`, timezone `UTC`, and umask `022`. Redirection and setup belong in the script or `RUN` command. Test programs may create files, run subprocesses, and normalize their observations.
+
+The runner sets:
+
+- `$PATH`: compiled `test_*` programs, then Rust target binaries, then the inherited tool/interpreter search path.
+- `$LD_LIBRARY_PATH`: the staged helper library and current Rust libraries.  The inherited library path, `LD_PRELOAD`, and `LD_AUDIT` are discarded.
+- `$TEST_ROOT`: absolute suite root, for reading fixtures and scripts.
+- `$TEST_BINS`: absolute directory containing the compiled `test_*` programs.
+- `$TMPDIR`: private directory for the current test.
+
+Tests for libraries should use library-provided initialization, allocation, and destruction APIs for opaque objects.  Tests should not inspect fields of opaque structs directly, since layout may vary between C and Rust versions.  Neither the test sources nor helpers should include original implementation `.c` files or link an original target implementation.
+
 
 # Validation
 
 {{ after_refactoring_instruction }}
+
 
 Your changes must not introduce new unsafe code within implementation functions. You can check your work using this command:
 ```sh

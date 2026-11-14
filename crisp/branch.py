@@ -160,6 +160,10 @@ class BranchState:
         if op_test.exit_code != 0:
             raise CrispError("new code failed the tests", op_test)
 
+        op_diff_test = self._w.compare_observation_tests_op(old_code, self.code, self.c_code)
+        if op_diff_test.exit_code != 0:
+            raise CrispError("new code failed the diff tests", op_diff_test)
+
         old_unsafe_json = self._w.find_unsafe2_json(old_code)
         op_unsafe = self._w.check_unsafe2_op(self.code, old_unsafe_json)
         if op_unsafe.exit_code != 0:

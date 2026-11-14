@@ -537,7 +537,10 @@ def run_rewrite(
         codex_cmd,
         {
             'code': lambda p: p not in extra_code_files
-                and (p in input_code.files or p.endswith('.rs')),
+                and not Path(p).is_relative_to('crisp_tests/build')
+                and not Path(p).is_relative_to('crisp_tests/output')
+                and (p in input_code.files or p.endswith('.rs')
+                     or Path(p).is_relative_to('crisp_tests')),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
         },

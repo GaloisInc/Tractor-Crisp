@@ -248,7 +248,44 @@ deadlines, stream-size limits, and subprocess cleanup itself.
 
 ## MVIR analysis passes
 
-`crisp.analysis` exposes two cached passes:
+To check a refactoring against the original transpiled Rust:
+
+```python
+result = compare_observation_tests(cfg, mvir, old_code, new_code, c_code)
+if not result.passed:
+    feedback = result.body_str()
+```
+
+All three code inputs are `TreeNode`s with project-relative paths. The pass
+extracts `tests.toml`, `tests/`, `test_helpers/`, and `fixtures/` from `new_code`
+into a separate suite tree. Suite files must live at the project root. It uses
+`cfg.transpile.output_dir` to locate Cargo and passes the configured artifacts'
+`system_libs` to the C linker. Compilation flags remain in the suite's
+`tests.toml`; no additional configuration is required.
+
+The reference sandbox receives the original Rust, original C, and current
+suite. It compiles and runs the tests, storing both the binary bundle and the
+reference output tree in MVIR. A separate candidate sandbox receives the current
+Rust (including its tests), original C, current suite, and saved binaries. It
+only runs the pre-built tests. Golden outputs are never checked out into either
+sandbox.
+
+The pass compares output-tree node IDs. Its body contains a success message,
+build/run failure logs, or a unified diff with paths such as
+`golden-outputs/tests/foo.c.stdout` and `current-outputs/tests/foo.c.stdout`.
+Binary differences identify the affected file, and non-UTF-8 bytes are escaped
+in feedback. The stored snapshots retain the original bytes. Failed or
+incomplete runs cannot pass, even if their partial snapshots match. A reference
+failure skips the candidate run.
+
+`result.test_code` identifies the extracted suite. `result.old_run` and
+`result.new_run` identify the execution records; `new_run` is `None` when the
+reference failed. Each execution record stores logs, `exit_code`, optional
+`test_binaries`, and optional `outputs` trees. Reference execution is cached
+independently: changing only the candidate Rust reuses the reference binaries
+and outputs. Changes to the suite, original Rust, or C snapshot invalidate it.
+
+The low-level cached operations remain available:
 
 ```python
 compile_tests(cfg, mvir, c_code, test_code, rust_code, cmd)

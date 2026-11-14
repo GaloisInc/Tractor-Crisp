@@ -108,6 +108,8 @@ def parse_args():
     show = sub.add_parser('show')
     show.add_argument('node', nargs='?', default='current')
     show.add_argument('--raw', action='store_true')
+    show.add_argument('--body', action='store_true',
+        help='output only the node body, without the metadata header')
     show.add_argument('--files', action='store_true',
         help='If the target node is a TreeNode, show all files in the tree.')
 
@@ -779,13 +781,20 @@ def do_index(args, cfg):
 def do_show(args, cfg):
     mvir = MVIR(cfg.mvir_storage_dir, '.')
     node_id = parse_node_id_arg(mvir, args.node)
-    print(node_id)
     n = mvir.node(node_id)
+
+    if args.body:
+        print(n.body_str())
+        return
+
+    print(node_id)
+
     from pprint import pprint
     if not args.raw:
         pprint(n.metadata())
     else:
         pprint(n.read_raw_metadata())
+
     if not args.files:
         print('---')
         print(n.body().decode('utf-8'))

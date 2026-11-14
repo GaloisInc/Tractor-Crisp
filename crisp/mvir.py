@@ -715,12 +715,12 @@ class TestResultNode(Node):
 class CompileTestsAnalysisNode(Node):
     KIND = 'compile_tests_analysis'
     c_code: Metadata[NodeId]
-    test_code: Metadata[NodeId]
+    test_code: Metadata[Optional[NodeId]]
     rust_code: Metadata[NodeId]
     cmd: Metadata[list[str]]
     exit_code: Metadata[int]
     test_binaries: Metadata[Optional[NodeId]]
-    # `body` stores the build logs; test_binaries is a bundle-root TreeNode.
+    # `body` stores the build logs.
 
     c_code = property(lambda self: self._metadata['c_code'])
     test_code = property(lambda self: self._metadata['test_code'])
@@ -733,7 +733,7 @@ class CompileTestsAnalysisNode(Node):
 class RunObservationTestsAnalysisNode(Node):
     KIND = 'run_observation_tests_analysis'
     rust_code: Metadata[NodeId]
-    test_code: Metadata[NodeId]
+    test_code: Metadata[Optional[NodeId]]
     test_binaries: Metadata[NodeId]
     cmd: Metadata[list[str]]
     trial: Metadata[int]
@@ -749,6 +749,27 @@ class RunObservationTestsAnalysisNode(Node):
     trial = property(lambda self: self._metadata['trial'])
     exit_code = property(lambda self: self._metadata['exit_code'])
     outputs = property(lambda self: self._metadata['outputs'])
+
+
+class CompareObservationTestsAnalysisNode(Node):
+    KIND = 'compare_observation_tests_analysis'
+    c_code: Metadata[NodeId]
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    compile_op: Metadata[Optional[NodeId]]
+    old_run: Metadata[Optional[NodeId]]
+    new_run: Metadata[Optional[NodeId]]
+    exit_code: Metadata[int]
+    # `body` stores feedback: an output diff, failure logs, or a success message.
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    c_code = property(lambda self: self._metadata['c_code'])
+    compile_op = property(lambda self: self._metadata['compile_op'])
+    old_run = property(lambda self: self._metadata['old_run'])
+    new_run = property(lambda self: self._metadata['new_run'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    passed = property(lambda self: self.exit_code == 0)
 
 
 class CargoCheckJsonAnalysisNode(Node):
@@ -1019,6 +1040,7 @@ NODE_CLASSES = [
     TestResultNode,
     CompileTestsAnalysisNode,
     RunObservationTestsAnalysisNode,
+    CompareObservationTestsAnalysisNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,

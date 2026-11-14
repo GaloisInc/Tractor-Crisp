@@ -25,6 +25,7 @@ from .mvir import (
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
     CargoFixOpNode, CodexReviewAnalysisNode,
+    CompareObservationTestsAnalysisNode,
 )
 from .planning import StepPlan, StepGoal
 from .sandbox import run_sandbox
@@ -773,6 +774,15 @@ class Workflow:
         return n
 
     @step
+    def compare_observation_tests_op(
+        self,
+        old_code: TreeNode,
+        new_code: TreeNode,
+        c_code: TreeNode
+    ) -> CompareObservationTestsAnalysisNode:
+        return analysis.compare_observation_tests(self.cfg, self.mvir, old_code, new_code, c_code)
+
+    @step
     def cargo_fix(self, code: TreeNode) -> TreeNode:
         n = self.cargo_fix_op(code)
         return self.mvir.node(n.new_code)
@@ -1154,6 +1164,9 @@ class Workflow:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
+        if n_orig_code is None:
+            n_orig_code = n_code
+
         if provide_test_cmd and cfg.test_command is not None:
             after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()
         else:
@@ -1164,6 +1177,8 @@ class Workflow:
             extra_code['tests'] = n_test_code
 
         prompt = prompts.agent_safety(
+            cargo_dir_path = cargo_dir,
+            c_dir_path = '.',
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
         )
@@ -1180,6 +1195,11 @@ class Workflow:
         def op_response(op):
             return mk_response(op.body(), op.passed)
 
+        def multi_op_response(ops):
+            body = b'\n\n'.join(f' === Part {i + 1} ===\n'.encode() + op.body()
+                for i, op in enumerate(ops))
+            return mk_response(body, all(op.passed for op in ops))
+
         def build_app(asb, app):
             # NB: because these are `def` rather than `async def`, they run on
             # a thread pool managed by FastAPI, rather than on the main thread.
@@ -1192,11 +1212,16 @@ class Workflow:
             def run_tests():
                 code = asb.get_output('code')
                 try:
-                    op = self.test_op(code, n_test_code)
+                    op1 = self.test_op(code, n_test_code)
                 except Exception as e:
                     traceback.print_exc()
                     return mk_response(f'{type(e).__name__}: {e}', status = 500)
-                return op_response(op)
+                try:
+                    op2 = self.compare_observation_tests_op(n_code, code, n_test_code)
+                except Exception as e:
+                    traceback.print_exc()
+                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
+                return multi_op_response((op1, op2))
 
             @app.post('/crisp/check_unsafe2')
             def check_unsafe2():
@@ -1417,8 +1442,10 @@ class Workflow:
         # The change must pass tests, must not regress any unsafe count, and
         # must not break the FFI entry point rules.
         n_op_test = self.test_op(n_new_code, n_test_code)
+        n_op_diff_test = self.compare_observation_tests_op(n_code, n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
+        if (n_op_test.exit_code != 0 or n_op_diff_test.exit_code != 0
+                or n_op_unsafe.exit_code != 0):
             return None, None, None
         ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
         if not ffi_ok:

@@ -115,12 +115,16 @@ def agent_safety(
     target_goal: str,
     has_incremental_plans: bool,
     after_refactoring_instruction: str,
+    cargo_dir_path: str,
+    c_dir_path: str,
 ) -> str:
     """Render the agent safety prompt."""
     return jinja_env.get_template('agent_safety.jinja').render(
         target_goal = target_goal,
         has_incremental_plans = has_incremental_plans,
         after_refactoring_instruction = after_refactoring_instruction,
+        cargo_dir_path = cargo_dir_path,
+        c_dir_path = c_dir_path,
     )
 
 

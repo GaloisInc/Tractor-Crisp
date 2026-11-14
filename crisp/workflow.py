@@ -1123,6 +1123,40 @@ class Workflow:
         return new_ffi_defs
 
     @step
+    def agent_warning_cleanup(self, n_code: TreeNode, n_c_code: TreeNode) -> TreeNode:
+        """Keep one cleanup only if it reduces warnings and passes tests."""
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+
+        def warnings(code):
+            check = self.cargo_check_json_op(code)
+            if not check.passed:
+                raise CrispError('warning cleanup build failed', check)
+            return [item['message']['rendered']
+                for item in mvir.node(check.json).body_json()
+                if item.get('reason') == 'compiler-message'
+                    and item['message']['level'] == 'warning']
+
+        before = warnings(n_code)
+        if not before:
+            return n_code
+        diagnostics = TreeNode.new(mvir, files={
+            'COMPILER_WARNINGS.txt': FileNode.new(mvir, '\n'.join(before)).node_id()})
+        prompt = prompts.warning_cleanup(cargo_dir_path = cargo_dir)
+        candidate, _ = agent.run_rewrite(cfg, mvir, prompt, cfg.models.agent_warning_cleanup,
+            n_code, extra_code={'c_code': n_c_code, 'warnings': diagnostics},
+            clean_cmds=[['cargo', 'clean', '--manifest-path',
+                os.path.join(cargo_dir, 'Cargo.toml')]],
+            effort='xhigh')
+        if (candidate.node_id() == n_code.node_id()
+                or len(warnings(candidate)) >= len(before)):
+            return n_code
+        # Cleanup output is the safety loop's baseline, so the unsafe checker doesn't apply.
+        if not self.test(candidate, n_c_code):
+            return n_code
+        return candidate
+
+    @step
     def agent_safety(
         self,
         n_code: TreeNode,

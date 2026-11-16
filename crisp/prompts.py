@@ -113,11 +113,13 @@ def llm_repair_call_sites(
 
 def agent_safety(
     target_goal: str,
+    has_incremental_plans: bool,
     after_refactoring_instruction: str,
 ) -> str:
     """Render the agent safety prompt."""
     return jinja_env.get_template('agent_safety.jinja').render(
         target_goal = target_goal,
+        has_incremental_plans = has_incremental_plans,
         after_refactoring_instruction = after_refactoring_instruction,
     )
 

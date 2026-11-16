@@ -1165,7 +1165,8 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_test_code: TreeNode | None,
-        n_plans: TreeNode,
+        # Incremental planning documents.
+        n_plans: TreeNode | None,
         # If set, provide `cfg.test_command` to the agent, if it's available.
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
@@ -1186,6 +1187,7 @@ class Workflow:
         prompt = prompts.agent_safety(
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
+            has_incremental_plans = n_plans is not None,
         )
         if prompt_suffix is not None:
             prompt = f'{prompt}\n\n{prompt_suffix}'

@@ -187,6 +187,44 @@ compiling the code ), use `crisp checkout 287272d --path ./out`; this will
 create `./out/Public-Tests/B01_organic/colourblind_lib/translated_rust/Cargo.lock`
 and so on.
 
+To manually edit a single MVIR node, export its metadata and body:
+
+```sh
+crisp export current node.json
+# Edit node.json and/or node.json.body.
+crisp import node.json --tag current
+```
+
+`export` accepts the same node IDs, prefixes, tags, and reference expressions
+as `show`. It writes indented UTF-8 JSON metadata to the given file and the
+exact body bytes to a separate file with `.body` appended to its name (even
+when the body is empty). Only the selected node is exported; referenced nodes
+are not copied.
+
+The JSON uses ordinary numbers, booleans, nulls, lists, and objects. Special
+values have compact tags:
+
+| Value | JSON representation |
+| --- | --- |
+| Node ID | `"n!<full hexadecimal ID>"` |
+| Bytes | `"b64!<base64 data>"` |
+| Timestamp | `"dt!2026-11-17T12:34:56.123456"` |
+| Literal string containing `!` | An extra leading `!`, e.g. `"!foo!bar"` |
+| Tuple | `{"!tuple": ["uses_foreign_fn", "printf"]}` |
+| Planning records | `{"!StepPlan": {...}}` and `{"!StepGoal": {...}}` |
+| Dictionary with non-string keys | `{"!dict": [[key, value], ...]}` |
+| Non-finite float | `"f!nan"`, `"f!inf"`, or `"f!-inf"` |
+
+The string escape rule also applies to dictionary keys. Planning records use
+their named fields, so descriptions, goals, and detail references can all be
+edited directly. Unknown tags, invalid fields, and duplicate keys are rejected
+on import.
+
+`import` validates the metadata and prints the resulting node ID. Nodes are
+immutable: edited content gets a new ID, and other nodes retain their existing
+references. `--tag NAME` updates that tag to the imported node; omitting it
+leaves tags unchanged.
+
 
 # Testing
 

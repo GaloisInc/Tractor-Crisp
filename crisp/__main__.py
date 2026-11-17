@@ -28,6 +28,7 @@ from .mvir import (
     CompileCommandsOpNode, TranspileOpNode, SplitFfiOpNode, CodexAgentOpNode,
     BranchStateNode
 )
+from .mvir_json import export_node, import_node
 from .rand_target import PickTarget
 from .sandbox import run_sandbox
 from .util import FuelLimits
@@ -117,6 +118,19 @@ def parse_args():
         help='output only the node body, without the metadata header')
     show.add_argument('--files', action='store_true',
         help='If the target node is a TreeNode, show all files in the tree.')
+
+    export = sub.add_parser('export',
+        help='export a single node as editable JSON and a binary body file')
+    export.add_argument('node')
+    export.add_argument('path', metavar='FILE',
+        help='write metadata to FILE and the body to FILE.body')
+
+    import_ = sub.add_parser('import',
+        help='import a node from edited JSON and its binary body file')
+    import_.add_argument('path', metavar='FILE',
+        help='read metadata from FILE and the body from FILE.body')
+    import_.add_argument('--tag', '-t',
+        help='also set this tag to the imported node (default: leave tags unchanged)')
 
     index = sub.add_parser('index')
     index.add_argument('node', nargs='?', default='current')
@@ -699,6 +713,18 @@ def do_show(args, cfg):
             print(' --- %s: ---' % name)
             print(mvir.node(file_node_id).body().decode('utf-8'))
 
+def do_export(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    node_id = parse_node_id_arg(mvir, args.node)
+    export_node(mvir.node(node_id), args.path)
+
+def do_import(args, cfg):
+    mvir = MVIR(cfg.mvir_storage_dir, '.')
+    node = import_node(mvir, args.path)
+    if args.tag is not None:
+        mvir.set_tag(args.tag, node.node_id(), 'import')
+    print(node.node_id())
+
 def get_src_paths(cfg):
     files = set(f
         for g in cfg.src_globs
@@ -839,6 +865,10 @@ def main():
         do_tag(args, cfg)
     elif args.cmd == 'show':
         do_show(args, cfg)
+    elif args.cmd == 'export':
+        do_export(args, cfg)
+    elif args.cmd == 'import':
+        do_import(args, cfg)
     elif args.cmd == 'index':
         do_index(args, cfg)
     elif args.cmd == 'commit':

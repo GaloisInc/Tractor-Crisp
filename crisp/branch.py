@@ -119,6 +119,7 @@ class BranchState:
         self._n = n
 
         self.c_code = self.mvir.node(n.c_code)
+        self.orig_code = self.mvir.node(n.orig_code)
         self.code = self.mvir.node(n.code)
         self.plans = copy.deepcopy(n.plans)
         self.failed_plans = copy.deepcopy(n.failed_plans)
@@ -130,6 +131,7 @@ class BranchState:
         return BranchStateNode.new(
             self.mvir,
             c_code = self.c_code.node_id(),
+            orig_code = self.orig_code.node_id(),
             code = self.code.node_id(),
             plans = self.plans,
             failed_plans = self.failed_plans,
@@ -140,6 +142,9 @@ class BranchState:
         n = BranchStateNode.new(
             w.mvir,
             c_code = n_c_code.node_id(),
+            # When creating a new branch, set the original (just transpiled)
+            # code equal to the initial state.
+            orig_code = n_code.node_id(),
             code = n_code.node_id(),
             plans = [],
             failed_plans = [],
@@ -157,7 +162,7 @@ class BranchState:
     def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
         self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
-            target_goal = target)
+            target_goal = target, n_orig_code = self.orig_code)
         return meta
 
     @step
@@ -175,7 +180,7 @@ class BranchState:
         if op_test.exit_code != 0:
             raise CrispError("new code failed the tests", op_test)
 
-        op_diff_test = self._w.compare_observation_tests_op(old_code, self.code, self.c_code)
+        op_diff_test = self._w.compare_observation_tests_op(self.orig_code, self.code, self.c_code)
         if op_diff_test.exit_code != 0:
             raise CrispError("new code failed the diff tests", op_diff_test)
 

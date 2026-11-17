@@ -1196,6 +1196,8 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        # Reference for observation tests; may precede earlier refactorings.
+        n_orig_code: TreeNode | None = None,
     ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1253,7 +1255,7 @@ class Workflow:
                     traceback.print_exc()
                     return mk_response(f'{type(e).__name__}: {e}', status = 500)
                 try:
-                    op2 = self.compare_observation_tests_op(n_code, code, n_test_code)
+                    op2 = self.compare_observation_tests_op(n_orig_code, code, n_test_code)
                 except Exception as e:
                     traceback.print_exc()
                     return mk_response(f'{type(e).__name__}: {e}', status = 500)

@@ -992,13 +992,16 @@ class BranchStateNode(Node):
     Snapshot of translation state.  This includes the current Rust code and
     also metadata such as refactoring plans.
     """
-    KIND = 'branch_state'
+    KIND = 'branch_state_v2'
     c_code: Metadata[NodeId]
+    # Initial Rust code used as the reference for observation tests.
+    orig_code: Metadata[NodeId]
     code: Metadata[NodeId]
     plans: Metadata[list[StepPlan]]
     failed_plans: Metadata[list[StepPlan]]
 
     c_code = property(lambda self: self._metadata['c_code'])
+    orig_code = property(lambda self: self._metadata['orig_code'])
     code = property(lambda self: self._metadata['code'])
     plans = property(lambda self: self._metadata['plans'])
     failed_plans = property(lambda self: self._metadata['failed_plans'])
@@ -1085,6 +1088,13 @@ def migration(old_kind: str):
         NODE_MIGRATION_MAP[old_kind] = f
         return f
     return decorate
+
+@migration('branch_state')
+def migrate_branch_state(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'branch_state_v2'
+    # Older snapshots didn't record the original Rust code.  Use their
+    # current code as the reference for subsequent refactoring steps.
+    metadata['orig_code'] = metadata['code']
 
 @migration('compile_commands_op')
 def migrate_compile_commands_op(mvir: MVIR, metadata: dict[str, Any]):

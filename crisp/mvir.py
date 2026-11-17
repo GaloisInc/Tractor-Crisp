@@ -107,6 +107,7 @@ def check_type(ty, x):
                 return
             except (TypeError, AssertionError):
                 pass
+        raise TypeError('expected %r, but got %r: %r' % (ty, type(x), x))
     else:
         check_func = getattr(ty, 'check_type', None)
         if check_func is not None:

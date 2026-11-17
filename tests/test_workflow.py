@@ -2,12 +2,59 @@ import contextlib
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from fastapi import FastAPI
+
+from crisp.config import Config, TranspileConfig
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
     FFI_SEEN_FINDINGS_CAP, Workflow, merge_ffi_finding_titles,
     upgrade_toolchain_rust_src,
 )
+
+
+class AgentObservationReferenceTest(unittest.TestCase):
+    def test_test_endpoint_uses_original_reference_and_defaults_to_input_code(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+
+            def tree(body):
+                return TreeNode.new(mvir, files={
+                    'rust/lib.rs': FileNode.new(mvir, body).node_id()})
+
+            original, current, candidate = map(tree, ('original', 'current', 'candidate'))
+            c_code = TreeNode.new(mvir, files={})
+            cfg = Config(config_path='crisp.toml', project_name='example', src_globs=[],
+                test_command='true', transpile=TranspileConfig(
+                    config_path='crisp.toml', output_dir='rust', artifacts=[]))
+            w = Workflow(cfg, mvir)
+            op = SimpleNamespace(passed=True, body=lambda: b'passed\n')
+
+            def rewrite(*args, **kwargs):
+                app = FastAPI()
+                asb = SimpleNamespace(get_output=lambda name: candidate)
+                kwargs['http_build_app'](asb, app)
+                route = next(r for r in app.routes if r.path == '/crisp/run_tests')
+                response = route.endpoint()
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b'Part 1', response.body)
+                self.assertIn(b'Part 2', response.body)
+                return candidate, None
+
+            for reference in (original, None):
+                with self.subTest(explicit_reference=reference is not None), \
+                        patch('crisp.workflow.agent.run_rewrite', side_effect=rewrite), \
+                        patch.object(w, 'find_unsafe2_json', return_value=c_code) as unsafe, \
+                        patch.object(w, 'test_op', return_value=op) as test, \
+                        patch.object(w, 'compare_observation_tests_op', return_value=op) as compare, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    w.agent_safety(current, c_code, None, n_orig_code=reference)
+                    compare.assert_called_once_with(
+                        original if reference is not None else current, candidate, c_code)
+                    test.assert_called_once_with(candidate, c_code)
+                    unsafe.assert_called_once_with(current)
 
 
 # Finding lines as rendered by `codex exec review` (from a real zlib run).

@@ -8,12 +8,12 @@ from crisp.error import CrispError
 class CodexAgentProfilesTest(unittest.TestCase):
     def test_planning_profiles_use_current_codex_schema(self):
         expected_models = {
-            'ffi_abi_analyst': ('gpt-6.1-sol', 'high'),
-            'ownership_analyst': ('gpt-6.1-sol', 'xhigh'),
-            'collections_analyst': ('gpt-6.1-sol', 'high'),
-            'strings_analyst': ('gpt-6.1-sol', 'medium'),
-            'libc_analyst': ('gpt-6.1-sol', 'medium'),
-            'macro_analyst': ('gpt-6.1-sol', 'medium'),
+            'ffi_abi_analyst': ('gpt-6.2-sol', 'high'),
+            'ownership_analyst': ('gpt-6.2-sol', 'xhigh'),
+            'collections_analyst': ('gpt-6.2-sol', 'high'),
+            'strings_analyst': ('gpt-6.2-sol', 'medium'),
+            'libc_analyst': ('gpt-6.2-sol', 'medium'),
+            'macro_analyst': ('gpt-6.2-sol', 'medium'),
         }
         profiles = {
             path.stem: tomllib.loads(path.read_text())

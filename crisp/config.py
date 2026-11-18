@@ -40,8 +40,8 @@ class ConfigBase:
 
 @dataclass(frozen = True)
 class ModelsConfig(ConfigBase):
-    agent_plan: str = "gpt-6-astra"
-    agent_loop: str = "gpt-6.1-sol"
+    agent_plan: str = "gpt-6.2-astra"
+    agent_loop: str = "gpt-6.2-sol"
     # Model for the FFI review of safety steps.
     agent_review: str = "gpt-6.1-terra"
     postprocess: str = "gpt-6-luna"

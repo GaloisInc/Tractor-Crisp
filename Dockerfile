@@ -81,6 +81,7 @@ RUN cd /opt/hayroll \
     && mv cpp2c dependencies/Maki/build/bin/
 
 COPY deps/hayroll/ /opt/hayroll/
+# filetime 0.2.30 uses fs_set_times, which is unstable on the pinned Rust nightly.
 RUN cd /opt/hayroll \
     && cargo update -p filetime --precise 0.2.29 \
     && cargo-docker-clean.sh ./build.bash --release \

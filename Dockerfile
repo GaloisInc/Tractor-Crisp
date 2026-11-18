@@ -82,6 +82,7 @@ RUN cd /opt/hayroll \
 
 COPY deps/hayroll/ /opt/hayroll/
 RUN cd /opt/hayroll \
+    && cargo update -p filetime --precise 0.2.29 \
     && cargo-docker-clean.sh ./build.bash --release \
     && ln -f build/hayroll . \
     && ln -f build/release/reaper . \

@@ -2077,6 +2077,7 @@ dependencies = [
  "rust_analyzer_ext",
  "rust_util",
  "syn",
+ "tempfile",
 ]
 
 [[package]]

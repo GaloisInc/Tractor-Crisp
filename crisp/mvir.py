@@ -713,6 +713,66 @@ class TestResultNode(Node):
     def passed(self):
         return self.exit_code == 0
 
+class CompileTestsAnalysisNode(Node):
+    KIND = 'compile_tests_analysis'
+    c_code: Metadata[NodeId]
+    test_code: Metadata[Optional[NodeId]]
+    rust_code: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    exit_code: Metadata[int]
+    test_binaries: Metadata[Optional[NodeId]]
+    # `body` stores the build logs.
+
+    c_code = property(lambda self: self._metadata['c_code'])
+    test_code = property(lambda self: self._metadata['test_code'])
+    rust_code = property(lambda self: self._metadata['rust_code'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    test_binaries = property(lambda self: self._metadata['test_binaries'])
+
+
+class RunObservationTestsAnalysisNode(Node):
+    KIND = 'run_observation_tests_analysis'
+    rust_code: Metadata[NodeId]
+    test_code: Metadata[Optional[NodeId]]
+    test_binaries: Metadata[NodeId]
+    cmd: Metadata[list[str]]
+    trial: Metadata[int]
+    exit_code: Metadata[int]
+    outputs: Metadata[Optional[NodeId]]
+    # `body` stores the logs. outputs contains results.json and raw streams,
+    # including partial observations if execution hits a limit.
+
+    rust_code = property(lambda self: self._metadata['rust_code'])
+    test_code = property(lambda self: self._metadata['test_code'])
+    test_binaries = property(lambda self: self._metadata['test_binaries'])
+    cmd = property(lambda self: self._metadata['cmd'])
+    trial = property(lambda self: self._metadata['trial'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    outputs = property(lambda self: self._metadata['outputs'])
+
+
+class CompareObservationTestsAnalysisNode(Node):
+    KIND = 'compare_observation_tests_analysis'
+    c_code: Metadata[NodeId]
+    old_code: Metadata[NodeId]
+    new_code: Metadata[NodeId]
+    compile_op: Metadata[Optional[NodeId]]
+    old_run: Metadata[Optional[NodeId]]
+    new_run: Metadata[Optional[NodeId]]
+    exit_code: Metadata[int]
+    # `body` stores feedback: an output diff, failure logs, or a success message.
+
+    old_code = property(lambda self: self._metadata['old_code'])
+    new_code = property(lambda self: self._metadata['new_code'])
+    c_code = property(lambda self: self._metadata['c_code'])
+    compile_op = property(lambda self: self._metadata['compile_op'])
+    old_run = property(lambda self: self._metadata['old_run'])
+    new_run = property(lambda self: self._metadata['new_run'])
+    exit_code = property(lambda self: self._metadata['exit_code'])
+    passed = property(lambda self: self.exit_code == 0)
+
+
 class CargoCheckJsonAnalysisNode(Node):
     KIND = 'cargo_check_json_analysis_node'
     code: Metadata[NodeId]
@@ -933,13 +993,16 @@ class BranchStateNode(Node):
     Snapshot of translation state.  This includes the current Rust code and
     also metadata such as refactoring plans.
     """
-    KIND = 'branch_state'
+    KIND = 'branch_state_v2'
     c_code: Metadata[NodeId]
+    # Initial Rust code used as the reference for observation tests.
+    orig_code: Metadata[NodeId]
     code: Metadata[NodeId]
     plans: Metadata[list[StepPlan]]
     failed_plans: Metadata[list[StepPlan]]
 
     c_code = property(lambda self: self._metadata['c_code'])
+    orig_code = property(lambda self: self._metadata['orig_code'])
     code = property(lambda self: self._metadata['code'])
     plans = property(lambda self: self._metadata['plans'])
     failed_plans = property(lambda self: self._metadata['failed_plans'])
@@ -979,6 +1042,9 @@ NODE_CLASSES = [
     LlmOpNode,
     CodexAgentOpNode,
     TestResultNode,
+    CompileTestsAnalysisNode,
+    RunObservationTestsAnalysisNode,
+    CompareObservationTestsAnalysisNode,
     CargoCheckJsonAnalysisNode,
     InlineErrorsOpNode,
     FindUnsafeAnalysisNode,
@@ -1023,6 +1089,13 @@ def migration(old_kind: str):
         NODE_MIGRATION_MAP[old_kind] = f
         return f
     return decorate
+
+@migration('branch_state')
+def migrate_branch_state(mvir: MVIR, metadata: dict[str, Any]):
+    metadata['kind'] = 'branch_state_v2'
+    # Older snapshots didn't record the original Rust code.  Use their
+    # current code as the reference for subsequent refactoring steps.
+    metadata['orig_code'] = metadata['code']
 
 @migration('compile_commands_op')
 def migrate_compile_commands_op(mvir: MVIR, metadata: dict[str, Any]):

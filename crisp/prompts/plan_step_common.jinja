@@ -1,5 +1,5 @@
 {#
-We have several prompts related to goal-based step bplanning, which involve
+We have several prompts related to goal-based step planning, which involve
 reading and/or writing various step plans.  To avoid repetition between these
 prompt templates, we define the common pieces here and mostly assemble each
 prompt from parts.
@@ -198,7 +198,7 @@ The `crisp_submit_step_plan.sh` script runs the following checks and reports an 
 
 - A goal's `files`, `functions`, and/or `types` filters match no items.
 - None of the items matched by a goal's filters had the requested key.
-- A goal's `max_value` has already been achieved.
+- A goal's `max_count` has already been achieved.
 
 If the script reports an error, you must edit your `STEPS.json` to correct the error and then resubmit.  Don't stop until you've gotten a successful result from the script.
 

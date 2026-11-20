@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime
 import functools
 
@@ -108,8 +109,8 @@ class BranchState:
 
         self.c_code = self.mvir.node(n.c_code)
         self.code = self.mvir.node(n.code)
-        self.plans = n.plans
-        self.failed_plans = n.failed_plans
+        self.plans = copy.deepcopy(n.plans)
+        self.failed_plans = copy.deepcopy(n.failed_plans)
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
         assert n.node_id() == self._snapshot().node_id()

@@ -66,7 +66,7 @@ class StepGoal:
     functions: str | list[str] | None = None
     types: str | list[str] | None = None
 
-    def validate(self, ec: ValidateErrorCollector) -> bool:
+    def validate(self, ec: ValidateErrorCollector):
         if self.max_count < 0:
             ec.err_msg('negative max_count')
 

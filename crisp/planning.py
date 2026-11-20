@@ -77,21 +77,34 @@ class StepGoal:
                 except (TypeError, re.PatternError) as e:
                     ec.err(e)
 
+        if self.functions is not None and self.types is not None:
+            ec.err_msg("can't set both `functions` filter and `types` filter on the same goal")
+
     def _iter_matching_items(self, unsafe_json: list[dict]):
         files_filter = _compile_filter(self.files)
 
-        for j in unsafe_json:
-            for fn_name, j_fn in _iter_filter(self.functions, j['fns']):
-                if j_fn['ffi_symbol'] is not None:
-                    continue
-                if not files_filter(j_fn['filename']):
-                    continue
-                yield 'fn', fn_name, j_fn
+        assert self.functions is not None and self.types is not None
+        if self.functions is not None:
+            emit = 'functions'
+        elif self.types is not None:
+            emit = 'types'
+        else:
+            emit = 'all'
 
-            for ty_name, j_ty in _iter_filter(self.types, j['types']):
-                if not files_filter(j_ty['filename']):
-                    continue
-                yield 'ty', ty_name, j_ty
+        for j in unsafe_json:
+            if emit in ('functions', 'all'):
+                for fn_name, j_fn in _iter_filter(self.functions, j['fns']):
+                    if j_fn['ffi_symbol'] is not None:
+                        continue
+                    if not files_filter(j_fn['filename']):
+                        continue
+                    yield 'fn', fn_name, j_fn
+
+            if emit in ('types', 'all'):
+                for ty_name, j_ty in _iter_filter(self.types, j['types']):
+                    if not files_filter(j_ty['filename']):
+                        continue
+                    yield 'ty', ty_name, j_ty
 
     def _iter_matching_items_with_cost(self, unsafe_json: list[dict]):
         if isinstance(self.key, str):

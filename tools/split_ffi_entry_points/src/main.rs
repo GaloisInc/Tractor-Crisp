@@ -1,15 +1,15 @@
 use clap::Parser;
 use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
-use ra_ap_hir::Semantics;
+use ra_ap_hir::{Function, ModuleDef, PathResolution, Semantics};
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_load_cargo::{self, LoadCargoConfig, ProcMacroServerChoice};
 use ra_ap_project_model::CargoConfig;
-use ra_ap_syntax::SyntaxNode;
+use ra_ap_syntax::{AstNode, SyntaxNode, TextRange, algo, ast};
 use ra_ap_vfs::Vfs;
 use rust_analyzer_ext::crates;
 use rust_util::rewrite::{FlatTokens, OutputBuffer, TokenIndex, render_output};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::iter;
 use std::mem;
@@ -51,13 +51,89 @@ impl<F: FnMut(&mut syn::Item) -> Option<syn::Item>> VisitMut for AddDerivedItemV
     }
 }
 
-fn add_ffi_wrapper(
-    args: &Args,
-    _db: &RootDatabase,
-    _sema: &Semantics<RootDatabase>,
-    _root: SyntaxNode,
-    item: &mut syn::Item,
-) -> Option<syn::Item> {
+/// Find paths that take a function's address, keyed by the range of their last segment.
+///
+/// Functions whose paths can't be renamed to the wrapper are added to `keep_unsplit`.
+fn collect_function_values(
+    db: &RootDatabase,
+    sema: &Semantics<RootDatabase>,
+    root: &SyntaxNode,
+    keep_unsplit: &mut HashSet<Function>,
+) -> HashMap<TextRange, Function> {
+    let mut values = HashMap::new();
+    for expr in root.descendants().filter_map(ast::PathExpr::cast) {
+        let direct_call = expr
+            .syntax()
+            .parent()
+            .and_then(ast::CallExpr::cast)
+            .and_then(|call| call.expr())
+            .is_some_and(|callee| callee.syntax() == expr.syntax());
+        if direct_call {
+            continue;
+        }
+        let Some(path) = expr.path() else { continue };
+        let Some(PathResolution::Def(ModuleDef::Function(f))) = sema.resolve_path(&path) else {
+            continue;
+        };
+        // `{name}_ffi` resolves only where `name` reaches `f` through its defining module.
+        let module = match path.qualifier() {
+            Some(q) => match sema.resolve_path(&q) {
+                Some(PathResolution::Def(ModuleDef::Module(m))) => Some(m),
+                _ => None,
+            },
+            None => sema
+                .scope(expr.syntax())
+                .map(|s| s.module().nearest_non_block_module(db)),
+        };
+        match path.segment().and_then(|s| s.name_ref()) {
+            Some(name) if name.text() == f.name(db).as_str() && module == Some(f.module(db)) => {
+                values.insert(name.syntax().text_range(), f);
+            }
+            _ => {
+                keep_unsplit.insert(f);
+            }
+        }
+    }
+    values
+}
+
+/// Point paths that take a split function's address at its wrapper, the exported symbol.
+///
+/// Keeps one address per function: optimized builds may copy the unexported inner function into
+/// each codegen unit.
+struct RedirectToWrapper<'a> {
+    values: &'a HashMap<TextRange, Function>,
+    split: &'a HashSet<Function>,
+}
+
+impl VisitMut for RedirectToWrapper<'_> {
+    fn visit_expr_path_mut(&mut self, e: &mut syn::ExprPath) {
+        if let Some(seg) = e.path.segments.last_mut()
+            && self
+                .values
+                .get(&ident_range(&seg.ident))
+                .is_some_and(|f| self.split.contains(f))
+        {
+            seg.ident = wrapper_ident(&seg.ident);
+        }
+        visit_mut::visit_expr_path_mut(self, e);
+    }
+}
+
+fn wrapper_ident(name: &syn::Ident) -> syn::Ident {
+    syn::Ident::new(&format!("{name}_ffi"), Span::call_site())
+}
+
+/// The rust-analyzer range of a syn ident; both parse the same file text.
+fn ident_range(ident: &syn::Ident) -> TextRange {
+    let bytes = ident.span().byte_range();
+    TextRange::new(
+        bytes.start.try_into().unwrap(),
+        bytes.end.try_into().unwrap(),
+    )
+}
+
+fn add_ffi_wrapper(args: &Args, item: &mut syn::Item) -> Option<syn::Item> {
     let fn_item = match *item {
         syn::Item::Fn(ref mut x) => x,
         _ => return None,
@@ -73,23 +149,6 @@ fn add_ffi_wrapper(
     if fn_item.sig.variadic.is_some() {
         return None;
     }
-
-    // Example of gathering semantic information from rust-analyzer:
-    /*
-    let range = span_to_text_range(fn_item.span());
-    let cover = root.covering_element(range);
-    // If this assert fails, we might need to look for a `FN` ancestor of `cover` instead.
-    debug_assert_eq!(cover.kind(), SyntaxKind::FN);
-    let cover = cover.into_node().unwrap();
-    let f_ast = ast::Fn::cast(cover).unwrap();
-    eprintln!("f_ast = {f_ast:?}");
-
-    let f = sema.to_fn_def(&f_ast).unwrap();
-    eprintln!("f = {f:?}");
-
-    let attrs = f.attrs(db);
-    // etc...
-    */
 
     // Walk over the attributes of `fn_item`, sorting them into attrs that should remain on the
     // inner function and ones that should be moved or copied onto the newly-generated wrapper.
@@ -132,7 +191,6 @@ fn add_ffi_wrapper(
         return None;
     }
 
-    let wrapper_name = format!("{fn_name}_ffi");
     let mut fn_wrapper = syn::ItemFn {
         attrs: wrapper_attrs,
         vis: fn_item.vis.clone(),
@@ -142,7 +200,7 @@ fn add_ffi_wrapper(
             stmts: Vec::new(),
         }),
     };
-    fn_wrapper.sig.ident = syn::Ident::new(&wrapper_name, Span::call_site());
+    fn_wrapper.sig.ident = wrapper_ident(&fn_item.sig.ident);
 
     let mut arg_exprs = Vec::new();
     for (i, arg) in fn_wrapper.sig.inputs.iter_mut().enumerate() {
@@ -197,15 +255,6 @@ fn add_ffi_wrapper(
 
     Some(fn_wrapper.into())
 }
-
-/*
-fn span_to_text_range(span: Span) -> TextRange {
-    let span_range = span.byte_range();
-    let lo = TextSize::try_from(span_range.start).unwrap();
-    let hi = TextSize::try_from(span_range.end).unwrap();
-    TextRange::new(lo, hi)
-}
-*/
 
 // Helpers for dealing with nested meta items in attrs, like `#[unsafe(no_mangle)]`
 
@@ -411,42 +460,71 @@ fn main_impl(
     let mut files_seen = HashSet::new();
     for &krate in &crates {
         for m in krate.modules(db) {
-            let src = m.definition_source(db);
-            let node = src.value.node();
             if let Some(editioned_file_id) = m.as_source_file_id(db) {
-                sema.parse(editioned_file_id);
                 let file_id = editioned_file_id.file_id(db);
                 let vfs_path = vfs.file_path(file_id);
-                if let Some(path) = vfs_path.as_path() {
-                    if files_seen.insert(path) {
-                        files.push((path.to_path_buf(), node));
-                    }
+                let Some(path) = vfs_path.as_path() else {
+                    continue;
+                };
+                // Only rewrite files that are inside the provided cargo dir.  If our strategy for
+                // finding the project crates is wrong, this will keep us from overwriting files
+                // unexpectedly.
+                let mut ancestors = iter::successors(Some(path), |p| p.parent());
+                if !ancestors.any(|a| a == cargo_dir_path) {
+                    log::debug!("skip {path:?}: outside cargo dir {cargo_dir_path:?}");
+                    continue;
+                }
+                if files_seen.insert(path) {
+                    files.push((path.to_path_buf(), sema.parse(editioned_file_id)));
                 }
             }
         }
     }
 
-    for (path, root) in files {
-        // Only rewrite files that are inside the provided cargo dir.  If our strategy for finding
-        // the project crates is wrong, this will keep us from overwriting files unexpectedly.
-        let mut ancestors = iter::successors(Some(path.as_path()), |p| p.parent());
-        if !ancestors.any(|a| a == cargo_dir_path) {
-            log::debug!("skip {path:?}: outside cargo dir {cargo_dir_path:?}");
-            continue;
-        }
+    let mut keep_unsplit = HashSet::new();
+    let values = files
+        .iter()
+        .map(|(_, file)| collect_function_values(db, &sema, file.syntax(), &mut keep_unsplit))
+        .collect::<Vec<_>>();
 
+    // Add all wrappers before redirecting paths, which may point into other files.
+    let mut split = HashSet::new();
+    let mut rewritten = Vec::new();
+    for ((path, root), values) in files.into_iter().zip(values) {
         let code = fs::read_to_string(&path).unwrap();
-
         let ts = TokenStream::from_str(&code).unwrap();
-        let orig_tokens = FlatTokens::new(ts.clone()).collect::<Vec<_>>();
-        let ti = TokenIndex::new(&orig_tokens);
-
         let mut ast: syn::File = syn::parse2(ts.clone()).unwrap();
         let mut v = AddDerivedItemVisitor(|i: &mut syn::Item| -> Option<syn::Item> {
-            add_ffi_wrapper(args, db, &sema, root.clone(), i)
+            let f = match *i {
+                syn::Item::Fn(ref f) => {
+                    algo::find_node_at_range::<ast::Fn>(root.syntax(), ident_range(&f.sig.ident))
+                        .and_then(|f| sema.to_fn_def(&f))
+                }
+                _ => None,
+            };
+            // Splitting would leave a path we can't redirect on the inner function's address.
+            if f.is_some_and(|f| keep_unsplit.contains(&f)) {
+                return None;
+            }
+            let wrapper = add_ffi_wrapper(args, i);
+            if let (Some(f), Some(_)) = (f, &wrapper) {
+                split.insert(f);
+            }
+            wrapper
         });
         v.visit_file_mut(&mut ast);
+        rewritten.push((path, code, ts, ast, values));
+    }
 
+    for (path, code, ts, mut ast, values) in rewritten {
+        RedirectToWrapper {
+            values: &values,
+            split: &split,
+        }
+        .visit_file_mut(&mut ast);
+
+        let orig_tokens = FlatTokens::new(ts).collect::<Vec<_>>();
+        let ti = TokenIndex::new(&orig_tokens);
         let new_ts = ast.into_token_stream();
 
         let mut buf = OutputBuffer::new();
@@ -460,7 +538,6 @@ fn main_impl(
 #[cfg(test)]
 mod test {
     use super::*;
-    use ra_ap_syntax::{Edition, SourceFile};
 
     /// Run `add_ffi_wrapper` on the single item in `src`.  Returns the item and its wrapper, if
     /// one was generated, as strings.
@@ -469,11 +546,8 @@ mod test {
             cargo_dir_path: PathBuf::new(),
             add_unsafe_blocks: false,
         };
-        let db = RootDatabase::new(None);
-        let sema = Semantics::new(&db);
-        let root = SourceFile::parse(src, Edition::CURRENT).syntax_node();
         let mut item: syn::Item = syn::parse_str(src).unwrap();
-        let wrapper = add_ffi_wrapper(&args, &db, &sema, root, &mut item);
+        let wrapper = add_ffi_wrapper(&args, &mut item);
         let show = |item: syn::Item| item.into_token_stream().to_string();
         (show(item), wrapper.map(show))
     }

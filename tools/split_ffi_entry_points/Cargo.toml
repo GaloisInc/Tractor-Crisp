@@ -21,3 +21,6 @@ ra_ap_load-cargo.workspace = true
 ra_ap_project_model.workspace = true
 ra_ap_syntax.workspace = true
 ra_ap_vfs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

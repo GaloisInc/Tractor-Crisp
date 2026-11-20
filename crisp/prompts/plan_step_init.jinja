@@ -23,7 +23,7 @@ Use the following read-only custom sub-agents, one per independent analysis lens
 - `macro_analyst`: oversized or repetitive translated functions caused by C macro expansion.
 
 Spawn exactly one fresh instance of each named agent with `fork_turns="none"`.  Each agent already carries its lens instructions and the shared constraints (`.codex/safety_constraints.md`); keep spawn messages short, containing only the run-specific facts:
-- the Rust project path: `{cargo_dir_path}`;
+- the Rust project path: `{{ cargo_dir_path }}`;
 - the location of the unsafe-code inventory: the concrete directory path from `$FIND_UNSAFE2_JSON_DIR`; and
 - whether the original C sources are present in the workspace, and where.
 

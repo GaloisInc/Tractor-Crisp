@@ -204,6 +204,9 @@ class StepPlan:
         }
         seen = set()
         for goal in self.goals:
+            if goal.count_excess(unsafe_json) == 0:
+                continue
+
             for kind, name, val in goal._iter_matching_nonzero_items(unsafe_json):
                 filename = val['filename']
                 key = (kind, name, filename)

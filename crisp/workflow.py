@@ -1535,6 +1535,11 @@ class Workflow:
                             except KeyError as e:
                                 ec.err(e)
                                 goals_ok = False
+                            # If `goal.validate` fails, the goal JSON can
+                            # still be parsed (so we don't set `goals_ok` to
+                            # false, and go ahead with parsing `j_plan`), but
+                            # it has some other issues that should be reported.
+                            goal.validate(ec)
                     if goals_ok:
                         plans.append(StepPlan.from_cbor(j_plan))
                     else:

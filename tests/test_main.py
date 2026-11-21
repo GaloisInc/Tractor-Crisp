@@ -27,9 +27,9 @@ class PlanRecoveryTest(unittest.TestCase):
                 'SAFETY_PLAN.md': FileNode.new(mvir, 'revised plan').node_id()})
             session = FileNode.new(mvir, '').node_id()
 
-            def record(inputs, outputs):
+            def record(inputs, outputs, exit_code=0):
                 op = CodexAgentOpNode.new(mvir, inputs=inputs, outputs=outputs,
-                    cmds=[], exit_code=0, raw_output_files=code.node_id(),
+                    cmds=[], exit_code=exit_code, raw_output_files=code.node_id(),
                     json_session=session, body='')
                 mvir.set_tag('op_history', op.node_id(), op.kind)
 
@@ -42,6 +42,33 @@ class PlanRecoveryTest(unittest.TestCase):
             self.assertEqual(prior_agent_plans(mvir, code).node_id(), plans.node_id())
             record({}, {'code': code.node_id(), 'plans': revised.node_id()})
             self.assertEqual(prior_agent_plans(mvir, code).node_id(), revised.node_id())
+
+    def test_plans_without_a_plan_or_from_failed_ops_are_ignored(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+            code = TreeNode.new(mvir, files={})
+            docs_only = TreeNode.new(mvir, files={
+                'crisp_docs/README.md': FileNode.new(mvir, 'docs').node_id()})
+            plans = TreeNode.new(mvir, files={
+                'SAFETY_PLAN.md': FileNode.new(mvir, 'plan').node_id(),
+                'crisp_docs/README.md': FileNode.new(mvir, 'docs').node_id()})
+            session = FileNode.new(mvir, '').node_id()
+
+            def record(outputs, exit_code):
+                op = CodexAgentOpNode.new(mvir, inputs={}, outputs=outputs,
+                    cmds=[], exit_code=exit_code, raw_output_files=code.node_id(),
+                    json_session=session, body='')
+                mvir.set_tag('op_history', op.node_id(), op.kind)
+
+            # A successful op whose planning files hold only docs (e.g. a
+            # planner that wrote nothing) has no plan to resume.
+            record({'code': code.node_id(), 'plans': docs_only.node_id()}, 0)
+            self.assertIsNone(prior_agent_plans(mvir, code))
+            # A failed op is ignored even if it produced a plan.
+            record({'code': code.node_id(), 'plans': plans.node_id()}, 1)
+            self.assertIsNone(prior_agent_plans(mvir, code))
+            record({'code': code.node_id(), 'plans': plans.node_id()}, 0)
+            self.assertEqual(prior_agent_plans(mvir, code).node_id(), plans.node_id())
 
 
 class SafetyLoopQuotaTest(unittest.TestCase):
@@ -134,6 +161,17 @@ class RemainingUnsafePromptTest(unittest.TestCase):
         self.assertIsNone(self.prompt({}))
 
 
+class ReplanArgTest(unittest.TestCase):
+    def test_replan_requires_agent_mode(self):
+        for cmd in ('main', 'safety-loop'):
+            with patch('sys.argv', ['crisp', cmd, '--replan', '--llm-mode', 'agent']):
+                self.assertTrue(parse_args().replan)
+            with patch('sys.argv', ['crisp', cmd, '--replan']), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    parse_args()
+
+
 class TimeLimitTest(unittest.TestCase):
     def test_arg(self):
         for cmd in ('main', 'safety-loop'):
@@ -147,7 +185,7 @@ class TimeLimitTest(unittest.TestCase):
                     parse_args()
 
     def test_no_step_starts_after_the_deadline(self):
-        args = SimpleNamespace(llm_mode = 'agent', time_limit = 60)
+        args = SimpleNamespace(llm_mode = 'agent', replan = False, time_limit = 60)
         w = MagicMock()
         w.count_unsafe2.return_value = 5
         w.test_op.return_value.exit_code = 0

@@ -1,7 +1,10 @@
 import contextlib
 import io
 import tempfile
+import types
 import unittest
+
+import toml
 
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.workflow import (
@@ -180,3 +183,45 @@ class PatchBuildRsTest(unittest.TestCase):
         self.assertEqual(
             new_code.files['translated_rust/src/build.rs'],
             code.files['translated_rust/src/build.rs'])
+
+
+class PatchCargoTomlWorkspaceTest(unittest.TestCase):
+    def profiles(self, paths: dict[str, str]) -> dict:
+        """
+        Run `patch_cargo_toml_workspace` on a tree with the given file contents,
+        with `translated_rust` as the workspace root.  Returns the root
+        manifest's profiles.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mvir = MVIR(tmp.name, '.')
+        cfg = types.SimpleNamespace(
+            transpile = types.SimpleNamespace(output_dir = 'translated_rust'),
+            relative_path = lambda path: path,
+        )
+        code = TreeNode.new(mvir, files = {
+            path: FileNode.new(mvir, src).node_id() for path, src in paths.items()})
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_code = Workflow(cfg, mvir).patch_cargo_toml_workspace(code)
+        root = mvir.node(new_code.files['translated_rust/Cargo.toml']).body_str()
+        return toml.loads(root)['profile']
+
+    def test_single_codegen_unit_in_root_manifest(self):
+        self.assertEqual(self.profiles({
+            'translated_rust/Cargo.toml':
+                '[package]\nname = "a"\n'
+                '[profile.dev]\nopt-level = 1\ncodegen-units = 16\n'
+                '[profile.release]\nstrip = "debuginfo"\n',
+            'translated_rust/b/Cargo.toml': '[package]\nname = "b"\n',
+        }), {
+            'dev': {'opt-level': 1, 'codegen-units': 1},
+            'release': {'strip': 'debuginfo', 'codegen-units': 1},
+        })
+
+    def test_single_codegen_unit_in_virtual_manifest(self):
+        self.assertEqual(self.profiles({
+            'translated_rust/b/Cargo.toml': '[package]\nname = "b"\n',
+        }), {
+            'dev': {'codegen-units': 1},
+            'release': {'codegen-units': 1},
+        })

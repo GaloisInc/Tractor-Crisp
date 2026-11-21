@@ -610,6 +610,9 @@ class Workflow:
                 },
             }
 
+        # With several codegen units, rustc may give a small unexported fn several addresses.
+        root_t = all_t[workspace_cargo_toml_path]
+        root_t.setdefault('profile', {}).setdefault('release', {})['codegen-units'] = 1
 
         new_files = code.files.copy()
         for path, t in all_t.items():

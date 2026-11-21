@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import re
 
@@ -112,11 +113,13 @@ def llm_repair_call_sites(
 
 def agent_safety(
     target_goal: str,
+    has_incremental_plans: bool,
     after_refactoring_instruction: str,
 ) -> str:
     """Render the agent safety prompt."""
     return jinja_env.get_template('agent_safety.jinja').render(
         target_goal = target_goal,
+        has_incremental_plans = has_incremental_plans,
         after_refactoring_instruction = after_refactoring_instruction,
     )
 
@@ -189,4 +192,51 @@ def warning_cleanup(cargo_dir_path: str) -> str:
     return jinja_env.get_template('warning_cleanup.jinja').render(
         cargo_dir_path = cargo_dir_path,
         ffi_entry_point_rules = FFI_ENTRY_POINT_RULES,
+    )
+
+
+def plan_step_init(
+    cargo_dir_path: str,
+) -> str:
+    """
+    Create the initial, top-level safety plan.
+    """
+    tmpl = jinja_env.get_template('plan_step_init.jinja')
+    return tmpl.render(
+        cargo_dir_path = cargo_dir_path,
+    )
+
+def plan_step_subdivide(
+    cargo_dir_path: str,
+    description: str,
+    goals: list[dict],
+    details: list[str],
+    relevant_code: dict,
+) -> str:
+    """
+    Subdivide one step of a safety plan into sub-steps.
+    """
+    tmpl = jinja_env.get_template('plan_step_subdivide.jinja')
+    return tmpl.render(
+        cargo_dir_path = cargo_dir_path,
+        description = description,
+        goals_json = json.dumps(goals),
+        details = details,
+        relevant_code = relevant_code,
+    )
+
+def plan_step_target(
+    description: str,
+    goals: list[dict],
+    details: list[str],
+    relevant_code: dict,
+) -> str:
+    """Target description for a `StepPlan`, with goals in CBOR/JSON form."""
+
+    tmpl = jinja_env.get_template('plan_step_target.jinja')
+    return tmpl.render(
+        description = description,
+        goals_json = json.dumps(goals),
+        details = details,
+        relevant_code = relevant_code,
     )

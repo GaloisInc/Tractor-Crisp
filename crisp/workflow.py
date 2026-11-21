@@ -1604,7 +1604,7 @@ class Workflow:
             all_items.update(j['fns'].keys())
             all_items.update(j['types'].keys())
         all_items_input = agent.Input(
-            '\n'.join(all_items) + '\n',
+            '\n'.join(sorted(all_items)) + '\n',
             path = 'ALL_ITEMS.txt',
             git_ignore = True,
         )

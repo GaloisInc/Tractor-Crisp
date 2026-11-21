@@ -1595,6 +1595,7 @@ class Workflow:
     def plan_step_common(
         self,
         n_code: TreeNode,
+        n_c_code: TreeNode,
         prompt: str,
     ) -> tuple[FileNode, list[StepPlan]]:
         cfg, mvir = self.cfg, self.mvir
@@ -1615,6 +1616,8 @@ class Workflow:
             cfg, mvir, prompt,
             inputs = {
                 'code': agent.Input(n_code),
+                # Provided so the planner can consult the original C if needed.
+                'c_code': agent.Input(n_c_code),
                 'unsafe_json': agent.Input(self.find_unsafe2_json(n_code), git_ignore = True),
                 'all_items': all_items_input,
             },
@@ -1645,6 +1648,7 @@ class Workflow:
     def plan_step_init(
         self,
         n_code: TreeNode,
+        n_c_code: TreeNode,
     ) -> tuple[FileNode, list[StepPlan]]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
@@ -1652,12 +1656,13 @@ class Workflow:
             cargo_dir_path = cargo_dir,
         )
 
-        return self.plan_step_common(n_code, prompt)
+        return self.plan_step_common(n_code, n_c_code, prompt)
 
     @step
     def plan_step_subdivide(
         self,
         n_code: TreeNode,
+        n_c_code: TreeNode,
         plan: StepPlan,
         relevant_code: dict,
     ) -> tuple[FileNode, list[StepPlan]]:
@@ -1672,5 +1677,5 @@ class Workflow:
             relevant_code = relevant_code,
         )
 
-        return self.plan_step_common(n_code, prompt)
+        return self.plan_step_common(n_code, n_c_code, prompt)
 

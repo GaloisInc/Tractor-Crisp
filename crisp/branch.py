@@ -202,7 +202,7 @@ class BranchState:
                 self.full_cycle_without_progress_fuel.give()
             self.total_unsafe_as_of_last_full_replan = total
 
-            detail, plans = self._w.plan_step_init(self.code)
+            detail, plans = self._w.plan_step_init(self.code, self.c_code)
             for plan in plans:
                 plan.details = [detail.node_id()]
             self.plans = plans
@@ -253,7 +253,7 @@ class BranchState:
 
             # Subdivide the plan at the head of the list.
             detail, subplans = self._w.plan_step_subdivide(
-                self.code, p,
+                self.code, self.c_code, p,
                 relevant_code = p.relevant_code(unsafe_json),
             )
 

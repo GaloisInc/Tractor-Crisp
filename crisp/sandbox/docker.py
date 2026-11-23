@@ -43,18 +43,16 @@ class WorkContainer:
 
     def start(self):
         self.container = self.client.containers.run(
-            # `sleep` is PID 1; its duration caps the lifetime of the container.
             self.image,
-            ('sleep', '1800'),
+            ('sleep', 'inf'),
             detach=True,
-            remove=True,
             extra_hosts={"host.docker.internal": "host-gateway"},
         )
 
     def stop(self):
         if self.container is not None:
             self.container.stop(timeout=1)
-            #self.container.remove(v=True)
+            self.container.remove(v=True)
 
     def end_commands(self):
         """
@@ -156,10 +154,21 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
+    def run(
+        self,
+        cmd,
+        shell=False,
+        stream=False,
+        cwd: str = ".",
+        env={},
+        timeout=1800,
+    ) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
+        assert isinstance(cmd, (list, tuple))
+
+        cmd = ('timeout', '--kill-after=1', str(timeout), *cmd)
 
         print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
 

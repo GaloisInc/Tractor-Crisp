@@ -536,7 +536,7 @@ def run_rewrite(
             'code': lambda p: p not in extra_code_files
                 and (p in input_code.files or p.endswith('.rs')),
             'plans': lambda p: p not in extra_code_files
-                and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md'),
+                and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md', 'BLOCKERS.md'),
         },
         cwd = cwd,
         clean_cmds = clean_cmds,

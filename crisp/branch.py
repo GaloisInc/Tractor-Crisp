@@ -1,6 +1,7 @@
 import copy
 from datetime import datetime
 import functools
+from pathlib import Path
 
 from .error import CrispError
 from .mvir import TreeNode, BranchStateNode, BranchStepNode
@@ -104,6 +105,16 @@ class BranchState:
 
         self.total_unsafe_as_of_last_full_replan = None
 
+        # Hack: since `@step` methods can't return values, and since
+        # `agent_safety` in particular may throw an exception, stash the `meta`
+        # result from the last `agent_safety_unchecked` call here.  This lets
+        # the main loop check for `BLOCKERS.md` regardless of whether the
+        # `agent_safety` step succeeds or fails.
+        #
+        # TODO: redesign BranchState to be more flexible, maybe with Rust-style
+        # `Result` types to let functions return data alognside success/fail.
+        self.last_agent_safety_meta = None
+
     def _reset(self, n: BranchStateNode):
         self._n = n
 
@@ -143,16 +154,19 @@ class BranchState:
 
 
     @step
-    def agent_safety_unchecked(self, target):
+    def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
-        self.code, _ = self._w.agent_safety(self.code, self.c_code, None,
+        self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
             target_goal = target)
+        return meta
 
     @step
     def agent_safety(self, target):
         old_code = self.code
 
-        self.agent_safety_unchecked(target)
+        meta = self.agent_safety_unchecked(target)
+
+        self.last_agent_safety_meta = meta
 
         if self.code is None:
             raise CrispError("agent failed to produce any code")
@@ -307,19 +321,7 @@ class BranchState:
                 if self.per_target_fuel.is_empty():
                     # Out of fuel - need to switch plans.
                     print(f'planning: too many failed rewrite attempts: {p.description!r}')
-                    self.failed_plans.append(p)
-                    del self.plans[0]
-
-                    if not self.failed_plan_bucket.drain():
-                        print('planning: too many failed plans; resetting')
-                        self.plans = []
-                        self.failed_plans = []
-                        self.failed_plan_bucket.reset()
-                        # Fall through to `update_plans`, which will generate a
-                        # new top-level plan.
-
-                        # TODO: pass info about past failures to the new
-                        # planning step, to avoid repeating mistakes
+                    self.plan_failed()
 
                     # Rerun update, in case we need to subdivide the next
                     # available plan.
@@ -348,6 +350,25 @@ class BranchState:
         # unsafety.
         return AgentTargetOther()
 
+    def plan_failed(self):
+        if len(self.plans) == 0:
+            return
+
+        p = self.plans[0]
+        self.failed_plans.append(p)
+        del self.plans[0]
+
+        if not self.failed_plan_bucket.drain():
+            print('planning: too many failed plans; resetting')
+            self.plans = []
+            self.failed_plans = []
+            self.failed_plan_bucket.reset()
+            # Fall through to `update_plans`, which will generate a
+            # new top-level plan.
+
+            # TODO: pass info about past failures to the new
+            # planning step, to avoid repeating mistakes
+
     @step
     def safety_loop(self):
         consecutive_failure_fuel = FuelCounter('consecutive failures',
@@ -370,6 +391,16 @@ class BranchState:
                     # below because the failed step was reverted, leaving the
                     # unsafe count unchanged.
                     pass
+
+                if self.last_agent_safety_meta is not None:
+                    meta = self.last_agent_safety_meta
+                    self.last_agent_safety_meta = None
+                    blocker_files = [v for k,v in meta.files.items()
+                                        if Path(k).name == 'BLOCKERS.md']
+                    if len(blocker_files) > 0:
+                        print(f'planning: rewriter reported blockers')
+                        # TODO: attach `blocker_files[0]` data to current plan
+                        self.plan_failed()
 
                 self.accept()
 

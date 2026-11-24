@@ -1653,11 +1653,13 @@ class Workflow:
         self,
         n_code: TreeNode,
         n_c_code: TreeNode,
+        prev_step_blockers: list[tuple[str, str]],
     ) -> tuple[FileNode, list[StepPlan]]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
         prompt = prompts.plan_step_init(
             cargo_dir_path = cargo_dir,
+            prev_step_blockers = prev_step_blockers,
         )
 
         return self.plan_step_common(n_code, n_c_code, prompt)
@@ -1669,6 +1671,7 @@ class Workflow:
         n_c_code: TreeNode,
         plan: StepPlan,
         relevant_code: dict,
+        prev_step_blockers: list[tuple[str, str]],
     ) -> tuple[FileNode, list[StepPlan]]:
         cfg, mvir = self.cfg, self.mvir
 
@@ -1679,6 +1682,7 @@ class Workflow:
             goals = [g.to_cbor() for g in plan.goals],
             details = [mvir.node(n).body_str() for n in plan.details],
             relevant_code = relevant_code,
+            prev_step_blockers = prev_step_blockers,
         )
 
         return self.plan_step_common(n_code, n_c_code, prompt)

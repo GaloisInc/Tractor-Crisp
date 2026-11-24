@@ -64,3 +64,7 @@ Don't excessively subdivide the super-step into large numbers of sub-steps; limi
 {{ psc.output_format_steps_json }}
 
 As a special case, if there's no sensible way to subdivide the target super-step into sub-steps, indicate this by submitting an empty plan `[]` and exiting.
+
+
+{# Add "past blockers" section, if applicable #}
+{{ psc.blockers }}

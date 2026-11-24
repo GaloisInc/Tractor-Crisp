@@ -22,6 +22,9 @@ The following features have been implemented in the CRISP transpiler loop:
   wrapper and a separate implementation function that can then be made safe.
 * High-level planning.  CRISP prompts the agent to develop a high-level safety
   plan for the codebase, then has the agent implement the plan step by step.
+  A separate agent extends differential tests for each new step before
+  refactoring; rewrite attempts reuse those tests. Test generation failures
+  are logged and do not prevent refactoring.
 
 
 # Running in Docker

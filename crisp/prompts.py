@@ -240,9 +240,29 @@ def plan_step_target(
     relevant_code: dict,
 ) -> str:
     """Target description for a `StepPlan`, with goals in CBOR/JSON form."""
-
     tmpl = jinja_env.get_template('plan_step_target.jinja')
     return tmpl.render(
+        description = description,
+        goals_json = json.dumps(goals),
+        details = details,
+        relevant_code = relevant_code,
+    )
+
+def plan_step_gen_tests(
+    cargo_dir_path: str,
+    c_dir_path: str,
+    test_dir_path: str,
+    description: str,
+    goals: list[dict],
+    details: list[str],
+    relevant_code: list[dict],
+) -> str:
+    """Render the differential-test generation prompt for a step plan."""
+    tmpl = jinja_env.get_template('plan_step_target.jinja')
+    return tmpl.render(
+        cargo_dir_path = cargo_dir_path,
+        c_dir_path = c_dir_path,
+        test_dir_path = test_dir_path,
         description = description,
         goals_json = json.dumps(goals),
         details = details,

@@ -1190,6 +1190,78 @@ class Workflow:
             return n_code
         return candidate
 
+    def http_build_app_for_tests(
+        self,
+        n_orig_code: TreeNode,
+        n_test_code: TreeNode | None,
+    ):
+        """Provide the same test command to test generators and rewriters."""
+        from fastapi import Response
+
+        def build_app(asb, app):
+            @app.post('/crisp/run_tests')
+            def run_tests():
+                code = asb.get_output('code')
+                try:
+                    ops = (
+                        self.test_op(code, n_test_code),
+                        self.compare_observation_tests_op(n_orig_code, code, n_test_code),
+                    )
+                except Exception as e:
+                    traceback.print_exc()
+                    return Response(f'{type(e).__name__}: {e}',
+                        media_type = 'text/plain', status_code = 500)
+                body = b'\n\n'.join(f' === Part {i + 1} ===\n'.encode() + op.body()
+                    for i, op in enumerate(ops))
+                return Response(body, media_type = 'text/plain',
+                    status_code = 200 if all(op.passed for op in ops) else 400)
+
+        return build_app
+
+    @step
+    def agent_gen_tests(
+        self,
+        n_code: TreeNode,
+        n_c_code: TreeNode,
+        plan: StepPlan,
+        n_orig_code: TreeNode | None = None,
+    ) -> TreeNode:
+        """Extend a step's differential coverage without changing implementation code."""
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        if n_orig_code is None:
+            n_orig_code = n_code
+
+        prompt = prompts.agent_gen_tests(
+            cargo_dir_path = cargo_dir,
+            c_dir_path = '.',
+            description = plan.description,
+            goals = [g.to_cbor() for g in plan.goals],
+            details = [mvir.node(n).body_str() for n in plan.details],
+            relevant_code = plan.relevant_code(self.find_unsafe2_json_dicts(n_code)),
+        )
+        candidate, _ = agent.run_rewrite(cfg, mvir, prompt, cfg.models.agent_loop, n_code,
+            extra_code = {'c_code': n_c_code},
+            clean_cmds = [
+                ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
+            ],
+            http_build_app = self.http_build_app_for_tests(n_orig_code, n_c_code),
+        )
+        if candidate is None:
+            raise CrispError('test generator failed to produce any code')
+
+        def implementation_files(code):
+            return {p: n for p, n in code.files.items()
+                if not Path(p).is_relative_to('crisp_tests')}
+
+        if implementation_files(candidate) != implementation_files(n_code):
+            raise CrispError('test generator modified files outside crisp_tests/')
+
+        op = self.compare_observation_tests_op(n_orig_code, candidate, n_c_code)
+        if op.exit_code != 0:
+            raise CrispError('generated differential tests failed', op)
+        return candidate
+
     @step
     def agent_safety(
         self,
@@ -1210,7 +1282,9 @@ class Workflow:
         if n_orig_code is None:
             n_orig_code = n_code
 
-        if provide_test_cmd and cfg.test_command is not None:
+        has_differential_tests = any(Path(p).is_relative_to('crisp_tests/tests')
+            for p in n_code.files)
+        if provide_test_cmd and (cfg.test_command is not None or has_differential_tests):
             after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()
         else:
             after_refactoring_instruction = prompts.agent_after_refactoring_build()
@@ -1239,11 +1313,6 @@ class Workflow:
         def op_response(op):
             return mk_response(op.body(), op.passed)
 
-        def multi_op_response(ops):
-            body = b'\n\n'.join(f' === Part {i + 1} ===\n'.encode() + op.body()
-                for i, op in enumerate(ops))
-            return mk_response(body, all(op.passed for op in ops))
-
         def build_app(asb, app):
             # NB: because these are `def` rather than `async def`, they run on
             # a thread pool managed by FastAPI, rather than on the main thread.
@@ -1252,20 +1321,7 @@ class Workflow:
             # HTTP server in a background thread, and communicate back to the
             # main thread what operations to perform.
 
-            @app.post('/crisp/run_tests')
-            def run_tests():
-                code = asb.get_output('code')
-                try:
-                    op1 = self.test_op(code, n_test_code)
-                except Exception as e:
-                    traceback.print_exc()
-                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
-                try:
-                    op2 = self.compare_observation_tests_op(n_orig_code, code, n_test_code)
-                except Exception as e:
-                    traceback.print_exc()
-                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
-                return multi_op_response((op1, op2))
+            self.http_build_app_for_tests(n_orig_code, n_test_code)(asb, app)
 
             @app.post('/crisp/check_unsafe2')
             def check_unsafe2():

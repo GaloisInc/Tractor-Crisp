@@ -197,6 +197,7 @@ def warning_cleanup(cargo_dir_path: str) -> str:
 
 def plan_step_init(
     cargo_dir_path: str,
+    prev_step_blockers: list[tuple[str, str]],
 ) -> str:
     """
     Create the initial, top-level safety plan.
@@ -204,6 +205,7 @@ def plan_step_init(
     tmpl = jinja_env.get_template('plan_step_init.jinja')
     return tmpl.render(
         cargo_dir_path = cargo_dir_path,
+        prev_step_blockers = prev_step_blockers,
     )
 
 def plan_step_subdivide(
@@ -212,6 +214,7 @@ def plan_step_subdivide(
     goals: list[dict],
     details: list[str],
     relevant_code: dict,
+    prev_step_blockers: list[tuple[str, str]],
 ) -> str:
     """
     Subdivide one step of a safety plan into sub-steps.
@@ -223,6 +226,7 @@ def plan_step_subdivide(
         goals_json = json.dumps(goals),
         details = details,
         relevant_code = relevant_code,
+        prev_step_blockers = prev_step_blockers,
     )
 
 def plan_step_target(

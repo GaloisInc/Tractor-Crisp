@@ -184,6 +184,20 @@ class BranchState:
         if op_ffi_review is not None and not op_ffi_review.passed:
             raise CrispError("new code failed FFI review", op_ffi_review)
 
+    def recent_blockers(self, n = 5) -> list[tuple[str, str]]:
+        """
+        Return a list of the last `n` pairs of (step description, blockers),
+        for steps on which the rewriter reported blockers.
+        """
+        lst = []
+        for p in reversed(self.failed_plans):
+            if p.blockers is not None:
+                lst.append((p.description, self.mvir.node(p.blockers)))
+                if len(lst) >= n:
+                    break
+        lst.reverse()
+        return lst
+
     @step
     def update_plans(self):
         if len(self.plans) == 0:
@@ -216,7 +230,8 @@ class BranchState:
                 self.full_cycle_without_progress_fuel.give()
             self.total_unsafe_as_of_last_full_replan = total
 
-            detail, plans = self._w.plan_step_init(self.code, self.c_code)
+            detail, plans = self._w.plan_step_init(self.code, self.c_code,
+                prev_step_blockers = self.recent_blockers())
             for plan in plans:
                 plan.details = [detail.node_id()]
             self.plans = plans
@@ -269,6 +284,7 @@ class BranchState:
             detail, subplans = self._w.plan_step_subdivide(
                 self.code, self.c_code, p,
                 relevant_code = p.relevant_code(unsafe_json),
+                prev_step_blockers = self.recent_blockers(),
             )
 
             if len(subplans) == 0:
@@ -350,11 +366,13 @@ class BranchState:
         # unsafety.
         return AgentTargetOther()
 
-    def plan_failed(self):
+    def plan_failed(self, blockers: FileNode | None = None):
         if len(self.plans) == 0:
             return
 
         p = self.plans[0]
+        if blockers is not None:
+            p.blockers = blockers.node_id()
         self.failed_plans.append(p)
         del self.plans[0]
 
@@ -400,7 +418,7 @@ class BranchState:
                     if len(blocker_files) > 0:
                         print(f'planning: rewriter reported blockers')
                         # TODO: attach `blocker_files[0]` data to current plan
-                        self.plan_failed()
+                        self.plan_failed(blocker_files[0])
 
                 self.accept()
 

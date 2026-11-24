@@ -158,6 +158,11 @@ class BranchState:
             f'safety_loop {self.safety_tries_fuel.fuel}')
 
 
+    @step
+    def agent_gen_tests(self, plan: StepPlan):
+        self.code = self._w.agent_gen_tests(self.code, self.c_code, plan,
+            n_orig_code = self.orig_code)
+
     def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
         self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
@@ -355,6 +360,13 @@ class BranchState:
                 # Switched to a new plan, so restore fuel.
                 self.per_target_fuel.give()
                 self.failed_plan_bucket.fill()
+
+                # Generate once when switching plans. Keep these tests even
+                # if a later rewrite attempt is rolled back.
+                try:
+                    self.agent_gen_tests(p)
+                except CrispError as e:
+                    print(f'planning: test generation failed for {p.description!r}: {e}')
 
             # Proceed with plan `p`.
             print(f'planning: attempting rewrite: {p.description!r}')

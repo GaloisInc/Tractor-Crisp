@@ -92,7 +92,7 @@ class BranchStateTest(unittest.TestCase):
         self.assertEqual(br.orig_code.node_id(), self.original.node_id())
         self.assertEqual(br.code.node_id(), self.current.node_id())
 
-    def test_legacy_snapshot_resumes_with_its_current_code_as_reference(self):
+    def test_legacy_snapshot_migrates_metadata_but_cannot_resume(self):
         raw = cbor.dumps(to_cbor(dict(kind='branch_state',
             c_code=self.c_code.node_id(), code=self.current.node_id(),
             plans=[], failed_plans=[])))
@@ -101,15 +101,13 @@ class BranchStateTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
 
-        br = BranchState(self.w, self.mvir.node(node_id), self.limits)
-        self.assertEqual(br.orig_code.node_id(), self.current.node_id())
-        self.w.agent_safety.return_value = self.candidate, None
-        br.agent_safety(self.target)
-        self.w.compare_observation_tests_op.assert_called_once_with(
-            br.orig_code, self.candidate, br.c_code)
-        br.accept()
-        mvir = MVIR(self.storage, '.')
-        snapshot = mvir.node(mvir.tag('current_branch'))
+        snapshot = self.mvir.node(node_id)
         self.assertEqual(snapshot.kind, BranchStateNode.KIND)
         self.assertEqual(snapshot.orig_code, self.current.node_id())
-        self.assertEqual(snapshot.code, self.candidate.node_id())
+        self.assertEqual(snapshot.code, self.current.node_id())
+        self.assertEqual(snapshot.node_id(), node_id)
+
+        # Migration permits reading old metadata, but resuming a branch requires
+        # a snapshot written with the current schema and its corresponding hash.
+        with self.assertRaises(AssertionError):
+            BranchState(self.w, snapshot, self.limits)

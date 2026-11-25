@@ -195,11 +195,15 @@ class WorkContainer:
 
         p = ChunkPrinter()
         acc = bytearray()
-        for data in stream:
-            p.write_bytes(data)
-            p.flush()
-            p.increment()
-            acc.extend(data)
+        try:
+            for data in stream:
+                p.write_bytes(data)
+                p.flush()
+                p.increment()
+                acc.extend(data)
+        finally:
+            # `stream.close()` leaves the response open; docker-py wants us to close it.
+            stream._response.close()
         p.finish()
 
         logs = bytes(acc)

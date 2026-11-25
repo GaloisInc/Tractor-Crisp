@@ -205,7 +205,7 @@ class SudoSandbox:
 
     def run(
         self,
-        cmd,
+        cmd: str | list[str] | tuple[str, ...],
         shell=False,
         stream=False,
         cwd: str = ".",

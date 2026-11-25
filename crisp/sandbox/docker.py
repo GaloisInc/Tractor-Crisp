@@ -156,7 +156,7 @@ class WorkContainer:
 
     def run(
         self,
-        cmd,
+        cmd: str | list[str] | tuple[str, ...],
         shell=False,
         stream=False,
         cwd: str = ".",
@@ -225,8 +225,7 @@ def run_work_container(cfg, mvir, require_consistent_path = False):
     # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
-    # Stop the container even if the caller raises (including on Ctrl-C), or
-    # the agent running in it keeps going until its `sleep` ends.
+    # Stop the container even if the caller raises (including on Ctrl-C).
     try:
         yield wc
     finally:

@@ -43,9 +43,8 @@ class WorkContainer:
 
     def start(self):
         self.container = self.client.containers.run(
-            # `sleep` is PID 1; its duration caps the lifetime of the container.
             self.image,
-            ('sleep', '1800'),
+            ('sleep', 'inf'),
             detach=True,
             remove=True,
             extra_hosts={"host.docker.internal": "host-gateway"},
@@ -54,7 +53,7 @@ class WorkContainer:
     def stop(self):
         if self.container is not None:
             self.container.stop(timeout=1)
-            #self.container.remove(v=True)
+            # No need for `remove()` - container is set to auto-remove on stop.
 
     def end_commands(self):
         """
@@ -156,10 +155,21 @@ class WorkContainer:
     def join(self, *args, **kwargs):
         return os.path.join('/root/work', *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
+    def run(
+        self,
+        cmd: str | list[str] | tuple[str, ...],
+        shell=False,
+        stream=False,
+        cwd: str = ".",
+        env={},
+        timeout=1800,
+    ) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
+        assert isinstance(cmd, (list, tuple))
+
+        cmd = ('timeout', '--kill-after=1', str(timeout), *cmd)
 
         print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
 
@@ -216,8 +226,7 @@ def run_work_container(cfg, mvir, require_consistent_path = False):
     # always consistent.
     wc = WorkContainer(mvir)
     wc.start()
-    # Stop the container even if the caller raises (including on Ctrl-C), or
-    # the agent running in it keeps going until its `sleep` ends.
+    # Stop the container even if the caller raises (including on Ctrl-C).
     try:
         yield wc
     finally:

@@ -103,12 +103,21 @@ class BwrapSandbox:
     def join(self, *other: StrPath) -> str:
         return str(WORK_DIR_INSIDE.joinpath(*other))
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
+    def run(
+        self,
+        cmd: str | list[str] | tuple[str, ...],
+        shell=False,
+        stream=False,
+        cwd: str = ".",
+        env={},
+        timeout=1800,
+    ) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
-        else:
-            assert not isinstance(cmd, str)
+        assert isinstance(cmd, (list, tuple))
+
+        cmd = ('timeout', '--kill-after=1', str(timeout), *cmd)
 
         print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
 
@@ -171,11 +180,13 @@ class BwrapSandbox:
 
         if not stream:
             p = subprocess.run(bwrap_cmd, check=False,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL)
             return p.returncode, p.stdout
 
         p = subprocess.Popen(bwrap_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
 
         printer = ChunkPrinter()
         acc = bytearray()

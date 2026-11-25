@@ -203,10 +203,21 @@ class SudoSandbox:
     def join(self, *args, **kwargs):
         return os.path.join(self.dir_path, *args, **kwargs)
 
-    def run(self, cmd, shell=False, stream=False, cwd: str = ".", env={}) -> tuple[int, str | bytes]:
+    def run(
+        self,
+        cmd: str | list[str] | tuple[str, ...],
+        shell=False,
+        stream=False,
+        cwd: str = ".",
+        env={},
+        timeout=1800,
+    ) -> tuple[int, str | bytes]:
         if shell:
             assert isinstance(cmd, str)
             cmd = ['sh', '-c', cmd]
+        assert isinstance(cmd, (list, tuple))
+
+        cmd = ('timeout', '--kill-after=1', str(timeout), *cmd)
 
         print(f"cd {shlex.quote(self.join(cwd))} && {shlex.join(cmd)}")
 
@@ -227,11 +238,13 @@ class SudoSandbox:
 
         if not stream:
             p = self._run_sudo(cmd, check=False, env=env,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL)
             return p.returncode, p.stdout
 
         p = self._popen_sudo(cmd, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
 
         printer = ChunkPrinter()
         acc = bytearray()

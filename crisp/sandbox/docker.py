@@ -46,13 +46,14 @@ class WorkContainer:
             self.image,
             ('sleep', 'inf'),
             detach=True,
+            remove=True,
             extra_hosts={"host.docker.internal": "host-gateway"},
         )
 
     def stop(self):
         if self.container is not None:
             self.container.stop(timeout=1)
-            self.container.remove(v=True)
+            # No need for `remove()` - container is set to auto-remove on stop.
 
     def end_commands(self):
         """

@@ -362,9 +362,8 @@ class BranchState:
                     # Success!
                     break
 
-                target = self.pick_next_target()
-
                 try:
+                    target = self.pick_next_target()
                     self.agent_safety(target)
                 except CrispError:
                     # Keep trying as long as fuel remains.  Fuel will be reduced

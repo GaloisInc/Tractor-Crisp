@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from crisp import analysis
-from crisp.config import Config, TranspileConfig, TranspileArtifactConfig
+from crisp.config import Config, TranspileConfig
 from crisp.mvir import MVIR, FileNode, TreeNode
 from crisp.work_dir import WorkDir
 
@@ -21,9 +21,9 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.mvir = MVIR(directory.name, '.')
         self.c_code = self.tree({'api.h': 'int api(void);'})
-        self.tests = self.tree({'tests/basic.c': '// RUN: test_basic\n'})
+        self.tests = self.tree({'crisp_tests/tests/basic.c': '// RUN: test_basic\n'})
         self.rust = self.tree({'rust/src/lib.rs': 'fn api() {}'})
-        self.binaries = self.tree({'bin/test_basic': b'original executable'})
+        self.binaries = self.tree({'crisp_tests/build/bin/test_basic': b'original executable'})
         self.checkouts = []
         self.commands = []
         self.builds = 0
@@ -35,9 +35,7 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.output_files_by_rust = {}
         self.cfg = Config(
             config_path='crisp.toml', project_name='observed', src_globs=['rust/**/*.rs'],
-            transpile=TranspileConfig(config_path='crisp.toml', output_dir='rust', artifacts=[
-                TranspileArtifactConfig(config_path='crisp.toml', name='observed',
-                                       build_cmds=[], system_libs=['m', 'dl', 'm'])]))
+            transpile=TranspileConfig(config_path='crisp.toml', output_dir='rust', artifacts=[]))
 
         @contextlib.contextmanager
         def sandbox(cfg, mvir):
@@ -53,45 +51,50 @@ class ObservationAnalysisTest(unittest.TestCase):
         return TreeNode.new(self.mvir, files={
             name: FileNode.new(self.mvir, body).node_id() for name, body in files.items()})
 
-    def checkout(self, tree, path):
-        self.checkouts[-1].append((tree.node_id(), path))
+    def checkout(self, tree):
+        self.checkouts[-1].append(tree.node_id())
 
     def sandbox_run(self, cmd, stream=False):
         self.commands.append(cmd)
-        if cmd == ['test', '-f', 'test_results/results.json']:
+        if cmd[:2] == ['mkdir', '-p']:
+            return 0, b''
+        if cmd == ['test', '-f', 'crisp_tests/output/results.json']:
             return (0 if self.have_results else 1), b''
-        if cmd[0] == 'build' or cmd[1:2] == ['build']:
+        if cmd[1] == 'build':
             self.builds += 1
             if self.build_exit_code is not None:
                 return self.build_exit_code, b'compile failure logs'
         else:
             self.runs += 1
-            rust = next(node_id for node_id, path in self.checkouts[-1] if path == 'rust_code')
+            rust = self.checkouts[-1][0]
             if rust in self.exit_codes_by_rust:
                 return self.exit_codes_by_rust[rust], b'run failure logs'
         return self.exit_code, b'runner logs'
 
     def commit_dir(self, path):
-        if path == 'test_binaries':
-            return self.tree({'test_binaries/bin/test_basic': b'original executable'})
-        rust = next(node_id for node_id, path in self.checkouts[-1] if path == 'rust_code')
+        if path == 'crisp_tests/build':
+            return self.binaries
+        self.assertEqual(path, 'crisp_tests/output')
+        rust = self.checkouts[-1][0]
         if rust in self.output_files_by_rust:
-            return self.tree({'test_results/' + name: body
+            return self.tree({'crisp_tests/output/' + name: body
                               for name, body in self.output_files_by_rust[rust].items()})
-        return self.tree({'test_results/results.json': '{"tests": []}',
-                          'test_results/tests/basic.c.stdout': b'\x00\xffobservation',
-                          'test_results/tests/basic.c.stderr': b'',
-                          'test_results/tests/basic.c.json': '{"returncode": 0, "status": "exited"}'})
+        files = {'crisp_tests/output/tests/basic.c.stdout': b'\x00\xffobservation',
+                 'crisp_tests/output/tests/basic.c.stderr': b'',
+                 'crisp_tests/output/tests/basic.c.json': '{"returncode": 0, "status": "exited"}'}
+        if self.have_results:
+            files['crisp_tests/output/results.json'] = '{"tests": []}'
+        return self.tree(files)
 
-    def compile(self, c_code=None, tests=None, rust=None, cmd=None):
+    def compile(self, c_code=None, tests=None, rust=None):
         return analysis.compile_tests(
-            None, self.mvir, c_code or self.c_code, tests or self.tests,
-            rust or self.rust, cmd or ['build'])
+            self.cfg, self.mvir, c_code or self.c_code, rust or self.rust,
+            tests or self.tests)
 
-    def observe(self, rust=None, tests=None, binaries=None, cmd=None, trial=0):
+    def observe(self, rust=None, tests=None, binaries=None, trial=0):
         return analysis.run_observation_tests(
-            None, self.mvir, rust or self.rust, tests or self.tests,
-            binaries or self.binaries, cmd or ['run'], trial=trial)
+            self.cfg, self.mvir, rust or self.rust, binaries or self.binaries,
+            tests or self.tests, trial=trial)
 
     def candidate(self, extra=None):
         return TreeNode.new(self.mvir, files={
@@ -104,41 +107,46 @@ class ObservationAnalysisTest(unittest.TestCase):
             self.cfg, self.mvir, old_code or self.rust,
             new_code or self.candidate(), c_code or self.c_code)
 
-    def test_compile_is_cached_by_all_input_nodes_and_command(self):
+    def test_compile_is_cached_by_all_input_nodes(self):
         original = self.compile()
         self.assertEqual(self.compile().node_id(), original.node_id())
         self.assertEqual(self.builds, 1)
         self.compile(c_code=self.tree({'api.h': 'int api(int);'}))
-        self.compile(tests=self.tree({'tests/basic.c': 'changed test'}))
+        self.compile(tests=self.tree({'crisp_tests/tests/basic.c': 'changed test'}))
         self.compile(rust=self.tree({'rust/src/lib.rs': 'changed baseline'}))
-        self.compile(cmd=['build', '--sanitize'])
-        self.assertEqual(self.builds, 5)
+        self.assertEqual(self.builds, 4)
         self.assertEqual(self.checkouts[0], [
-            (self.c_code.node_id(), 'c_code'), (self.tests.node_id(), 'test_code'),
-            (self.rust.node_id(), 'rust_code')])
+            self.c_code.node_id(), self.rust.node_id(), self.tests.node_id()])
         binaries = self.mvir.node(original.test_binaries)
-        self.assertEqual(set(binaries.files), {'bin/test_basic'})
+        self.assertEqual(set(binaries.files), {'crisp_tests/build/bin/test_basic'})
+        self.assertEqual(original.cmd, [
+            'crisp_test_runner.py', 'build', '--suite-dir', 'crisp_tests',
+            '--c-dir', '.', '--rust-dir', 'rust', '--build-dir', 'crisp_tests/build',
+            '--sanitize'])
         self.assertEqual(original.body(), b'runner logs')
 
-    def test_run_is_cached_by_all_input_nodes_command_and_trial(self):
+    def test_run_is_cached_by_all_input_nodes_and_trial(self):
         original = self.observe()
         self.assertEqual(self.observe().node_id(), original.node_id())
         self.assertEqual(self.runs, 1)
         self.observe(rust=self.tree({'rust/src/lib.rs': 'changed candidate'}))
-        self.observe(tests=self.tree({'tests/basic.c': 'changed test'}))
-        self.observe(binaries=self.tree({'bin/test_basic': 'changed executable'}))
-        self.observe(cmd=['run', '--test-timeout', '10'])
+        self.observe(tests=self.tree({'crisp_tests/tests/basic.c': 'changed test'}))
+        self.observe(binaries=self.tree({'crisp_tests/build/bin/test_basic': 'changed executable'}))
         repeated = self.observe(trial=1)
-        self.assertEqual(self.runs, 6)
+        self.assertEqual(self.runs, 5)
         self.assertNotEqual(original.node_id(), repeated.node_id())
         self.assertEqual(self.checkouts[0], [
-            (self.rust.node_id(), 'rust_code'), (self.tests.node_id(), 'test_code'),
-            (self.binaries.node_id(), 'test_binaries')])
+            self.rust.node_id(), self.binaries.node_id(), self.tests.node_id()])
         outputs = self.mvir.node(original.outputs)
         self.assertEqual(set(outputs.files), {
-            'results.json', 'tests/basic.c.stdout', 'tests/basic.c.stderr', 'tests/basic.c.json'})
-        self.assertEqual(self.mvir.node(outputs.files['tests/basic.c.stdout']).body(),
+            'crisp_tests/output/' + name for name in (
+                'results.json', 'tests/basic.c.stdout', 'tests/basic.c.stderr', 'tests/basic.c.json')})
+        self.assertEqual(self.mvir.node(outputs.files['crisp_tests/output/tests/basic.c.stdout']).body(),
                          b'\x00\xffobservation')
+        self.assertEqual(original.cmd, [
+            'crisp_test_runner.py', 'run', '--suite-dir', 'crisp_tests',
+            '--rust-dir', 'rust', '--build-dir', 'crisp_tests/build',
+            '--output-dir', 'crisp_tests/output'])
 
     def test_build_failure_retains_logs_without_publishing_binaries(self):
         self.exit_code = 1
@@ -153,40 +161,48 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIsNotNone(result.outputs)
         self.have_results = False
-        failed_build = self.observe(trial=1)
-        self.assertIsNone(failed_build.outputs)
+        partial = self.observe(trial=1)
+        self.assertNotIn('crisp_tests/output/results.json', self.mvir.node(partial.outputs).files)
+        self.assertIn('crisp_tests/output/tests/basic.c.stdout', self.mvir.node(partial.outputs).files)
 
-    def test_comparison_extracts_only_current_suite_and_uses_two_sandboxes(self):
+    def test_comparison_extracts_only_current_suite_and_uses_three_sandboxes(self):
         suite_files = {
-            'tests.toml': 'cflags = []', 'tests/basic.c': 'current test',
-            'test_helpers/common.c': 'helper', 'test_helpers/common.h': 'header',
-            'fixtures/nested/input.txt': 'fixture'}
+            'crisp_tests/tests.toml': 'cflags = []', 'crisp_tests/tests/basic.c': 'current test',
+            'crisp_tests/test_helpers/common.c': 'helper',
+            'crisp_tests/test_helpers/common.h': 'header',
+            'crisp_tests/fixtures/nested/input.txt': 'fixture'}
         candidate = self.candidate({**suite_files, 'README': 'excluded',
-                                    'tests.toml.bak': 'excluded', 'fixtures.bak/a': 'excluded',
+                                    'crisp_tests.bak/tests/basic.c': 'excluded',
+                                    'crisp_tests/build/bin/test_basic': 'excluded',
+                                    'crisp_tests/output/results.json': 'excluded',
                                     'rust/tests/internal.rs': 'excluded'})
         old = self.tree({**{'rust/src/lib.rs': 'original Rust'},
                          'tests/obsolete.c': 'obsolete test', 'fixtures/old.txt': 'old fixture'})
         result = self.compare(candidate, old_code=old)
         self.assertTrue(result.passed, result.body_str())
-        suite = self.mvir.node(result.test_code)
+        compiled = self.mvir.node(result.compile_op)
+        suite = self.mvir.node(compiled.test_code)
         self.assertEqual(set(suite.files), set(suite_files))
         self.assertEqual({name: self.mvir.node(node_id).body_str()
                           for name, node_id in suite.files.items()}, suite_files)
         reference = self.mvir.node(result.old_run)
         current = self.mvir.node(result.new_run)
         self.assertEqual(reference.outputs, current.outputs)
-        self.assertEqual(current.input_binaries, reference.test_binaries)
+        self.assertEqual(current.test_binaries, compiled.test_binaries)
+        self.assertEqual(reference.test_binaries, compiled.test_binaries)
+        self.assertEqual(reference.test_code, suite.node_id())
+        self.assertIsNone(current.test_code)
         self.assertEqual((self.builds, self.runs), (1, 2))
         self.assertEqual(self.checkouts, [
-            [(self.c_code.node_id(), 'c_code'), (suite.node_id(), 'test_code'),
-             (old.node_id(), 'rust_code')],
-            [(self.c_code.node_id(), 'c_code'), (suite.node_id(), 'test_code'),
-             (candidate.node_id(), 'rust_code'), (reference.test_binaries, 'test_binaries')]])
-        self.assertEqual(reference.build_cmd, [
-            'crisp_test_runner.py', 'build', '--c-dir', 'c_code', '--suite-dir', 'test_code',
-            '--rust-dir', 'rust_code/rust', '--build-dir', 'test_binaries',
-            '--system-lib', 'dl', '--system-lib', 'm'])
-        self.assertEqual(current.build_cmd, [])
+            [self.c_code.node_id(), old.node_id(), suite.node_id()],
+            [old.node_id(), compiled.test_binaries, suite.node_id()],
+            [candidate.node_id(), compiled.test_binaries]])
+        self.assertEqual(compiled.cmd, [
+            'crisp_test_runner.py', 'build', '--suite-dir', 'crisp_tests',
+            '--c-dir', '.', '--rust-dir', 'rust', '--build-dir', 'crisp_tests/build',
+            '--sanitize'])
+        self.assertTrue(all(self.c_code.node_id() not in checkout
+                            for checkout in self.checkouts[1:]))
 
     def test_comparison_caches_reference_across_rust_edits_and_tracks_suite_inputs(self):
         original = self.compare()
@@ -195,15 +211,19 @@ class ObservationAnalysisTest(unittest.TestCase):
         changed = self.compare(self.candidate({'rust/src/lib.rs': 'changed Rust'}))
         self.assertEqual(changed.old_run, original.old_run)
         self.assertEqual((self.builds, self.runs), (1, 3))
-        for path in ('tests/basic.c', 'tests.toml', 'test_helpers/common.h', 'fixtures/input'):
+        for path in ('crisp_tests/tests/basic.c', 'crisp_tests/tests.toml',
+                     'crisp_tests/test_helpers/common.h', 'crisp_tests/fixtures/input'):
             changed = self.compare(self.candidate({path: 'changed suite input'}))
             self.assertNotEqual(changed.old_run, original.old_run)
         self.assertEqual((self.builds, self.runs), (5, 11))
-        self.compare(c_code=self.tree({'api.h': 'changed header'}))
+        changed_header = self.compare(c_code=self.tree({'api.h': 'changed header'}))
+        # Headers affect compilation only. Identical binaries reuse both runs.
+        self.assertEqual(changed_header.old_run, original.old_run)
+        self.assertEqual((self.builds, self.runs), (6, 11))
         self.compare(old_code=self.tree({'rust/src/lib.rs': 'changed original'}))
         # The fake compiler emits identical binaries, so changing the reference
         # Rust alone can also reuse the previous candidate execution.
-        self.assertEqual((self.builds, self.runs), (7, 14))
+        self.assertEqual((self.builds, self.runs), (7, 12))
 
     def test_comparison_build_failure_skips_runs_and_preserves_feedback(self):
         self.build_exit_code = 2
@@ -211,7 +231,8 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertIsNone(result.new_run)
         self.assertEqual((self.builds, self.runs), (1, 0))
-        self.assertIn('Reference test build/run failed', result.body_str())
+        self.assertIsNone(result.old_run)
+        self.assertIn('Compiling tests failed', result.body_str())
         self.assertIn('compile failure logs', result.body_str())
 
     def test_comparison_reference_runtime_failure_skips_candidate(self):
@@ -230,7 +251,7 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertEqual(self.mvir.node(result.old_run).outputs,
                          self.mvir.node(result.new_run).outputs)
-        self.assertIn('Candidate test run failed', result.body_str())
+        self.assertIn('Tests failed on current implementation', result.body_str())
         self.assertIn('run failure logs', result.body_str())
 
     def test_comparison_requires_output_snapshot(self):
@@ -239,6 +260,9 @@ class ObservationAnalysisTest(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertIsNone(result.new_run)
         self.assertEqual(self.runs, 1)
+        reference = self.mvir.node(result.old_run)
+        self.assertNotEqual(reference.exit_code, 0)
+        self.assertNotIn('crisp_tests/output/results.json', self.mvir.node(reference.outputs).files)
 
     def test_comparison_diffs_streams_exit_metadata_and_arbitrary_bytes(self):
         before = {'results.json': '{"tests": []}', 'tests/basic.c.stdout': b'old observation\n',
@@ -267,15 +291,21 @@ class ObservationAnalysisTest(unittest.TestCase):
 class ObservationAnalysisIntegrationTest(unittest.TestCase):
     def test_comparison_builds_reference_once_and_reports_refactoring_regression(self):
         runner = Path(__file__).resolve().parents[1] / 'scripts/crisp_test_runner.py'
-        with tempfile.TemporaryDirectory() as directory:
-            mvir = MVIR(directory, '.')
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            project_rel = 'foo/bar/baz'
+            project = Path(directory) / project_rel
+            project.mkdir(parents=True)
+            stack.enter_context(contextlib.chdir(project))
+            mvir = MVIR(Path(directory) / 'storage', directory)
 
             def tree(files):
                 return TreeNode.new(mvir, files={
-                    name: FileNode.new(mvir, body).node_id() for name, body in files.items()})
+                    project_rel + '/' + name: FileNode.new(mvir, body).node_id()
+                    for name, body in files.items()})
 
-            config_path = str(Path(directory) / 'crisp.toml')
+            config_path = str(project / 'crisp.toml')
             cfg = Config(config_path=config_path, project_name='observed', src_globs=[],
+                         base_dir='../../..',
                          transpile=TranspileConfig(
                              config_path=config_path, output_dir='generated/rust', artifacts=[]))
             cargo = '''
@@ -304,6 +334,7 @@ int observed_value(void) { return value(); }
 #include "common.h"
 int main(void) { printf("%d\\n", observed_value()); return 0; }
 '''}
+            suite = {'crisp_tests/' + name: body for name, body in suite.items()}
             c_code = tree({'include/api.h': 'int value(void);\n'})
             initial = tree(rust)
             candidate = tree({**rust, **suite})
@@ -336,34 +367,47 @@ pub extern "C" fn value() -> i32 { 9 }
                 reference = mvir.node(result.old_run)
                 current = mvir.node(result.new_run)
                 self.assertEqual(reference.outputs, current.outputs)
-                self.assertEqual(current.input_binaries, reference.test_binaries)
+                compiled = mvir.node(result.compile_op)
+                self.assertEqual(compiled.cmd, [
+                    'crisp_test_runner.py', 'build',
+                    '--suite-dir', project_rel + '/crisp_tests',
+                    '--c-dir', project_rel,
+                    '--rust-dir', project_rel + '/generated/rust',
+                    '--build-dir', project_rel + '/crisp_tests/build', '--sanitize'])
+                self.assertEqual(current.test_binaries, compiled.test_binaries)
+                self.assertEqual(reference.test_binaries, compiled.test_binaries)
                 outputs = mvir.node(reference.outputs)
-                self.assertEqual(mvir.node(outputs.files['tests/value.c.stdout']).body(),
+                stdout_path = project_rel + '/crisp_tests/output/tests/value.c.stdout'
+                self.assertEqual(mvir.node(outputs.files[stdout_path]).body(),
                                  b'7\nfixture observation\n')
-                self.assertEqual(len(workspaces), 2)
+                self.assertEqual(len(workspaces), 3)
                 self.assertEqual(invocations, ['build', 'run', 'run'])
                 cached = analysis.compare_observation_tests(cfg, mvir, initial, candidate, c_code)
                 self.assertEqual(cached.node_id(), result.node_id())
                 regression = analysis.compare_observation_tests(cfg, mvir, initial, changed, c_code)
                 self.assertFalse(regression.passed)
                 self.assertEqual(regression.old_run, reference.node_id())
-                self.assertIn('golden-outputs/tests/value.c.stdout', regression.body_str())
-                self.assertIn('current-outputs/tests/value.c.stdout', regression.body_str())
+                self.assertIn('golden-outputs/' + stdout_path, regression.body_str())
+                self.assertIn('current-outputs/' + stdout_path, regression.body_str())
                 self.assertIn('-7\n+9\n', regression.body_str())
-                self.assertEqual(len(workspaces), 3)
+                self.assertEqual(len(workspaces), 4)
                 self.assertEqual(invocations, ['build', 'run', 'run', 'run'])
 
     def test_build_and_run_mvir_bundles_in_separate_workspaces(self):
         runner = Path(__file__).resolve().parents[1] / 'scripts/crisp_test_runner.py'
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, contextlib.chdir(directory):
             mvir = MVIR(directory, '.')
 
             def tree(files):
                 return TreeNode.new(mvir, files={
                     name: FileNode.new(mvir, body).node_id() for name, body in files.items()})
 
+            config_path = str(Path(directory) / 'crisp.toml')
+            cfg = Config(config_path=config_path, project_name='observed', src_globs=[],
+                         transpile=TranspileConfig(
+                             config_path=config_path, output_dir='rust', artifacts=[]))
             c_code = tree({'api.h': 'int value(void);'})
-            tests = tree({'tests/value.c': '''
+            tests = tree({'crisp_tests/tests/value.c': '''
 // RUN: test_value
 #include <stdio.h>
 #include <api.h>
@@ -389,6 +433,8 @@ pub extern "C" fn value() -> i32 { 9 }
 
             class LocalSandbox(WorkDir):
                 def run(self, cmd, stream=False):
+                    if cmd[0] == 'crisp_test_runner.py':
+                        cmd = [sys.executable, str(runner), *cmd[1:]]
                     p = subprocess.run(cmd, cwd=self.path, capture_output=True, timeout=30)
                     return p.returncode, p.stdout + p.stderr
 
@@ -401,34 +447,29 @@ pub extern "C" fn value() -> i32 { 9 }
             def observation(result):
                 self.assertEqual(result.exit_code, 0, result.body_str())
                 outputs = mvir.node(result.outputs)
-                report = json.loads(mvir.node(outputs.files['results.json']).body())
+                output_dir = 'crisp_tests/output/'
+                report = json.loads(mvir.node(outputs.files[output_dir + 'results.json']).body())
                 case = report['tests'][0]
                 self.assertNotIn('elapsed_seconds', case)
-                metadata = json.loads(mvir.node(outputs.files[case['metadata']]).body())
+                metadata = json.loads(mvir.node(outputs.files[output_dir + case['metadata']]).body())
                 self.assertEqual(metadata['returncode'], 0)
-                return mvir.node(outputs.files[report['tests'][0]['stdout']]).body()
+                return mvir.node(outputs.files[output_dir + case['stdout']]).body()
 
             with patch('crisp.analysis.run_sandbox', sandbox):
-                build_cmd = [sys.executable, str(runner), 'build', '--c-dir', 'c_code',
-                             '--suite-dir', 'test_code', '--rust-dir', 'rust_code/rust',
-                             '--build-dir', 'test_binaries']
-                compiled = analysis.compile_tests(None, mvir, c_code, tests, initial, build_cmd)
+                compiled = analysis.compile_tests(cfg, mvir, c_code, initial, tests)
                 self.assertEqual(compiled.exit_code, 0, compiled.body_str())
                 binaries = mvir.node(compiled.test_binaries)
-                run_cmd = [sys.executable, str(runner), 'run', '--suite-dir', 'test_code',
-                           '--rust-dir', 'rust_code/rust', '--build-dir', 'test_binaries',
-                           '--output-dir', 'test_results']
                 reference = analysis.run_observation_tests(
-                    None, mvir, initial, tests, binaries, run_cmd)
+                    cfg, mvir, initial, binaries, tests)
                 self.assertEqual(observation(reference), b'7\n')
                 cached = analysis.run_observation_tests(
-                    None, mvir, initial, tests, binaries, run_cmd)
+                    cfg, mvir, initial, binaries, tests)
                 self.assertEqual(cached.node_id(), reference.node_id())
                 changed = analysis.run_observation_tests(
-                    None, mvir, candidate, tests, binaries, run_cmd)
+                    cfg, mvir, candidate, binaries, tests)
                 self.assertEqual(observation(changed), b'9\n')
                 repeated = analysis.run_observation_tests(
-                    None, mvir, candidate, tests, binaries, run_cmd, trial=1)
+                    cfg, mvir, candidate, binaries, tests, trial=1)
                 self.assertEqual(observation(repeated), b'9\n')
                 self.assertEqual(repeated.outputs, changed.outputs)
                 self.assertEqual(len(invocations), 4)

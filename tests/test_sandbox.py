@@ -4,6 +4,7 @@ import os
 import pwd
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -146,18 +147,22 @@ class SudoSandboxStopTest(unittest.TestCase):
     def test_stop_keeps_the_dir_if_a_command_keeps_running(self):
         # `sudo` can't relay SIGKILL, so a command that ignores SIGTERM keeps
         # running; its directory must not be removed under it.
-        self.sb._sudo_cmd = lambda cmd, env: ('sh', '-c', 'trap "" TERM; exec "$@"', 'sh', *cmd)
         pid_file = os.path.join(self.tmp, 'pid')
-        t, result = self.run_in_background(
-            ['sh', '-c', f'echo $$ >{pid_file}; while :; do sleep 0.1; done'])
-        self.wait_for_file(pid_file)
-        [p] = self.sb._procs
+        # Start the tracked process directly: run() wraps commands in GNU
+        # timeout, which exits on SIGTERM even if its child ignores the signal.
+        p = self.sb._popen_sudo([sys.executable, '-c',
+            'import os, signal, sys, time; '
+            'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+            'open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(60)',
+            pid_file])
         self.addCleanup(p.wait)
         self.addCleanup(p.kill)
+        self.wait_for_file(pid_file)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.sb.stop()
         self.assertIn('commands are still running', out.getvalue())
+        self.assertIsNone(p.poll())
         self.assertTrue(os.path.exists(self.sb.dir_path))
 
     def test_interrupted_stop_warns(self):

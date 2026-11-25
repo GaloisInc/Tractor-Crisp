@@ -238,11 +238,13 @@ class SudoSandbox:
 
         if not stream:
             p = self._run_sudo(cmd, check=False, env=env,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL)
             return p.returncode, p.stdout
 
         p = self._popen_sudo(cmd, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
 
         printer = ChunkPrinter()
         acc = bytearray()

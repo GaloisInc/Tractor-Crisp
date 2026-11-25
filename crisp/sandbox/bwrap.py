@@ -180,11 +180,13 @@ class BwrapSandbox:
 
         if not stream:
             p = subprocess.run(bwrap_cmd, check=False,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL)
             return p.returncode, p.stdout
 
         p = subprocess.Popen(bwrap_cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
 
         printer = ChunkPrinter()
         acc = bytearray()

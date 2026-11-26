@@ -1,9 +1,11 @@
 import copy
 from datetime import datetime
 import functools
+from pathlib import Path
 
 from .error import CrispError
 from .mvir import TreeNode, BranchStateNode, BranchStepNode
+from .node_id import NodeId
 from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
 from .util import FuelLimits, RateLimitBucket
@@ -104,6 +106,16 @@ class BranchState:
 
         self.total_unsafe_as_of_last_full_replan = None
 
+        # Hack: since `@step` methods can't return values, and since
+        # `agent_safety` in particular may throw an exception, stash the `meta`
+        # result from the last `agent_safety_unchecked` call here.  This lets
+        # the main loop check for `BLOCKERS.md` regardless of whether the
+        # `agent_safety` step succeeds or fails.
+        #
+        # TODO: redesign BranchState to be more flexible, maybe with Rust-style
+        # `Result` types to let functions return data alongside success/fail.
+        self.last_agent_safety_meta = None
+
     def _reset(self, n: BranchStateNode):
         self._n = n
 
@@ -120,8 +132,11 @@ class BranchState:
             self.mvir,
             c_code = self.c_code.node_id(),
             code = self.code.node_id(),
-            plans = self.plans,
-            failed_plans = self.failed_plans,
+            # Deep copy these so that future mutations to fields of `self`
+            # won't affect the contents of the in-memory node object.
+            # TODO: deepcopy metadata inside the MVIR node constructor instead
+            plans = copy.deepcopy(self.plans),
+            failed_plans = copy.deepcopy(self.failed_plans),
         )
 
     @classmethod
@@ -137,16 +152,18 @@ class BranchState:
 
 
     def accept(self):
+        self._n = self._snapshot()
         self._w.accept(self.code)
         self.mvir.set_tag('current_branch', self._n.node_id(),
             f'safety_loop {self.safety_tries_fuel.fuel}')
 
 
     @step
-    def agent_safety_unchecked(self, target):
+    def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
-        self.code, _ = self._w.agent_safety(self.code, self.c_code, None,
+        self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
             target_goal = target)
+        self.last_agent_safety_meta = meta
 
     @step
     def agent_safety(self, target):
@@ -169,6 +186,20 @@ class BranchState:
         op_ffi_review = self._w.ffi_review_op(old_code, self.code)
         if op_ffi_review is not None and not op_ffi_review.passed:
             raise CrispError("new code failed FFI review", op_ffi_review)
+
+    def recent_blockers(self, n = 5) -> list[tuple[str, str]]:
+        """
+        Return a list of the last `n` pairs of (step description, blockers),
+        for steps on which the rewriter reported blockers.
+        """
+        lst = []
+        for p in reversed(self.failed_plans):
+            if p.blockers is not None:
+                lst.append((p.description, self.mvir.node(p.blockers).body_str()))
+                if len(lst) >= n:
+                    break
+        lst.reverse()
+        return lst
 
     @step
     def update_plans(self):
@@ -202,7 +233,8 @@ class BranchState:
                 self.full_cycle_without_progress_fuel.give()
             self.total_unsafe_as_of_last_full_replan = total
 
-            detail, plans = self._w.plan_step_init(self.code, self.c_code)
+            detail, plans = self._w.plan_step_init(self.code, self.c_code,
+                prev_step_blockers = self.recent_blockers())
             for plan in plans:
                 plan.details = [detail.node_id()]
             self.plans = plans
@@ -255,6 +287,7 @@ class BranchState:
             detail, subplans = self._w.plan_step_subdivide(
                 self.code, self.c_code, p,
                 relevant_code = p.relevant_code(unsafe_json),
+                prev_step_blockers = self.recent_blockers(),
             )
 
             if len(subplans) == 0:
@@ -307,19 +340,7 @@ class BranchState:
                 if self.per_target_fuel.is_empty():
                     # Out of fuel - need to switch plans.
                     print(f'planning: too many failed rewrite attempts: {p.description!r}')
-                    self.failed_plans.append(p)
-                    del self.plans[0]
-
-                    if not self.failed_plan_bucket.drain():
-                        print('planning: too many failed plans; resetting')
-                        self.plans = []
-                        self.failed_plans = []
-                        self.failed_plan_bucket.reset()
-                        # Fall through to `update_plans`, which will generate a
-                        # new top-level plan.
-
-                        # TODO: pass info about past failures to the new
-                        # planning step, to avoid repeating mistakes
+                    self.plan_failed()
 
                     # Rerun update, in case we need to subdivide the next
                     # available plan.
@@ -348,6 +369,30 @@ class BranchState:
         # unsafety.
         return AgentTargetOther()
 
+    def plan_failed(self, blockers_id: NodeId | None = None):
+        if len(self.plans) == 0:
+            return
+
+        p = self.plans[0]
+        if blockers_id is not None:
+            p.blockers = blockers_id
+        self.failed_plans.append(p)
+        del self.plans[0]
+
+        if not self.failed_plan_bucket.drain():
+            print('planning: too many failed plans; resetting')
+            self.plans = []
+
+            # Truncate but don't fully reset `self.failed_plans`, so future
+            # top-level planning will see recent blockers.  Note we keep more
+            # plans here than `recent_blockers()` uses because some failed
+            # plans may not include blockers.
+            self.failed_plans = self.failed_plans[-10:]
+
+            self.failed_plan_bucket.reset()
+            # Fall through to `update_plans`, which will generate a
+            # new top-level plan.
+
     @step
     def safety_loop(self):
         consecutive_failure_fuel = FuelCounter('consecutive failures',
@@ -370,6 +415,15 @@ class BranchState:
                     # below because the failed step was reverted, leaving the
                     # unsafe count unchanged.
                     pass
+
+                if self.last_agent_safety_meta is not None:
+                    meta = self.last_agent_safety_meta
+                    self.last_agent_safety_meta = None
+                    blocker_files = [v for k,v in meta.files.items()
+                                        if Path(k).name == 'BLOCKERS.md']
+                    if len(blocker_files) > 0:
+                        print(f'planning: rewriter reported blockers')
+                        self.plan_failed(blocker_files[0])
 
                 self.accept()
 

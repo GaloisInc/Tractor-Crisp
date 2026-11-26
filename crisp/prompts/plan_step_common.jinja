@@ -242,3 +242,21 @@ Consequences for how you must write the plan:
 {% endif %}
 {% endfor %}
 {% endset %}
+
+
+{# List of past steps that failed and the associated blockers #}
+{% set blockers %}
+{% if prev_step_blockers %}
+
+# Past blockers
+
+Previous rewriting attempts encountered problems in the following areas.  Where applicable, you should consider this in your planning and take a different strategy to avoid repeating past mistakes.  Note that some of these may come from other parts of the codebase; they might not apply to the code you're currently writing a plan for.
+{% for step_desc, blockers in prev_step_blockers %}
+
+
+**Step:** {{ step_desc }}
+
+**Blockers:** {{ blockers }}
+{% endfor %}
+{% endif %}
+{% endset %}

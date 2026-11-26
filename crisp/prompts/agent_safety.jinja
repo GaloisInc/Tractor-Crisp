@@ -23,3 +23,11 @@ Your changes also must not add excessive logic or complexity to FFI entry point 
 crisp_ffi_review.sh
 ```
 This will report an error if implementation code was improperly added to FFI functions.
+
+
+# Blockers
+
+If, after making a serious attempt, you determine that it's not possible to complete the current goals while also satisfying the validation rules, proceed as follows:
+
+1. If you can, make partial progress toward the goal while satisfying all of the mandatory validation checks.  A change that reduces the goal metric from 50 to 0 but fails a check will be discarded by the CRISP harness, resulting in no progress whatsoever.  A change that reduces the metric to 5 (not meeting the goal) but passes all checks will be accepted by the CRISP harness, and the harness will run a followup agent to try to address any remaining work.
+2. If there's no way to make any progress at all toward the goal (while simultaneously satisfying the mandatory checks), create a file `{{ cargo_dir_path }}/BLOCKERS.md` containing a 1-2 paragraph description of the problem(s).  The CRISP harness will mark the current step as impossible and pass your blocker description to the planning agent so it can develop a new strategy.

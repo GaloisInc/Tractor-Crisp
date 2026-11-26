@@ -179,6 +179,9 @@ class StepPlan:
     details: list[NodeId] = field(default_factory = list)
     # Number of times we've tried subdividing this step.
     subdiv_attempts: int = 0
+    # `BLOCKERS.md` (`FileNode`), if this step failed due to an explicit
+    # rejection by the rewriter agent.
+    blockers: NodeId | None = None
 
     def count(self, unsafe_json: list[dict]) -> int:
         return sum(goal.count(unsafe_json) for goal in self.goals)
@@ -335,6 +338,8 @@ class StepPlan:
             dct['details'] = [node_id.to_cbor() for node_id in self.details]
         if self.subdiv_attempts != 0:
             dct['subdiv_attempts'] = self.subdiv_attempts
+        if self.blockers is not None:
+            dct['blockers'] = self.blockers.to_cbor()
         return dct
 
     @classmethod
@@ -344,10 +349,13 @@ class StepPlan:
             goals = [StepGoal.from_cbor(g) for g in raw.get('goals', ())],
             details = [NodeId.from_cbor(node_id) for node_id in raw.get('details', ())],
             subdiv_attempts = raw.get('subdiv_attempts', 0),
+            blockers = NodeId.from_cbor(raw['blockers']) if 'blockers' in raw else None,
         )
 
     def iter_node_ids(self):
         yield from self.details
+        if self.blockers is not None:
+            yield self.blockers
 
     def persistent_fields(self):
         """

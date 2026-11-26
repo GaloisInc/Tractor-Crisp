@@ -1205,6 +1205,7 @@ class Workflow:
             extra_code['tests'] = n_test_code
 
         prompt = prompts.agent_safety(
+            cargo_dir_path = cargo_dir,
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
             has_incremental_plans = n_plans is not None,

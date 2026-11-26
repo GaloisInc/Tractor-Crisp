@@ -120,8 +120,11 @@ class BranchState:
             self.mvir,
             c_code = self.c_code.node_id(),
             code = self.code.node_id(),
-            plans = self.plans,
-            failed_plans = self.failed_plans,
+            # Deep copy these so that future mutations to fields of `self`
+            # won't affect the contents of the in-memory node object.
+            # TODO: deepcopy metadata inside the MVIR node constructor instead
+            plans = copy.deepcopy(self.plans),
+            failed_plans = copy.deepcopy(self.failed_plans),
         )
 
     @classmethod

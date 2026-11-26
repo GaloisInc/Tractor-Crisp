@@ -3,14 +3,144 @@ import io
 import tempfile
 import types
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from fastapi import FastAPI
 import toml
 
+from crisp.config import Config, TranspileConfig
+from crisp.error import CrispError
 from crisp.mvir import MVIR, FileNode, TreeNode
+from crisp.planning import StepPlan, StepGoal
 from crisp.workflow import (
     FFI_SEEN_FINDINGS_CAP, Workflow, merge_ffi_finding_titles,
     upgrade_toolchain_rust_src,
 )
+
+
+class AgentGenTestsTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.mvir = MVIR(directory.name, '.')
+
+        def tree(body):
+            return TreeNode.new(self.mvir, files={
+                'rust/lib.rs': FileNode.new(self.mvir, body).node_id()})
+
+        self.original, self.current = map(tree, ('original', 'current'))
+        self.c_code = TreeNode.new(self.mvir, files={})
+        self.candidate = TreeNode.new(self.mvir, files={**self.current.files,
+            'crisp_tests/tests/parse.c': FileNode.new(self.mvir, '// RUN: test_parse').node_id()})
+        cfg = Config(config_path='crisp.toml', project_name='example', src_globs=[],
+            transpile=TranspileConfig(config_path='crisp.toml', output_dir='rust', artifacts=[]))
+        self.w = Workflow(cfg, self.mvir)
+        detail = FileNode.new(self.mvir, 'Preserve parser buffer behavior')
+        self.plan = StepPlan('Make parser safe', goals=[
+            StepGoal('total_unsafe', functions=['api::parse']),
+            StepGoal('field_contains_raw_ptr', types=['Buffer']),
+        ], details=[detail.node_id()])
+        unsafe = [{
+            'fns': {'api::parse': {'ffi_symbol': None, 'filename': 'src/lib.rs',
+                'total_unsafe': 3}},
+            'types': {'Buffer': {'filename': 'src/lib.rs', 'field_contains_raw_ptr': 1}},
+        }]
+        self.w.find_unsafe2_json_dicts = lambda code: unsafe
+        output = contextlib.redirect_stdout(io.StringIO())
+        output.__enter__()
+        self.addCleanup(output.__exit__, None, None, None)
+
+    def test_generator_targets_plan_and_validates_against_original_reference(self):
+        op = SimpleNamespace(exit_code=0, passed=True, body=lambda: b'passed\n')
+
+        def rewrite(*args, **kwargs):
+            self.assertIs(args[4], self.current)
+            self.assertEqual(kwargs['extra_code'], {'c_code': self.c_code})
+            prompt = args[2]
+            for text in ('Make parser safe', 'api::parse', 'Buffer', 'src/lib.rs',
+                         'Preserve parser buffer behavior', 'crisp_run_tests.sh'):
+                self.assertIn(text, prompt)
+            app = FastAPI()
+            kwargs['http_build_app'](SimpleNamespace(get_output=lambda name: self.candidate), app)
+            route = next(r for r in app.routes if r.path == '/crisp/run_tests')
+            self.assertEqual(route.endpoint().status_code, 200)
+            return self.candidate, None
+
+        for reference in (self.original, None):
+            with self.subTest(explicit_reference=reference is not None), \
+                    patch('crisp.workflow.agent.run_rewrite', side_effect=rewrite), \
+                    patch.object(self.w, 'test_op', return_value=op) as test, \
+                    patch.object(self.w, 'compare_observation_tests_op', return_value=op) as compare:
+                result = self.w.agent_gen_tests(self.current, self.c_code, self.plan,
+                    n_orig_code=reference)
+                self.assertIs(result, self.candidate)
+                test.assert_called_once_with(self.candidate, self.c_code)
+                self.assertEqual(compare.call_count, 2)
+                for args in compare.call_args_list:
+                    self.assertEqual(args.args, (
+                        self.original if reference is not None else self.current,
+                        self.candidate, self.c_code))
+
+    def test_generator_rejects_missing_output_implementation_changes_and_invalid_tests(self):
+        for candidate, message, checked in (
+                (None, 'failed to produce any code', False),
+                (self.original, 'modified files outside crisp_tests/', False),
+                (self.candidate, 'generated differential tests failed', True)):
+            with self.subTest(message=message), \
+                    patch('crisp.workflow.agent.run_rewrite', return_value=(candidate, None)), \
+                    patch.object(self.w, 'compare_observation_tests_op',
+                        return_value=SimpleNamespace(exit_code=1)) as compare:
+                with self.assertRaisesRegex(CrispError, message):
+                    self.w.agent_gen_tests(self.current, self.c_code, self.plan)
+                self.assertEqual(compare.call_count, int(checked))
+
+
+class AgentObservationReferenceTest(unittest.TestCase):
+    def test_test_endpoint_uses_original_reference_and_defaults_to_input_code(self):
+        with tempfile.TemporaryDirectory() as storage:
+            mvir = MVIR(storage, '.')
+
+            def tree(body):
+                return TreeNode.new(mvir, files={
+                    'rust/lib.rs': FileNode.new(mvir, body).node_id()})
+
+            original, current, candidate = map(tree, ('original', 'current', 'candidate'))
+            current = TreeNode.new(mvir, files={**current.files,
+                'crisp_tests/tests/api.py': FileNode.new(mvir, 'print("observation")').node_id()})
+            c_code = TreeNode.new(mvir, files={})
+            # Generated differential tests must be offered even without a
+            # pre-existing C project test command.
+            cfg = Config(config_path='crisp.toml', project_name='example', src_globs=[],
+                transpile=TranspileConfig(
+                    config_path='crisp.toml', output_dir='rust', artifacts=[]))
+            w = Workflow(cfg, mvir)
+            op = SimpleNamespace(passed=True, body=lambda: b'passed\n')
+
+            def rewrite(*args, **kwargs):
+                self.assertIn('crisp_run_tests.sh', args[2])
+                app = FastAPI()
+                asb = SimpleNamespace(get_output=lambda name: candidate)
+                kwargs['http_build_app'](asb, app)
+                route = next(r for r in app.routes if r.path == '/crisp/run_tests')
+                response = route.endpoint()
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b'Part 1', response.body)
+                self.assertIn(b'Part 2', response.body)
+                return candidate, None
+
+            for reference in (original, None):
+                with self.subTest(explicit_reference=reference is not None), \
+                        patch('crisp.workflow.agent.run_rewrite', side_effect=rewrite), \
+                        patch.object(w, 'find_unsafe2_json', return_value=c_code) as unsafe, \
+                        patch.object(w, 'test_op', return_value=op) as test, \
+                        patch.object(w, 'compare_observation_tests_op', return_value=op) as compare, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    w.agent_safety(current, c_code, None, n_orig_code=reference)
+                    compare.assert_called_once_with(
+                        original if reference is not None else current, candidate, c_code)
+                    test.assert_called_once_with(candidate, c_code)
+                    unsafe.assert_called_once_with(current)
 
 
 # Finding lines as rendered by `codex exec review` (from a real zlib run).

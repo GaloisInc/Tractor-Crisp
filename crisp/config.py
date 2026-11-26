@@ -196,3 +196,28 @@ class ModelOptionsConfig(ConfigBase):
     # env var is set, the `file_formatter_kwargs` will be ignored.
     file_formatter: str = 'xml'
     file_formatter_kwargs: dict = field(default_factory=dict)
+
+
+@dataclass
+class CrispTestPaths:
+    """
+    Helper for computing paths within the sandbox for various pieces related to
+    the AI-generated `crisp_tests` / `crisp_test_runner.py` test suite.
+    """
+    rust: str
+    c: str
+    suite: str
+    tests: str
+    build: str
+    output: str
+
+    @classmethod
+    def from_config(cls, cfg: Config):
+        return CrispTestPaths(
+            rust = cfg.relative_path(cfg.transpile.output_dir),
+            c = cfg.relative_path('.'),
+            suite = cfg.relative_path('crisp_tests'),
+            tests = cfg.relative_path('crisp_tests/tests'),
+            build = cfg.relative_path('crisp_tests/build'),
+            output = cfg.relative_path('crisp_tests/output'),
+        )

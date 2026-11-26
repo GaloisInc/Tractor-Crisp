@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from pathspec.pathspec import PathSpec
 
 from .. import http_server, llm
-from ..config import Config
+from ..config import Config, CrispTestPaths
 from ..error import CrispError
 from ..mvir import MVIR, TreeNode, FileNode, CodexAgentOpNode
 from ..sandbox import run_sandbox, Sandbox
@@ -528,13 +528,18 @@ def run_rewrite(
         prompt,
     ], model=model, effort=effort)
 
+    test_paths = CrispTestPaths.from_config(cfg)
+
     n_op, outputs = run_agent(
         cfg, mvir,
         inputs,
         codex_cmd,
         {
             'code': lambda p: p not in extra_code_files
-                and (p in input_code.files or p.endswith('.rs')),
+                and not Path(p).is_relative_to(test_paths.build)
+                and not Path(p).is_relative_to(test_paths.output)
+                and (p in input_code.files or p.endswith('.rs')
+                     or Path(p).is_relative_to(test_paths.suite)),
             'plans': lambda p: p not in extra_code_files
                 and Path(p).name in ('PLAN.md', 'SAFETY_PLAN.md', 'BLOCKERS.md'),
         },

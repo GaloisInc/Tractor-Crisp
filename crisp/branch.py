@@ -120,17 +120,16 @@ class BranchState:
         self._n = n
 
         self.c_code = self.mvir.node(n.c_code)
+        self.orig_code = self.mvir.node(n.orig_code)
         self.code = self.mvir.node(n.code)
         self.plans = copy.deepcopy(n.plans)
         self.failed_plans = copy.deepcopy(n.failed_plans)
-
-        # Sanity check: `__init__` and `_snapshot` should be inverses.
-        assert n.node_id() == self._snapshot().node_id()
 
     def _snapshot(self) -> BranchStateNode:
         return BranchStateNode.new(
             self.mvir,
             c_code = self.c_code.node_id(),
+            orig_code = self.orig_code.node_id(),
             code = self.code.node_id(),
             # Deep copy these so that future mutations to fields of `self`
             # won't affect the contents of the in-memory node object.
@@ -144,6 +143,9 @@ class BranchState:
         n = BranchStateNode.new(
             w.mvir,
             c_code = n_c_code.node_id(),
+            # When creating a new branch, set the original (just transpiled)
+            # code equal to the initial state.
+            orig_code = n_code.node_id(),
             code = n_code.node_id(),
             plans = [],
             failed_plans = [],
@@ -159,10 +161,15 @@ class BranchState:
 
 
     @step
+    def agent_gen_tests(self, plan: StepPlan):
+        self.code = self._w.agent_gen_tests(self.code, self.c_code, plan,
+            n_orig_code = self.orig_code)
+
+    @step
     def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
         self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
-            target_goal = target)
+            target_goal = target, n_orig_code = self.orig_code)
         self.last_agent_safety_meta = meta
 
     @step
@@ -177,6 +184,10 @@ class BranchState:
         op_test = self._w.test_op(self.code, self.c_code)
         if op_test.exit_code != 0:
             raise CrispError("new code failed the tests", op_test)
+
+        op_diff_test = self._w.compare_observation_tests_op(self.orig_code, self.code, self.c_code)
+        if op_diff_test.exit_code != 0:
+            raise CrispError("new code failed the diff tests", op_diff_test)
 
         old_unsafe_json = self._w.find_unsafe2_json(old_code)
         op_unsafe = self._w.check_unsafe2_op(self.code, old_unsafe_json)
@@ -350,6 +361,13 @@ class BranchState:
                 # Switched to a new plan, so restore fuel.
                 self.per_target_fuel.give()
                 self.failed_plan_bucket.fill()
+
+                # Generate once when switching plans. Keep these tests even
+                # if a later rewrite attempt is rolled back.
+                try:
+                    self.agent_gen_tests(p)
+                except CrispError as e:
+                    print(f'planning: test generation failed for {p.description!r}: {e}')
 
             # Proceed with plan `p`.
             print(f'planning: attempting rewrite: {p.description!r}')

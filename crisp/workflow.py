@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
-from .config import Config
+from .config import Config, CrispTestPaths
 from .error import CrispError, ValidateError, ValidateErrorCollector
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
@@ -25,6 +25,7 @@ from .mvir import (
     WorkflowStepNode, SplitOpNode, MergeOpNode, CrateNode, DefNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
     CargoFixOpNode, CodexReviewAnalysisNode,
+    CompareObservationTestsAnalysisNode,
 )
 from .planning import StepPlan, StepGoal
 from .sandbox import run_sandbox
@@ -777,6 +778,15 @@ class Workflow:
         return n
 
     @step
+    def compare_observation_tests_op(
+        self,
+        old_code: TreeNode,
+        new_code: TreeNode,
+        c_code: TreeNode
+    ) -> CompareObservationTestsAnalysisNode:
+        return analysis.compare_observation_tests(self.cfg, self.mvir, old_code, new_code, c_code)
+
+    @step
     def cargo_fix(self, code: TreeNode) -> TreeNode:
         n = self.cargo_fix_op(code)
         return self.mvir.node(n.new_code)
@@ -1180,6 +1190,81 @@ class Workflow:
             return n_code
         return candidate
 
+    def http_build_app_for_tests(
+        self,
+        n_orig_code: TreeNode,
+        n_test_code: TreeNode | None,
+    ):
+        """Provide the same test command to test generators and rewriters."""
+        from fastapi import Response
+
+        def build_app(asb, app):
+            @app.post('/crisp/run_tests')
+            def run_tests():
+                code = asb.get_output('code')
+                try:
+                    ops = (
+                        self.test_op(code, n_test_code),
+                        self.compare_observation_tests_op(n_orig_code, code, n_test_code),
+                    )
+                except Exception as e:
+                    traceback.print_exc()
+                    return Response(f'{type(e).__name__}: {e}',
+                        media_type = 'text/plain', status_code = 500)
+                body = b'\n\n'.join(f' === Part {i + 1} ===\n'.encode() + op.body()
+                    for i, op in enumerate(ops))
+                return Response(body, media_type = 'text/plain',
+                    status_code = 200 if all(op.passed for op in ops) else 400)
+
+        return build_app
+
+    @step
+    def agent_gen_tests(
+        self,
+        n_code: TreeNode,
+        n_c_code: TreeNode,
+        plan: StepPlan,
+        n_orig_code: TreeNode | None = None,
+    ) -> TreeNode:
+        """Extend a step's differential coverage without changing implementation code."""
+        cfg, mvir = self.cfg, self.mvir
+        cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
+        if n_orig_code is None:
+            n_orig_code = n_code
+
+        test_paths = CrispTestPaths.from_config(cfg)
+
+        prompt = prompts.plan_step_gen_tests(
+            cargo_dir_path = cargo_dir,
+            c_dir_path = test_paths.c,
+            test_dir_path = test_paths.suite,
+            description = plan.description,
+            goals = [g.to_cbor() for g in plan.goals],
+            details = [mvir.node(n).body_str() for n in plan.details],
+            relevant_code = plan.relevant_code(self.find_unsafe2_json_dicts(n_code)),
+        )
+        candidate, _ = agent.run_rewrite(cfg, mvir, prompt, cfg.models.agent_loop, n_code,
+            extra_code = {'c_code': n_c_code},
+            clean_cmds = [
+                ['cargo', 'clean', '--manifest-path', os.path.join(cargo_dir, 'Cargo.toml')],
+            ],
+            http_build_app = self.http_build_app_for_tests(n_orig_code, n_c_code),
+        )
+        if candidate is None:
+            raise CrispError('test generator failed to produce any code')
+
+        def implementation_files(code):
+            return {p: n for p, n in code.files.items()
+                if not Path(p).is_relative_to(test_paths.suite)}
+
+        if implementation_files(candidate) != implementation_files(n_code):
+            raise CrispError(f'test generator modified files outside {test_paths.suite}/')
+
+        op = self.compare_observation_tests_op(n_orig_code, candidate, n_c_code)
+        if op.exit_code != 0:
+            raise CrispError('generated differential tests failed', op)
+        return candidate
+
     @step
     def agent_safety(
         self,
@@ -1191,11 +1276,19 @@ class Workflow:
         provide_test_cmd: bool = True,
         prompt_suffix: str | None = None,
         target_goal: AgentTarget = AgentTargetOther(),
+        # Reference for observation tests; may precede earlier refactorings.
+        n_orig_code: TreeNode | None = None,
     ) -> tuple[TreeNode, TreeNode]:
         cfg, mvir = self.cfg, self.mvir
         cargo_dir = cfg.relative_path(cfg.transpile.output_dir)
 
-        if provide_test_cmd and cfg.test_command is not None:
+        if n_orig_code is None:
+            n_orig_code = n_code
+
+        test_paths = CrispTestPaths.from_config(cfg)
+        has_differential_tests = any(Path(p).is_relative_to(test_paths.tests)
+            for p in n_code.files)
+        if provide_test_cmd and (cfg.test_command is not None or has_differential_tests):
             after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()
         else:
             after_refactoring_instruction = prompts.agent_after_refactoring_build()
@@ -1231,15 +1324,7 @@ class Workflow:
             # HTTP server in a background thread, and communicate back to the
             # main thread what operations to perform.
 
-            @app.post('/crisp/run_tests')
-            def run_tests():
-                code = asb.get_output('code')
-                try:
-                    op = self.test_op(code, n_test_code)
-                except Exception as e:
-                    traceback.print_exc()
-                    return mk_response(f'{type(e).__name__}: {e}', status = 500)
-                return op_response(op)
+            self.http_build_app_for_tests(n_orig_code, n_test_code)(asb, app)
 
             @app.post('/crisp/check_unsafe2')
             def check_unsafe2():
@@ -1460,8 +1545,10 @@ class Workflow:
         # The change must pass tests, must not regress any unsafe count, and
         # must not break the FFI entry point rules.
         n_op_test = self.test_op(n_new_code, n_test_code)
+        n_op_diff_test = self.compare_observation_tests_op(n_code, n_new_code, n_test_code)
         n_op_unsafe = self.compare_unsafe2_op(n_code, n_new_code)
-        if n_op_test.exit_code != 0 or n_op_unsafe.exit_code != 0:
+        if (n_op_test.exit_code != 0 or n_op_diff_test.exit_code != 0
+                or n_op_unsafe.exit_code != 0):
             return None, None, None
         ffi_ok, ffi_report = self.do_ffi_review(n_code, n_new_code)
         if not ffi_ok:

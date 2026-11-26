@@ -1,8 +1,11 @@
 import cbor
+from dataclasses import dataclass
+import difflib
 from functools import wraps
 import inspect
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import subprocess
@@ -11,7 +14,7 @@ import typing
 
 from . import agent, prompts
 from . import inline_errors as inline_errors_module
-from .config import Config
+from .config import Config, CrispTestPaths
 from .error import CrispError
 from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
@@ -19,6 +22,8 @@ from .mvir import (
     InlineErrorsOpNode, DefNode, CrateNode, SplitOpNode, MergeOpNode,
     RelatedDeclsOpNode, FindUnsafe2AnalysisNode, CheckUnsafe2AnalysisNode,
     CargoFixOpNode, CodexReviewAnalysisNode,
+    CompileTestsAnalysisNode, RunObservationTestsAnalysisNode,
+    CompareObservationTestsAnalysisNode,
 )
 from .sandbox import Sandbox, run_sandbox
 
@@ -183,6 +188,180 @@ def run_tests(cfg: Config, mvir: MVIR,
     if n.passed:
         mvir.set_tag('test_passed', n.node_id(), None)
     return n
+
+
+@analysis
+def compile_tests(
+    cfg: Config, mvir: MVIR,
+    c_code: TreeNode, rust_code: TreeNode, test_code: TreeNode | None = None,
+) -> CompileTestsAnalysisNode:
+    """Compile a suite, with MVIR caching all source inputs and the command.
+
+    `test_code` can be omitted if the tests are already included in `c_code` or
+    `rust_code`.
+    """
+    paths = CrispTestPaths.from_config(cfg)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(c_code)
+        sb.checkout(rust_code)
+        if test_code is not None:
+            sb.checkout(test_code)
+        sb.run(['mkdir', '-p', paths.tests, paths.c, paths.rust])
+        cmd = [
+            'crisp_test_runner.py', 'build',
+            '--suite-dir', paths.suite,
+            '--c-dir', paths.c,
+            '--rust-dir', paths.rust,
+            '--build-dir', paths.build,
+            '--sanitize',
+        ]
+        exit_code, logs = sb.run(cmd, stream=True)
+        binaries = sb.commit_dir(paths.build) if exit_code == 0 else None
+
+    return CompileTestsAnalysisNode.new(
+        mvir,
+        body=logs,
+        c_code=c_code.node_id(),
+        test_code=test_code.node_id() if test_code is not None else None,
+        rust_code=rust_code.node_id(),
+        cmd=cmd,
+        exit_code=exit_code,
+        test_binaries=binaries.node_id() if binaries is not None else None,
+    )
+
+@analysis
+def run_observation_tests(
+    cfg: Config, mvir: MVIR,
+    rust_code: TreeNode, test_binaries: TreeNode, test_code: TreeNode | None = None,
+    trial: int = 0,
+) -> RunObservationTestsAnalysisNode:
+    """Run a compiled suite in a fresh sandbox, without original C inputs.
+
+    `test_code` can be omitted if the tests are already included in `c_code` or
+    `rust_code`.  `trial` can be used to force a separate run in order to check
+    for nondeterministic test behavior.
+    """
+    paths = CrispTestPaths.from_config(cfg)
+
+    with run_sandbox(cfg, mvir) as sb:
+        sb.checkout(rust_code)
+        sb.checkout(test_binaries)
+        if test_code is not None:
+            sb.checkout(test_code)
+        sb.run(['mkdir', '-p', paths.tests, paths.rust, paths.build, paths.output])
+        cmd = [
+            'crisp_test_runner.py', 'run',
+            '--suite-dir', paths.suite,
+            '--rust-dir', paths.rust,
+            '--build-dir', paths.build,
+            '--output-dir', paths.output,
+        ]
+        exit_code, logs = sb.run(cmd, stream=True)
+        if exit_code == 0:
+            # Report nonzero exit code if output files are missing.
+            exit_code, _ = sb.run(['test', '-f', os.path.join(paths.output, 'results.json')])
+        outputs = sb.commit_dir(paths.output)
+
+    return RunObservationTestsAnalysisNode.new(
+        mvir,
+        body=logs,
+        rust_code=rust_code.node_id(),
+        test_binaries=test_binaries.node_id(),
+        test_code=test_code.node_id() if test_code is not None else None,
+        trial=trial,
+        cmd=cmd,
+        exit_code=exit_code,
+        outputs=outputs.node_id() if outputs is not None else None,
+    )
+
+def _diff_test_outputs(mvir: MVIR, old: TreeNode, new: TreeNode) -> bytes:
+    """Diff snapshot bytes outside the sandbox, with stable paths and no timestamps."""
+    chunks = []
+    for path in sorted(old.files.keys() | new.files.keys()):
+        if old.files.get(path) == new.files.get(path):
+            continue
+        if path not in old.files or path not in new.files:
+            directory = 'current-outputs' if path in new.files else 'golden-outputs'
+            chunks.append(f'Only in {directory}: {path}\n'.encode())
+            continue
+        before = mvir.node(old.files[path]).body()
+        after = mvir.node(new.files[path]).body()
+        old_name = ('golden-outputs/' + path).encode()
+        new_name = ('current-outputs/' + path).encode()
+        if b'\0' in before or b'\0' in after:
+            chunks.append(b'Binary files ' + old_name + b' and ' + new_name + b' differ\n')
+            continue
+        for line in difflib.diff_bytes(
+                difflib.unified_diff, before.splitlines(keepends=True),
+                after.splitlines(keepends=True), fromfile=old_name, tofile=new_name):
+            chunks.append(line if line.endswith(b'\n') else line + b'\n\\ No newline at end of file\n')
+    # Feedback must remain readable even when observations contain arbitrary bytes.
+    return b''.join(chunks).decode('utf-8', errors='backslashreplace').encode('utf-8')
+
+@analysis
+def compare_observation_tests(
+    cfg: Config, mvir: MVIR, old_code: TreeNode, new_code: TreeNode, c_code: TreeNode,
+) -> CompareObservationTestsAnalysisNode:
+    """Compare the current suite's observations on original and refactored Rust.
+    """
+    paths = CrispTestPaths.from_config(cfg)
+    test_code = TreeNode.new(mvir, files = {
+        k: v for k,v in new_code.files.items()
+        if Path(k).is_relative_to(paths.suite)
+        and not Path(k).is_relative_to(paths.build)
+        and not Path(k).is_relative_to(paths.output)
+    })
+
+    compile_op = None
+    old_run = None
+    new_run = None
+    result = None
+    exit_code = 0
+
+    if exit_code == 0:
+        compile_op = compile_tests(cfg, mvir, c_code, old_code, test_code)
+        exit_code = compile_op.exit_code
+        if exit_code != 0:
+            result = b'Compiling tests failed:\n' + compile_op.body()
+
+    if exit_code == 0:
+        binaries = mvir.node(compile_op.test_binaries)
+        old_run = run_observation_tests(cfg, mvir, old_code, binaries, test_code)
+        exit_code = old_run.exit_code
+        if exit_code != 0:
+            result = b'Tests failed on reference implementation:\n' + old_run.body()
+
+    if exit_code == 0:
+        # `binaries` must be initialized if we got here.
+        new_run = run_observation_tests(cfg, mvir, new_code, binaries)
+        exit_code = new_run.exit_code
+        if exit_code != 0:
+            result = b'Tests failed on current implementation:\n' + new_run.body()
+
+    if exit_code == 0:
+        # `old_run` and `new_run` must be initialized if we got here.
+        if old_run.outputs == new_run.outputs:
+            result = b'All tests passed.\n'
+        else:
+            old_outputs = mvir.node(old_run.outputs)
+            new_outputs = mvir.node(new_run.outputs)
+            diff = _diff_test_outputs(mvir, old_outputs, new_outputs)
+            result = b'Reference/current test outputs differed:\n' + diff
+            exit_code = 1
+
+    return CompareObservationTestsAnalysisNode.new(
+        mvir,
+        body=result,
+        c_code=c_code.node_id(),
+        old_code=old_code.node_id(),
+        new_code=new_code.node_id(),
+        compile_op=compile_op.node_id() if compile_op is not None else None,
+        old_run=old_run.node_id() if old_run is not None else None,
+        new_run=new_run.node_id() if new_run is not None else None,
+        exit_code=exit_code,
+    )
+
 
 @analysis
 def cargo_check_json(cfg: Config, mvir: MVIR, code: TreeNode) -> CargoCheckJsonAnalysisNode:

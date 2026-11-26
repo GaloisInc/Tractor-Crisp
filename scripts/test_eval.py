@@ -31,12 +31,16 @@ def detect_suites(case_dir: Path) -> list[str]:
         (case_dir / "tests").is_dir()
         and (case_dir / "tests/CMakeLists.txt").is_file()
     )
+    has_crisp = (case_dir / 'tests.toml').is_file() \
+            and (case_dir / 'tests-out-golden').is_dir()
 
     suites = []
     if has_runtests:
         suites.append("runtests")
     if has_clar:
         suites.append("clar")
+    if has_crisp:
+        suites.append("crisp")
     return suites
 
 
@@ -44,7 +48,7 @@ def parse_args() -> Args:
     ap = argparse.ArgumentParser()
     ap.add_argument("project_dir", type=Path)
     ap.add_argument("--suite",
-        choices=("auto", "runtests", "clar", 'none'),
+        choices=("auto", "runtests", "clar", 'none', 'crisp'),
         default="auto",
         help="which test suite to use: auto-detect one, force a specific suite, or disable tests with 'none'")
     ap.add_argument("--relax-implicit-none",
@@ -317,6 +321,7 @@ def main():
             test_command_kv = 'test_command = """{test_command}"""'.format(
                 test_command = '\n'.join(test_command_parts),
             )
+
         case "clar":
             lib_target_name = None
             for target in targets:
@@ -344,6 +349,19 @@ def main():
             test_command_kv = 'test_command = """{test_command}"""'.format(
                 test_command = "\n".join(test_command_parts),
             )
+
+        case 'crisp':
+            test_command_parts = [
+                'set -e',
+                f'cd {shlex.quote(str(project_dir_from_base))}',
+                f'crisp_test_runner.py build --suite-dir . --c-dir {shlex.quote(str(cmake_dir_from_project))} --rust-dir translated_rust/ --build-dir tests-build/ --sanitize',
+                'crisp_test_runner.py run --suite-dir . --rust-dir translated_rust/ --build-dir tests-build/ --output-dir tests-out/',
+                'diff -Nurd tests-out-golden/ tests-out/',
+            ]
+            test_command_kv = 'test_command = """{test_command}"""'.format(
+                test_command = "\n".join(test_command_parts),
+            )
+
         case _:
             test_command_kv = '# No test_command provided'
 
@@ -499,6 +517,14 @@ def main():
                 test_dir / "runner",
                 test_dir / "test_vectors",
             ))
+        if suite == 'crisp':
+            commit_paths.extend((
+                test_dir / 'tests',
+                test_dir / 'test_helpers',
+                test_dir / 'fixtures',
+                test_dir / 'tests.toml',
+                test_dir / 'tests-out-golden',
+            ))
 
     commit_excludes = [
         # Compiled/generated output
@@ -517,7 +543,8 @@ def main():
             'runner/', 'test_vectors/',
         ))
     # Exclude clar artifacts when not clar, basically same as above.
-    if suite != 'clar': commit_excludes.extend(('tests/',))
+    if suite != 'clar' and suite != 'crisp':
+        commit_excludes.extend(('tests/',))
     commit_exclude_args = ['--exclude=' + excl for excl in commit_excludes]
 
     run_crisp(args, ["commit", "-t", "c_code", *commit_exclude_args,

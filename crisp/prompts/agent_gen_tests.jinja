@@ -1,0 +1,115 @@
+{% import 'plan_step_common.jinja' as psc with context -%}
+Add differential tests under `{{ test_dir_path }}/` for the Rust code in `{{ cargo_dir_path }}` covered by the step below. These tests will validate later safety refactorings. This is a test-generation step: edit only `{{ test_dir_path }}/`, leaving implementation code unchanged. Extend the existing suite and preserve useful coverage.
+
+{# Copied from `plan_step_target.jinja`, with edits to indicate that the model
+should generate tests rather than completing the refactor. #}
+
+# Migration plans
+
+Your tests should cover the code that will be affected by the next migration step.  Do not implement the changes described here; just write the tests, and the migration itself will be done by a future agent.  Here are the planning documents that cover the next step of the migration:
+
+{% for detail in details %}
+{# `loop.index` gives the 1-based iteration number within the current loop. #}
+## Level {{ loop.index }}
+
+{{ detail }}
+
+{% endfor %}
+
+# Next goal
+
+The next migration step is as follows.  Your tests should cover the code related to this step.
+
+Step description: {{ description }}
+
+Goals:
+```json
+{{ goals_json }}
+```
+
+## Goal schema
+
+Each goal is described by a `StepGoal` following this schema:
+```json
+{{ psc.step_schema }}
+```
+
+## Example goals and explanations
+
+{{ psc.example_goals }}
+
+## Unsafety metrics
+
+{{ psc.unsafety_metrics }}
+
+## Relevant code
+
+One or more of the goals above are currently unmet, meaning the goal's total unsafety metric exceeds its target value.  The following code items contribute to the unsafety metrics of unmet goals:
+
+{{ psc.relevant_code_rendered }}
+
+These items are likely good targets for testing.  You're free to add tests for other code if needed, but your primary focus should be on testing the code that will be affected by the next step of the plan.
+
+
+# Differential testing
+
+The same tests are run against the original, just-transpiled Rust implementation and the current Rust implementation, using the original C headers. Print observations (e.g. function return values, final buffer contents, or file contents) to stdout. The harness compares stdout, stderr, and exit status; any difference is an error. Do not include or link the original C implementation. Tests are built and run using `crisp_test_runner.py`.
+
+## Suite layout
+
+```text
+{{ test_dir_path }}/
+  tests.toml               # optional compilation/link flags
+  test_helpers/
+    helpers.c              # all *.c compiled into one shared helper library
+    helpers.h
+  tests/
+    simple.c               # one executable per *.c
+    complex.c
+    complex.sh             # invokes test_complex with custom arguments/setup
+    cli.py                 # can invoke target binaries directly
+  fixtures/                # optional resources, read using $TEST_ROOT
+```
+
+`tests.toml` belongs to the test suite and may be edited by the generator:
+
+```toml
+cflags = ["-Iinclude", "-D_FILE_OFFSET_BITS=64"]
+ldflags = ["-lm"]
+```
+
+Both fields default to empty arrays. Flags apply to helpers and individual tests. Relative flag paths are interpreted from `{{ c_dir_path }}`, the original C project root.  That root, `test_helpers/`, and `tests/` are automatically added to the header search path.  No C configure/build commands are run; you may need to add workarounds if the library uses generated headers.
+
+Each `tests/foo.c` becomes `test_foo`, available through `$PATH`. Helpers become `libcrisp_test_helpers.so`; tests link against it and the Rust shared library under test. The helper directory can be absent. A suite containing only scripts needs no C programs or helpers.
+
+A simple test can be entirely in one file:
+
+```c
+// RUN: test_simple
+#include <stdio.h>
+#include <example.h>
+
+int main(void) {
+    printf("result=%d\n", example_function(42));
+    return 0;
+}
+```
+
+Discovery examines only immediate files in `tests/`. It runs each `.sh` through `bash -o pipefail` and each `.py` through `python3`.  Each C file with a single nonempty `// RUN:` directive adds another test. Its command is passed to `bash -o pipefail -c`. C files without a directive are compiled but run only when invoked by a script or another test.  A script and a `RUN` directive are independent tests; use just one if they would duplicate the same scenario. Files are discovered in sorted filename order.
+
+Each test starts in a new empty temporary working directory with empty stdin, locale `C`, timezone `UTC`, and umask `022`. Redirection and setup belong in the script or `RUN` command. Test programs may create files, run subprocesses, and normalize their observations.
+
+The runner sets:
+
+- `$PATH`: compiled `test_*` programs, then Rust target binaries, then the inherited tool/interpreter search path.
+- `$LD_LIBRARY_PATH`: the staged helper library and current Rust libraries.  The inherited library path, `LD_PRELOAD`, and `LD_AUDIT` are discarded.
+- `$TEST_ROOT`: absolute suite root, for reading fixtures and scripts.
+- `$TEST_BINS`: absolute directory containing the compiled `test_*` programs.
+- `$TMPDIR`: private directory for the current test.
+
+Tests for libraries should only use the public API of that library, to avoid over-constraining the implementation.  Use library-provided initialization, allocation, and destruction APIs for opaque objects.  Tests should not inspect fields of opaque structs directly, since layout may vary between C and Rust versions.  Neither the test sources nor helpers should include original implementation `.c` files or link an original target implementation.
+
+
+# Validation
+
+Run `crisp_run_tests.sh` to build and run the suite against the reference and current implementations and compare their observations. Fix any compilation failures, invalid tests, nondeterminism, or differences before finishing. Keep all test sources and fixtures under `crisp_tests/`; do not commit generated build artifacts or observation outputs.

@@ -1296,7 +1296,6 @@ class Workflow:
 
         prompt = prompts.agent_safety(
             cargo_dir_path = cargo_dir,
-            c_dir_path = '.',
             after_refactoring_instruction = after_refactoring_instruction,
             target_goal = target_goal.prompt(),
             has_incremental_plans = n_plans is not None,

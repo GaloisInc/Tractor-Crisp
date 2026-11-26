@@ -275,6 +275,13 @@ def main_common(args, cfg, mvir, w, c_code_str):
             n_c_code,
             src_loc_annotations=True,
             refactor_transforms=("rename_unnamed", "reorganize_definitions", "remove_redundant_casts", "remove_redundant_let_types"),
+            hayroll=True,
+        )
+    if n_code is None and num_c_files > 1:
+        n_code = w.transpile(
+            n_c_code,
+            src_loc_annotations=True,
+            refactor_transforms=("rename_unnamed", "reorganize_definitions"),
         )
     if n_code is None and cfg.transpile.hayroll:
         n_code = w.transpile(n_c_code, src_loc_annotations=True, hayroll=True)

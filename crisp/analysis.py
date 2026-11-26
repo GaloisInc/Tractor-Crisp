@@ -269,7 +269,7 @@ def run_observation_tests(
         sb.checkout(test_binaries)
         if test_code is not None:
             sb.checkout(test_code)
-        sb.run(['mkdir', '-p', paths.tests, paths.rust, paths.build])
+        sb.run(['mkdir', '-p', paths.tests, paths.rust, paths.build, paths.output])
         cmd = [
             'crisp_test_runner.py', 'run',
             '--suite-dir', paths.suite,

@@ -354,7 +354,7 @@ def main():
             test_command_parts = [
                 'set -e',
                 f'cd {shlex.quote(str(project_dir_from_base))}',
-                'crisp_test_runner.py build --suite-dir . --c-dir test_case/ --rust-dir translated_rust/ --build-dir tests-build/ --sanitize',
+                f'crisp_test_runner.py build --suite-dir . --c-dir {shlex.quote(str(cmake_dir_from_project))} --rust-dir translated_rust/ --build-dir tests-build/ --sanitize',
                 'crisp_test_runner.py run --suite-dir . --rust-dir translated_rust/ --build-dir tests-build/ --output-dir tests-out/',
                 'diff -Nurd tests-out-golden/ tests-out/',
             ]

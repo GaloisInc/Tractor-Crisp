@@ -155,6 +155,8 @@ pub struct TypeOutputs {
 ```
 
 `usize` fields contribute count equal to their value; `bool` fields contribute zero or one.  Map fields allow for two-part keys like `["uses_foreign_fn", "printf"]`.
+
+(Note: `find-unsafe2` also counts the number of `unsafe impl`s, but this metric can't be used in goals because the number of `unsafe impl`s  starts at zero and adding new ones is forbidden.)
 {%- endset %}
 
 

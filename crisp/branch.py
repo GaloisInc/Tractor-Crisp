@@ -382,13 +382,16 @@ class BranchState:
         if not self.failed_plan_bucket.drain():
             print('planning: too many failed plans; resetting')
             self.plans = []
-            self.failed_plans = []
+
+            # Truncate but don't fully reset `self.failed_plans`, so future
+            # top-level planning will see recent blockers.  Note we keep more
+            # plans here than `recent_blockers()` uses because some failed
+            # plans may not include blockers.
+            self.failed_plans = self.failed_plans[-10:]
+
             self.failed_plan_bucket.reset()
             # Fall through to `update_plans`, which will generate a
             # new top-level plan.
-
-            # TODO: pass info about past failures to the new
-            # planning step, to avoid repeating mistakes
 
     @step
     def safety_loop(self):
@@ -420,7 +423,6 @@ class BranchState:
                                         if Path(k).name == 'BLOCKERS.md']
                     if len(blocker_files) > 0:
                         print(f'planning: rewriter reported blockers')
-                        # TODO: attach `blocker_files[0]` data to current plan
                         self.plan_failed(blocker_files[0])
 
                 self.accept()

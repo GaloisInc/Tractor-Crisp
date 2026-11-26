@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from . import agent, analysis, llm, prompts
 from .analysis import COMPILE_COMMANDS_PATH
-from .config import Config
+from .config import Config, CrispTestPaths
 from .error import CrispError, ValidateError, ValidateErrorCollector
 from .mvir import (
     MVIR, Node, FileNode, TreeNode, CompileCommandsOpNode, TranspileOpNode,
@@ -1232,10 +1232,12 @@ class Workflow:
         if n_orig_code is None:
             n_orig_code = n_code
 
+        test_paths = CrispTestPaths.from_config(cfg)
+
         prompt = prompts.plan_step_gen_tests(
             cargo_dir_path = cargo_dir,
-            c_dir_path = cfg.relative_path('.'),
-            test_dir_path = cfg.relative_path('crisp_tests'),
+            c_dir_path = test_paths.c,
+            test_dir_path = test_paths.suite,
             description = plan.description,
             goals = [g.to_cbor() for g in plan.goals],
             details = [mvir.node(n).body_str() for n in plan.details],
@@ -1253,10 +1255,10 @@ class Workflow:
 
         def implementation_files(code):
             return {p: n for p, n in code.files.items()
-                if not Path(p).is_relative_to('crisp_tests')}
+                if not Path(p).is_relative_to(test_paths.suite)}
 
         if implementation_files(candidate) != implementation_files(n_code):
-            raise CrispError('test generator modified files outside crisp_tests/')
+            raise CrispError(f'test generator modified files outside {test_paths.suite}/')
 
         op = self.compare_observation_tests_op(n_orig_code, candidate, n_c_code)
         if op.exit_code != 0:
@@ -1283,7 +1285,8 @@ class Workflow:
         if n_orig_code is None:
             n_orig_code = n_code
 
-        has_differential_tests = any(Path(p).is_relative_to('crisp_tests/tests')
+        test_paths = CrispTestPaths.from_config(cfg)
+        has_differential_tests = any(Path(p).is_relative_to(test_paths.tests)
             for p in n_code.files)
         if provide_test_cmd and (cfg.test_command is not None or has_differential_tests):
             after_refactoring_instruction = prompts.agent_after_refactoring_run_tests()

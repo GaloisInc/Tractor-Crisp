@@ -14,7 +14,7 @@ import typing
 
 from . import agent, prompts
 from . import inline_errors as inline_errors_module
-from .config import Config
+from .config import Config, CrispTestPaths
 from .error import CrispError
 from .mvir import (
     MVIR, NodeId, Node, FileNode, TreeNode, TestResultNode,
@@ -189,26 +189,6 @@ def run_tests(cfg: Config, mvir: MVIR,
         mvir.set_tag('test_passed', n.node_id(), None)
     return n
 
-
-@dataclass
-class CrispTestPaths:
-    rust: str
-    c: str
-    suite: str
-    tests: str
-    build: str
-    output: str
-
-    @classmethod
-    def from_config(cls, cfg: Config):
-        return CrispTestPaths(
-            rust = cfg.relative_path(cfg.transpile.output_dir),
-            c = cfg.relative_path('.'),
-            suite = cfg.relative_path('crisp_tests'),
-            tests = cfg.relative_path('crisp_tests/tests'),
-            build = cfg.relative_path('crisp_tests/build'),
-            output = cfg.relative_path('crisp_tests/output'),
-        )
 
 @analysis
 def compile_tests(

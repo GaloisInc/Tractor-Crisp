@@ -304,7 +304,7 @@ def main_common(args, cfg, mvir, w, c_code_str):
         return None, None
     w.accept(n_code, ('main', 'cargo_fix'))
 
-    if args.llm_mode in ('agent', 'agent_rand_target'):
+    if args.llm_mode in ('agent', 'agent_rand_target', 'agent_branch'):
         try:
             n_new = w.agent_warning_cleanup(n_code, n_c_code)
             if n_new.node_id() != n_code.node_id():

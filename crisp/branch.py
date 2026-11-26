@@ -152,6 +152,7 @@ class BranchState:
 
 
     def accept(self):
+        self._n = self._snapshot()
         self._w.accept(self.code)
         self.mvir.set_tag('current_branch', self._n.node_id(),
             f'safety_loop {self.safety_tries_fuel.fuel}')

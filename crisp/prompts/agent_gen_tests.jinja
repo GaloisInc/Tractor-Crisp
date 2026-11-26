@@ -107,7 +107,7 @@ The runner sets:
 - `$TEST_BINS`: absolute directory containing the compiled `test_*` programs.
 - `$TMPDIR`: private directory for the current test.
 
-Tests for libraries should use library-provided initialization, allocation, and destruction APIs for opaque objects.  Tests should not inspect fields of opaque structs directly, since layout may vary between C and Rust versions.  Neither the test sources nor helpers should include original implementation `.c` files or link an original target implementation.
+Tests for libraries should only use the public API of that library, to avoid over-constraining the implementation.  Use library-provided initialization, allocation, and destruction APIs for opaque objects.  Tests should not inspect fields of opaque structs directly, since layout may vary between C and Rust versions.  Neither the test sources nor helpers should include original implementation `.c` files or link an original target implementation.
 
 
 # Validation

@@ -283,8 +283,6 @@ def discover_tests(suite: Path):
             cases.append((name, [*interpreter, str(path)]))
         elif os.access(path, os.X_OK):
             cases.append((name, [str(path)]))
-    if not cases:
-        raise RunnerError("no runnable tests found under tests/")
     return cases
 
 

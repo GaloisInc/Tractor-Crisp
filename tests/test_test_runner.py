@@ -294,8 +294,7 @@ print(p.pid)
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
-    def test_empty_suite_and_multiple_run_lines_are_errors(self):
-        self.invoke("build")
+    def test_invalid_run_lines_are_errors(self):
         path = self.suite / "tests/observe.c"
         self.write(path, "// RUN: test_observe\n" + path.read_text())
         self.invoke("build")
@@ -303,10 +302,15 @@ print(p.pid)
         self.write(path, "// RUN:\nint main(void) { return 0; }\n")
         self.invoke("build")
         self.assertIn(b"one nonempty", self.invoke("run", success=False).stderr)
+
+    def test_empty_suite_completes_with_empty_results(self):
         shutil.rmtree(self.suite / "tests")
         (self.suite / "tests").mkdir()
-        self.invoke("build")
-        self.assertIn(b"no runnable tests", self.invoke("run", success=False).stderr)
+        self.assertEqual(self.invoke("build")["programs"], 0)
+        result = self.invoke("run")
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["tests"], [])
+        self.assertEqual(json.loads((self.output / "results.json").read_text()), result)
 
     def test_sanitizers_instrument_c_tests(self):
         self.write(self.suite / "tests/undefined.c", '''

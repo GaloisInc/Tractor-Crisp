@@ -354,6 +354,8 @@ class StepPlan:
 
     def iter_node_ids(self):
         yield from self.details
+        if self.blockers is not None:
+            yield self.blockers
 
     def persistent_fields(self):
         """

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .error import CrispError
 from .mvir import TreeNode, BranchStateNode, BranchStepNode
+from .node_id import NodeId
 from .planning import StepPlan, StepGoal
 from .rand_target import PickTarget
 from .util import FuelLimits, RateLimitBucket
@@ -112,7 +113,7 @@ class BranchState:
         # `agent_safety` step succeeds or fails.
         #
         # TODO: redesign BranchState to be more flexible, maybe with Rust-style
-        # `Result` types to let functions return data alognside success/fail.
+        # `Result` types to let functions return data alongside success/fail.
         self.last_agent_safety_meta = None
 
     def _reset(self, n: BranchStateNode):
@@ -156,7 +157,6 @@ class BranchState:
             f'safety_loop {self.safety_tries_fuel.fuel}')
 
 
-    @step
     def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
         self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
@@ -195,7 +195,7 @@ class BranchState:
         lst = []
         for p in reversed(self.failed_plans):
             if p.blockers is not None:
-                lst.append((p.description, self.mvir.node(p.blockers)))
+                lst.append((p.description, self.mvir.node(p.blockers).body_str()))
                 if len(lst) >= n:
                     break
         lst.reverse()
@@ -369,13 +369,13 @@ class BranchState:
         # unsafety.
         return AgentTargetOther()
 
-    def plan_failed(self, blockers: FileNode | None = None):
+    def plan_failed(self, blockers_id: NodeId | None = None):
         if len(self.plans) == 0:
             return
 
         p = self.plans[0]
-        if blockers is not None:
-            p.blockers = blockers.node_id()
+        if blockers_id is not None:
+            p.blockers = blockers_id
         self.failed_plans.append(p)
         del self.plans[0]
 

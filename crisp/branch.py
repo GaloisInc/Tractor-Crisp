@@ -158,19 +158,18 @@ class BranchState:
             f'safety_loop {self.safety_tries_fuel.fuel}')
 
 
+    @step
     def agent_safety_unchecked(self, target) -> TreeNode:
         self.safety_tries_fuel.use()
         self.code, meta = self._w.agent_safety(self.code, self.c_code, None,
             target_goal = target)
-        return meta
+        self.last_agent_safety_meta = meta
 
     @step
     def agent_safety(self, target):
         old_code = self.code
 
-        meta = self.agent_safety_unchecked(target)
-
-        self.last_agent_safety_meta = meta
+        self.agent_safety_unchecked(target)
 
         if self.code is None:
             raise CrispError("agent failed to produce any code")

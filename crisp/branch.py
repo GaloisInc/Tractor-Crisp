@@ -125,6 +125,14 @@ class BranchState:
         self.failed_plans = copy.deepcopy(n.failed_plans)
 
         # Sanity check: `__init__` and `_snapshot` should be inverses.
+        #
+        # Note this will fail if `n` was migrated from a previous MVIR schema
+        # version: the old `NodeId` will be the hash of the original,
+        # un-migrated metadata, while the new `NodeId` will be the hash of the
+        # new metadata in the new format.  This shouldn't be a problem when the
+        # entire run uses the same CRISP version (and MVIR schema), but you may
+        # need to comment this out during development, especially if you've
+        # edited the MVIR schema.
         assert n.node_id() == self._snapshot().node_id()
 
     def _snapshot(self) -> BranchStateNode:
